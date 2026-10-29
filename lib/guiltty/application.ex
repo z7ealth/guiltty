@@ -7,14 +7,16 @@ defmodule Guiltty.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      # Starts a worker by calling: Guiltty.Worker.start_link(arg)
-      # {Guiltty.Worker, arg}
-    ]
+    children =
+      [{Registry, keys: :unique, name: Guiltty.Registry}] ++
+        if Application.get_env(:guiltty, :autostart, true) do
+          # The session is significant: when its shell exits, the app stops.
+          [Supervisor.child_spec({Guiltty.Session.Supervisor, id: :main}, significant: true)]
+        else
+          []
+        end
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: Guiltty.Supervisor]
+    opts = [strategy: :one_for_one, name: Guiltty.Supervisor, auto_shutdown: :any_significant]
     Supervisor.start_link(children, opts)
   end
 end

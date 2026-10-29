@@ -1,0 +1,14 @@
+#+TITLE: The guiltty book
+#+STARTUP: overview
+
+How guiltty works, one layer at a time. Read in order; each chapter ends with
+the loot (what to read next) and a few questions to check yourself.
+
+1. [[file:00-overview.org][Overview: what a terminal emulator actually is]]
+2. [[file:01-pseudoterminals.org][Pseudoterminals: the kernel half of a terminal]]
+3. [[file:02-pty-nif.org][The PTY NIF: a pseudoterminal inside the BEAM]]
+4. [[file:03-parser.org][Parser v0: bytes in, commands out]]
+5. [[file:04-screen-and-grid.org][The screen and the grid]]
+
+Chapters to come as the code grows: the port protocol, the renderer and
+input.

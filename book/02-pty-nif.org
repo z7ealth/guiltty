@@ -1,0 +1,187 @@
+#+TITLE: The PTY NIF: a pseudoterminal inside the BEAM
+#+STARTUP: overview
+
+* What it is
+
+[[file:../c_src/pty_nif.c][c_src/pty_nif.c]] is the only C code that runs inside the BEAM. It does what
+[[file:01-pseudoterminals.org][the previous chapter]] described (=openpty=, =fork=, =setsid=, =TIOCSCTTY=,
+=exec=), and then hands the master fd to the BEAM and lets an Elixir process,
+[[file:../lib/guiltty/session/pty.ex][Guiltty.Session.Pty]], decide when to read and write.
+
+A NIF ("natively implemented function") is a C function that Elixir calls
+like any other function. It runs on the scheduler thread that called it, so
+two rules matter:
+
+1. *Never block.* A scheduler stuck in =read()= stops every Elixir process
+   scheduled on it. So the master fd is non-blocking.
+2. *Never crash.* A segfault in a NIF kills the whole VM. So the NIF is small,
+   and all decisions are made in Elixir.
+
+* The functions
+
+| Elixir                                 | Does                                  |
+|----------------------------------------+---------------------------------------|
+| =PtyNif.open(path, argv, env, c, r)=   | openpty, fork, exec; ={:ok, pty, pid}= |
+| =PtyNif.read(pty)=                     | one non-blocking read                 |
+| =PtyNif.write(pty, bytes)=             | one non-blocking write                |
+| =PtyNif.select_read(pty)=              | "tell me when it's readable"          |
+| =PtyNif.select_write(pty)=             | "tell me when it's writable"          |
+| =PtyNif.close(pty)=                    | close the master (hangs up bash)      |
+| =PtyNif.wait(pty)=                     | has the child exited? never blocks    |
+| =PtyNif.kill(pty, signal)=             | send a signal to the child            |
+
+=open= runs on a *dirty I/O scheduler* (a separate thread pool for slow NIFs),
+because =fork= copies the page tables of the whole BEAM and that can take a
+while.
+
+* Resources: a C struct that Elixir can hold
+
+The master fd and the child pid live in a =struct pty= wrapped in a *NIF
+resource*. Elixir sees an opaque reference; the C side gets the struct back
+on every call.
+
+#+begin_example
+  Elixir (Pty process state)           C heap (owned by the BEAM)
+  +--------------------------+         +--------------------------+
+  | pty: #Reference<...> ----+-------->| struct pty               |
+  | os_pid: 219202           |         |   fd  = 23  (master)     |
+  +--------------------------+         |   pid = 219202           |
+                                       +--------------------------+
+                                       destructor runs when the last
+                                       Elixir reference is garbage
+#+end_example
+
+The destructor ([[file:../c_src/pty_nif.c::pty_dtor][pty_dtor]]) is a safety net: if the Pty process died
+without cleaning up, it closes the fd and kills the child if it's still
+running.
+
+* enif_select: no reader thread
+
+The classic way to read from an fd without blocking is a thread sitting in
+=read()=. guiltty doesn't need one: the BEAM already runs a =poll=-like loop
+for its own sockets, and =enif_select= adds our fd to it.
+
+#+begin_example
+  Pty process                 NIF                    BEAM poll loop
+  -----------                 ---                    --------------
+  select_read(pty) -------->  enif_select(fd, READ) -> add fd to poll set
+  (handles other messages)
+                                                      fd readable!
+  <------------------- {:select, pty, :undefined, :ready_input}
+  read(pty) --------------->  read(fd) = 4096 bytes
+  read(pty) --------------->  read(fd) = 312 bytes
+  read(pty) --------------->  read(fd) = EAGAIN -> :eagain
+  select_read(pty) -------->  (armed again: it fires only once)
+#+end_example
+
+The select fires once. The Pty process only re-arms it when there's a parser
+to send bytes to. Until then, bash's output stays in the kernel's PTY buffer;
+when that fills up, bash blocks on its own =write()=. That's the start of
+MVP 4's kernel backpressure.
+
+** Closing a selected fd
+You may not just =close()= an fd that's in the BEAM's poll set: the BEAM
+might be polling it at that moment, and the number could be reused by a new
+fd. Instead [[file:../c_src/pty_nif.c::nif_close][close/1]] calls =enif_select(..., ERL_NIF_SELECT_STOP)=, and the
+BEAM calls our =stop= callback ([[file:../c_src/pty_nif.c::pty_stop][pty_stop]]) when it's safe. That's where
+=close()= really happens.
+
+* Forking from a multithreaded program
+
+A single-threaded program can call almost anything after =fork=. The BEAM
+has dozens of threads, and =fork= copies only the calling one:
+
+#+begin_example
+  BEAM before fork                     child after fork
+  +--------------------------+         +--------------------------+
+  | scheduler 1 (calls fork) |   --->  | scheduler 1 (the child)  |
+  | scheduler 2 (in malloc,  |         |                          |
+  |   holds malloc lock)     |         |  malloc lock: LOCKED,    |
+  | dirty io 1, ...          |         |  and no thread will ever |
+  +--------------------------+         |  unlock it               |
+                                       +--------------------------+
+#+end_example
+
+So the child calls only async-signal-safe functions until =execve= replaces
+it with bash ([[file:../c_src/pty_nif.c::exec_child][exec_child]]). Everything it needs (argv, envp, the path) is
+prepared before =fork=. The NIF uses =execve= with a full path, which Elixir
+finds with =System.find_executable/1=, because =execvp= searches =PATH= and
+isn't on the safe list.
+
+Three more things the child does because it's forked from the BEAM:
+
+- *Resets signals.* The BEAM blocks and ignores some signals, and both survive
+  =execve=. Without the reset, every program you ran in guiltty would start
+  with, for example, SIGPIPE ignored. A test checks bash's =SigIgn= is zero.
+- *Closes every other fd* with =close_range(3, ~0U, 0)=, so bash doesn't
+  inherit the BEAM's sockets or another tab's PTY.
+- The parent marks both PTY fds close-on-exec, so no other program the BEAM
+  starts inherits them. A stray copy of the slave would keep the master from
+  ever reporting the end (see [[file:01-pseudoterminals.org][chapter 1]], "The end").
+
+* Surprise: the BEAM ignores SIGCHLD
+
+The first live run logged =ended: {:error, :echild}=. The BEAM sets SIGCHLD
+to "ignore", and Linux has a special rule for that (=waitpid(2)=, NOTES):
+children are reaped automatically and never become zombies, but their exit
+status is thrown away.
+
+#+begin_example
+  bash running   waitpid(pid, WNOHANG) = 0          -> :running
+  bash exits     kernel reaps it right away
+  afterwards     waitpid(pid, WNOHANG) = -1 ECHILD  -> :gone
+#+end_example
+
+So =wait/1= returns =:gone= instead of an exit code. One consequence matters
+for safety: once bash is gone, its pid can be reused by an unrelated process,
+so the NIF forgets the pid as soon as it sees =:gone= and the destructor never
+signals a pid it can't prove is still ours. (Linux's =pidfd_open= solves this
+completely; noted for later.)
+
+* The Pty process
+
+[[file:../lib/guiltty/session/pty.ex][Guiltty.Session.Pty]] wraps all of this:
+
+- On start it opens the PTY with =TERM=dumb= but doesn't read yet.
+- When the parser attaches, it arms =select_read=.
+- On =:ready_input= it reads up to 16 chunks, sends each to the parser as
+  ={:pty_data, bytes}=, then re-arms.
+- Writes go through a =pending= buffer: if the kernel takes only part of it,
+  it waits for =:ready_output= and writes the rest.
+- On =:eof= (EIO), it closes the master, waits for bash to go, and stops with
+  ={:shutdown, status}=, which ends the session.
+- On shutdown, =terminate/2= closes the master (the kernel sends SIGHUP),
+  waits half a second, then sends SIGHUP and finally SIGKILL.
+
+* Loot
+
+- =erl_nif(3)=: resources, =enif_select=, dirty NIFs, the =stop= callback.
+- =signal-safety(7)=: the async-signal-safe list.
+- =fork(2)= NOTES on multithreaded programs.
+- =waitpid(2)= NOTES: ignoring SIGCHLD.
+- =close_range(2)=, =fcntl(2)= (=FD_CLOEXEC=, =O_NONBLOCK=).
+- =pidfd_open(2)=: the race-free alternative to pids.
+
+* Questions
+
+1. Why is the master fd non-blocking?
+2. Why can't the NIF just =close(fd)= after an =enif_select=?
+3. What could go wrong if the child called =malloc= after =fork=?
+4. Why does =wait/1= return =:gone= instead of an exit code?
+5. Why does the Pty process wait for a parser before reading?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. A NIF runs on a scheduler thread. A blocking =read= would freeze every
+   Elixir process on that scheduler until bash printed something.
+2. The BEAM may be polling that fd number right then. =ERL_NIF_SELECT_STOP=
+   asks it to remove the fd first and call =stop=, where it's safe to close.
+3. Another BEAM thread might have held malloc's lock during =fork=. The child
+   gets the lock still locked, with no thread to unlock it: a deadlock.
+4. The BEAM ignores SIGCHLD, so the kernel reaps children immediately and
+   discards their status. =waitpid= then fails with ECHILD.
+5. Otherwise the first bytes (the prompt) would be read with nobody to send
+   them to. Not reading leaves them safely in the kernel buffer.

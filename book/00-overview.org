@@ -1,0 +1,86 @@
+#+TITLE: Overview: what a terminal emulator actually is
+#+STARTUP: overview
+
+* The short version
+
+A terminal emulator does not run your commands. Bash runs them. The terminal
+only does two jobs:
+
+1. turn *bytes* coming from bash into *pixels* (text, colors, a cursor), and
+2. turn *keys* you press into *bytes* going to bash.
+
+Between the terminal and bash sits a kernel device, the pseudoterminal (PTY),
+that makes bash believe it is talking to a real 1970s hardware terminal.
+Everything else in guiltty is plumbing around those two jobs.
+
+* The whole pipe
+
+This is the shape guiltty will have at MVP 1. Every later MVP thickens the
+same pipe instead of adding new boxes.
+
+#+begin_example
+                        BEAM (one OS process, many Elixir processes)
+  +-------------------------------------------------------------------------+
+  |                                                                         |
+  |   Session (rest_for_one)                                                |
+  |   +---------+   bytes   +--------+   commands   +--------+              |
+  |   |   Pty   | --------> | Parser | -----------> | Screen |              |
+  |   | (NIF fd)|           +--------+              | (grid) |              |
+  |   +---------+                                   +--------+              |
+  |      ^  |                                           | changed rows      |
+  |      |  |                                           v                   |
+  |      |  |  key bytes                           +--------+               |
+  |      |  +<-------------------------------------| Window |               |
+  |      |                                         +--------+               |
+  +------|-------------------------------------------|---^------------------+
+         | master fd                     port stdin  |   | port stdout
+         |                               (rows)      v   | (key events)
+  +------|------+                               +-------------------+
+  |  kernel PTY |                               | guiltty_renderer  |
+  |  /dev/pts/N |                               | (separate C proc) |
+  +------|------+                               | SDL3 + OpenGL     |
+         | slave fd 0,1,2                       +-------------------+
+  +------v------+                                     |
+  |    bash     |                                     v
+  +-------------+                                  pixels
+#+end_example
+
+Two pieces are C, everything else is Elixir:
+
+- *The PTY NIF* lives inside the BEAM because it has to make syscalls
+  (=openpty=, =fork=, =read=, =write=). It is kept tiny, since a crash there
+  takes down the whole VM.
+- *The renderer* is a separate program. If it segfaults, only the window dies;
+  bash and the screen contents survive in Elixir and can be redrawn.
+
+* Roadmap
+
+| Stop     | Name               | What it adds                                 |
+|----------+--------------------+----------------------------------------------|
+| MVP 1    | First light        | The whole pipe, ASCII only, 80x24            |
+| MVP 2    | Color              | Real VT parser, colors, cursor moves, resize |
+| MVP 3    | The vim fight      | Alternate screen, scroll regions, key modes  |
+| MVP 4    | The BEAM advantage | Tabs, crash-proof parts, detach and reattach |
+| MVP 5    | Daily driver       | Unicode, scrollback, selection, fonts        |
+
+* Loot
+
+- =pty(7)=: what a pseudoterminal is.
+- The build plan's "Project layout and stack" section.
+
+* Questions
+
+1. Which program executes =ls= when you type it in guiltty?
+2. Why is the renderer a separate OS process instead of a NIF?
+3. Which way do bytes flow through the master fd, and which way do pixels flow?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Bash forks and execs =ls=. guiltty only moves bytes and draws them.
+2. A crash in a NIF kills the whole BEAM, sessions included. A crashed port
+   program only closes its port, and Elixir can restart it and redraw.
+3. Both ways: bash's output is read from the master, and your keys are
+   written to it. Pixels only flow out, from the renderer to the screen.

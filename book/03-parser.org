@@ -1,0 +1,112 @@
+#+TITLE: Parser v0: bytes in, commands out
+#+STARTUP: overview
+
+* What it does
+
+Bash sends a mix of text and *control sequences*. [[file:../lib/guiltty/parser.ex][Guiltty.Parser]] splits
+them apart and turns them into commands for the screen:
+
+| Bytes                    | Command          |
+|--------------------------+------------------|
+| printable ASCII run      | ={:print, "ls"}= |
+| =\r= (CR)                | =:cr=            |
+| =\n= (LF), also VT, FF   | =:lf=            |
+| =\b= (BS)                | =:bs=            |
+| =\t= (HT)                | =:ht=            |
+| escape sequences         | (skipped)        |
+| BEL, DEL, other controls | (ignored)        |
+| a UTF-8 character        | ={:print, "?"}=  |
+
+MVP 1 can't draw colors or move the cursor, so escape sequences are only
+recognized well enough to skip them whole. If they weren't, =\e[01;31m= would
+print as =[01;31m=.
+
+* The state machine
+
+The parser remembers which kind of sequence it's in the middle of. That's
+the whole state: one atom.
+
+#+begin_example
+                   printable -> {:print, run}
+                   CR LF BS HT -> command
+                  +------+
+                  |      v
+               +-----------+   ESC    +----------+
+     +-------->|  ground   |--------->|  escape  |-----------------+
+     |         +-----------+          +----------+                 |
+     |               ^                 |  |  |  | 0x20-0x2F         |
+     |  final byte   |              [  |  |  |  v                  |
+     |  0x40-0x7E    |                 |  |  | +---------------+   |
+     |         +-----------+           |  |  | | escape_inter- |   |
+     +---------|    csi    |<----------+  |  | | mediate       |---+ final
+               +-----------+              |  | +---------------+   | -> ground
+                                          |  |                     |
+                       ] P X ^ _          |  | any other byte -----+
+                     +--------------------+  |   (e.g. ESC 7)
+                     v                       |
+               +-----------+   ESC   +------------+
+               |  string   |-------->| string_esc |-- \ (ST) --> ground
+               +-----------+         +------------+
+                 |  BEL -> ground          | other byte -> escape
+                 +--------------------------
+#+end_example
+
+=CAN= (=0x18=) and =SUB= (=0x1A=) abort any sequence and return to ground.
+
+This is a small slice of Paul Williams' DEC parser, which MVP 2 implements in
+full (with parameters, intermediates and DCS).
+
+* Sequences that cross reads
+
+A read can end in the middle of a sequence: one read ends with =\e[01;3= and
+the next starts with =1mred=. Because the state is kept in the parser value
+between calls, the second read continues in =csi= and skips =1m= correctly.
+
+#+begin_src elixir
+{p, cmds1} = Guiltty.Parser.feed(Guiltty.Parser.new(), "a\e[01;3")
+# cmds1 = [{:print, "a"}], p.state = :csi
+{_p, cmds2} = Guiltty.Parser.feed(p, "1mred")
+# cmds2 = [{:print, "red"}]
+#+end_src
+
+The test suite checks this for every possible split point of a sample that
+has the openSUSE prompt sequences, an OSC ended by ST and a UTF-8 character.
+
+* Fast path for text
+
+Most bytes are plain text, so the =ground= state first counts how many
+printable bytes are in a row and emits them as a single ={:print, run}= with a
+sub-binary (no copying), instead of one command per byte.
+
+* Where it runs
+
+The pure module is wrapped by a process, [[file:../lib/guiltty/session/parser.ex][Guiltty.Session.Parser]], which
+receives ={:pty_data, bytes}= from the Pty, keeps the parser value in its
+state and casts the commands to the Screen. If it crashes, only it restarts
+(see [[file:04-screen-and-grid.org][the screen chapter]]).
+
+* Loot
+
+- =console_codes(4)=: the Linux console's sequences, a readable overview.
+- ECMA-48 sections 5 and 8: C0 controls, ESC, CSI, control strings.
+- vt100.net's "A parser for DEC's ANSI-compatible video terminals".
+
+* Questions
+
+1. Why does the parser need to remember state between reads?
+2. How does the parser know where a CSI sequence ends?
+3. What two ways can an OSC end?
+4. Why does =señor= print as =se?or= instead of =se??or=?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. A read can stop in the middle of a sequence; without the state, the rest
+   would be printed as text.
+2. At its final byte, any byte from =0x40= to =0x7E= (letters and a few symbols
+   like =@= and =~=).
+3. With BEL (=\x07=) or with ST (=ESC \=).
+4. =ñ= is two bytes in UTF-8. The lead byte (=0xC3=) prints one =?=, and the
+   continuation byte (=0xB1=) is skipped.

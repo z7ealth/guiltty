@@ -22,3 +22,8 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 guiltty-*.tar
 
+
+
+# Built NIFs and renderer binaries
+/priv/*.so
+/priv/guiltty_renderer_*

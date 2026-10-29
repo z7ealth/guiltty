@@ -1,0 +1,185 @@
+#+TITLE: Pseudoterminals: the kernel half of a terminal
+#+STARTUP: overview
+
+* Why a PTY exists
+
+Programs like bash, vim and less were written for hardware terminals: a
+keyboard and screen wired to the computer by a serial line. The kernel put a
+layer in front of that line, the *tty* driver, which handles things like
+echoing what you type, letting you erase with Backspace, and turning Ctrl+C
+into a signal.
+
+A terminal *emulator* has no serial line, so the kernel gives it a fake one:
+a pseudoterminal. It is a pair of connected file descriptors:
+
+- the *master* (or "ptmx" side): the emulator holds this one;
+- the *slave* (=/dev/pts/N=): the program (bash) uses this as its stdin,
+  stdout and stderr, and believes it is a real terminal.
+
+#+begin_example
+   terminal emulator                kernel                          bash
+  +----------------+        +--------------------------+        +---------+
+  |                | write  |      line discipline     |  read  |         |
+  |   master fd    |------->|  ICRNL: \r -> \n         |------->|  fd 0   |
+  |                |        |  ECHO:  copy input back  |        |         |
+  |                |  read  |  ISIG:  ^C -> SIGINT     | write  |  fd 1,2 |
+  |                |<-------|  ONLCR: \n -> \r\n       |<-------|         |
+  +----------------+        +--------------------------+        +---------+
+                       /dev/ptmx                    /dev/pts/3
+#+end_example
+
+Whatever the emulator *writes* to the master looks like keystrokes to bash.
+Whatever bash *writes* to its stdout comes out of the master for the emulator
+to draw. The *line discipline* in the middle is the old tty layer, and it
+still rewrites bytes in both directions.
+
+* How guiltty sets one up
+
+The code is in [[file:../c_src/pty_nif.c][c_src/pty_nif.c]]. In order:
+
+#+begin_example
+  parent (the BEAM)                        child
+  -----------------                        -----
+  openpty() -> master, slave
+  fork() ---------------------------------> (copy of the parent, same fds)
+  |                                        reset signals
+  |                                        setsid()          new session, no tty
+  |                                        ioctl(slave, TIOCSCTTY)  claim the PTY
+  |                                        dup2(slave -> 0,1,2)
+  |                                        close every other fd
+  |                                        execve("/usr/bin/bash")  becomes bash
+  close(slave)   our copy, see "The end"
+  hand the master to Elixir (next chapter)
+#+end_example
+
+** openpty
+[[file:../c_src/pty_nif.c::openpty(&master][openpty]] does in one call what =posix_openpt=, =grantpt=, =unlockpt= and
+=ptsname= do step by step: open =/dev/ptmx=, which creates a new
+=/dev/pts/N=, and then open that. We pass an 80x24 window size, which is what
+=tput cols= would report inside.
+
+** Sessions and the controlling terminal
+Every process belongs to a *process group*, and every process group belongs
+to a *session*. A session can have one *controlling terminal*. That terminal
+knows which process group is in the *foreground*, and that's who receives
+SIGINT when you press Ctrl+C.
+
+#+begin_example
+  session 214530 (leader: bash)          controlling terminal: /dev/pts/3
+  +-----------------------------------+        |
+  |  pgrp 214530: bash                |        |  foreground pgrp
+  |  pgrp 214600: sleep 100   <-------+--------+  (gets SIGINT on ^C)
+  +-----------------------------------+
+#+end_example
+
+After =fork= the child is still in the BEAM's session, whose controlling
+terminal is the terminal you started =iex= from. The child calls =setsid()=
+to leave and start a fresh session with no terminal, and then =TIOCSCTTY=
+makes the slave its controlling terminal (both in [[file:../c_src/pty_nif.c::exec_child][exec_child]]). The order
+matters: only a session leader *without* a controlling terminal may claim
+one.
+
+* What the bytes look like
+
+Real output from bash with =TERM=xterm-256color=, read straight from the
+master (=<-= is what we read, =->= what we wrote):
+
+#+begin_example
+<- [93] \x1b7\x1b]2;hsalinas@hs-suse:~/Projects/guiltty\x07\x1b]1;hs-suse\x07\x1b8hsalinas@hs-suse:~/Projects/guiltty>
+-> echo hi\r
+<- [9] echo hi\r\n
+<- [4] hi\r\n
+<- [93] \x1b7\x1b]2;...  (the prompt again)
+-> exit\r
+<- [6] exit\r\n
+<- [6] exit\r\n
+:eof
+#+end_example
+
+Reading it piece by piece:
+
+| Bytes               | Meaning                                              |
+|---------------------+------------------------------------------------------|
+| =\x1b7=             | DECSC: save the cursor position                      |
+| =\x1b]2;...\x07=    | OSC 2: set the window title (ends with BEL, =\x07=)  |
+| =\x1b]1;...\x07=    | OSC 1: set the icon name                             |
+| =\x1b8=             | DECRC: restore the cursor                            |
+| =hsalinas@...>=     | the visible prompt                                   |
+| =echo hi\r\n=       | the echo of what we typed                            |
+| =hi\r\n=            | the command's output; =\n= became =\r\n= (ONLCR)     |
+| second =exit\r\n=   | bash itself printing "exit" as it leaves             |
+
+Notice we sent =\r=, not =\n=: that's what the Enter key sends. The line
+discipline's ICRNL turns it into =\n= for bash.
+
+Many setups also show =\x1b[?2004h= before every prompt and =\x1b[?2004l=
+after Enter: that's bracketed paste, which readline turns on by default. On
+this openSUSE install it's off (=bind -v | grep bracketed=).
+
+With =TERM=dumb= all the escape sequences disappear and only the plain prompt
+is left. That's why MVP 1 starts with =TERM=dumb=.
+
+* The end: why the parent closes its slave copy
+
+The master reports the end only when *every* file descriptor pointing at the
+slave is closed. On Linux, =read= on the master then fails with =EIO= rather
+than returning 0. That's the =:eof= at the end of the output above.
+
+#+begin_example
+  parent closes its slave copy             parent keeps it (a bug)
+  ----------------------------             -----------------------
+  bash: fds 0,1,2 -> slave                 bash: fds 0,1,2 -> slave
+  parent: (closed)                         parent: fd 4 -> slave
+  bash exits -> slave refcount 0           bash exits -> slave refcount 1
+  read(master) = -1 EIO   => done          read(master) waits forever
+#+end_example
+
+* Try it yourself
+
+In =iex -S mix=, talk to a PTY directly through the NIF:
+
+#+begin_src elixir
+alias Guiltty.Session.PtyNif
+env = for {k, v} <- Map.put(System.get_env(), "TERM", "xterm-256color"), do: "#{k}=#{v}"
+{:ok, pty, _pid} = PtyNif.open("/usr/bin/bash", ["bash"], env, 80, 24)
+Process.sleep(300); PtyNif.read(pty)        # the prompt, raw
+PtyNif.write(pty, "echo hi\r")
+Process.sleep(100); PtyNif.read(pty)        # the echo and the output
+PtyNif.write(pty, "exit\r")
+Process.sleep(100); PtyNif.read(pty); PtyNif.read(pty)   # ... then :eof
+#+end_src
+
+Try ="dumb"= instead of ="xterm-256color"= and compare the prompt.
+
+* Loot
+
+- =pty(7)=: master and slave.
+- =openpty(3)=, and =posix_openpt(3)=, =grantpt(3)=, =unlockpt(3)=,
+  =ptsname(3)= for the long route.
+- =setsid(2)=, =credentials(7)=: sessions and process groups.
+- =ioctl_tty(2)=: =TIOCSCTTY=, =TIOCSWINSZ=.
+- =termios(3)=: =ECHO=, =ICANON=, =ISIG=, =ICRNL=, =ONLCR=.
+
+* Questions
+
+1. Why must =setsid()= come before =TIOCSCTTY=?
+2. What are the =\x1b]0;…\x07= and =\x1b[?2004h= bytes around bash's prompt?
+3. Why does =echo hi= come back before its output?
+4. What happens on the master when bash exits if the parent kept its slave fd?
+5. Who turns the =\r= we write into the =\n= bash reads?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. =TIOCSCTTY= only works for a session leader with no controlling terminal.
+   After =fork= the child is neither; =setsid()= makes it both.
+2. OSC 0 sets the window and icon title (here it's OSC 2 and OSC 1).
+   =?2004h= turns on bracketed paste, so pasted text arrives wrapped in
+   =\x1b[200~=…=\x1b[201~=.
+3. Echo happens as soon as input arrives, done by the line discipline (=ECHO=)
+   or by readline. The output only exists after Enter runs the command.
+4. Nothing: no EOF and no =POLLHUP=. The master ends only when the last slave
+   fd closes.
+5. The line discipline, through the =ICRNL= flag in =termios=.

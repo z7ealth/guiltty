@@ -1,0 +1,151 @@
+#+TITLE: The screen and the grid
+#+STARTUP: overview
+
+* The grid
+
+[[file:../lib/guiltty/grid.ex][Guiltty.Grid]] is the screen as data: 24 rows, each a binary of exactly 80
+bytes, plus a cursor. ASCII only, so one byte is one cell.
+
+#+begin_example
+  lines (a tuple of 24 binaries)              cursor
+  0  "$ echo hi                    ...   "     row 2
+  1  "hi                           ...   "     col 2
+  2  "$                            ...   "
+  ...
+  23 "                             ...   "
+     |<----------- 80 bytes ------------->|
+#+end_example
+
+A row being a plain binary is handy: it's already exactly what the renderer
+will draw, so a changed row can go straight into a port message.
+
+* The commands
+
+| Command        | Effect                                                    |
+|----------------+-----------------------------------------------------------|
+| ={:print, s}=  | write =s= at the cursor, wrapping at the right edge       |
+| =:cr=          | cursor to column 0                                        |
+| =:lf=          | cursor down one row; on the last row, scroll up           |
+| =:bs=          | cursor left one, never past column 0                      |
+| =:ht=          | cursor to the next multiple of 8, at most the last column |
+
+Note that =:lf= doesn't go back to column 0. Bash's =\n= reaches us as =\r\n=
+because the line discipline's ONLCR adds the =\r=.
+
+** Scrolling
+A line feed on the last row drops row 0 and adds a blank row at the bottom.
+Every row moved, so every row is marked dirty.
+
+** The pending wrap
+After writing into the last column, the cursor sits *past* it, at column 80.
+The wrap happens only if another printable character arrives:
+
+#+begin_example
+  print "0123456789" on a 10-column grid:
+  |0123456789|_      cursor col 10: wrap pending
+  then CR LF:        -> next row, no blank line in between
+  then "x" instead:  -> wraps first, "x" lands at the start of the next row
+#+end_example
+
+Without this, every command whose output is exactly 80 columns wide would
+leave an empty line under it. xterm and every terminal since the VT100 work
+this way.
+
+* Dirty rows
+
+The grid remembers which rows changed. =take_dirty/1= returns them and
+clears the set, so the Screen only sends what changed.
+
+* The Screen process
+
+[[file:../lib/guiltty/session/screen.ex][Guiltty.Session.Screen]] holds the grid and is the *authoritative* copy of
+what's on screen. After each batch of commands it sends
+={:screen_update, id, [{row, binary}], {cursor_row, cursor_col}}= to its
+subscribers. From step 5 the subscriber is the =Window=. A new subscriber
+first gets every row, which is how a restarted renderer will redraw (MVP 4).
+
+From iex:
+
+#+begin_src elixir
+Guiltty.Session.write(:main, "ls\r")
+Guiltty.Session.dump(:main) |> IO.puts()
+#+end_src
+
+* One session, three processes
+
+#+begin_example
+  Guiltty.Supervisor (one_for_one, auto_shutdown: :any_significant)
+  |-- Registry Guiltty.Registry         names: {session_id, :pty} etc.
+  `-- Session.Supervisor :main          (significant)
+      |   rest_for_one, auto_shutdown: :any_significant
+      |-- Pty      (significant)  owns the NIF resource and bash
+      |-- Screen                  owns the grid
+      `-- Parser                  owns the parser state
+#+end_example
+
+Data flows Pty -> Parser -> Screen:
+
+#+begin_example
+  Pty                      Parser                     Screen
+   | {:pty_data, bytes}      |                          |
+   |------------------------>| feed/2                   |
+   |                         | {:apply, commands}       |
+   |                         |------------------------->| Grid.apply/2
+   |                         |                          | {:screen_update, ...}
+   |                         |                          |-----> subscribers
+#+end_example
+
+** What restarts when something crashes
+=rest_for_one= restarts the crashed child and every child started *after*
+it:
+
+| Crash  | Restarts              | Screen kept? |
+|--------+-----------------------+--------------|
+| Parser | Parser                | yes          |
+| Screen | Screen, Parser        | no           |
+| Pty    | Pty, Screen, Parser   | no (new bash)|
+
+A new parser attaches to the Pty in its =init/1=, and the Pty starts
+reading again. A test kills the parser mid-session and checks that the
+screen keeps its contents and the shell keeps working.
+
+** When bash exits
+The Pty is marked *significant*. When it stops with ={:shutdown, _}= (bash
+exited), its =:transient= restart policy says don't restart, and
+=auto_shutdown: :any_significant= shuts down the whole session. The session
+supervisor is itself significant in the application supervisor, so the
+application stops too. That's the "=exit= closes the window" rule, done with
+plain OTP.
+
+* Loot
+
+- Elixir's =Supervisor= docs: strategies, =:transient=, =significant=,
+  =auto_shutdown=.
+- =Registry= and =:via= names.
+- XTerm control sequences: the "last column flag" (pending wrap).
+
+* Questions
+
+1. Why is a row a binary instead of a list of characters?
+2. Why doesn't =:lf= move the cursor to column 0?
+3. What's the pending wrap for?
+4. Why is the Pty started before the Screen and the Parser?
+5. What makes the application stop when you type =exit=?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. With ASCII one byte is one cell, a binary is compact, cheap to slice, and
+   already the shape the renderer needs.
+2. That's what LF means on a terminal. The line discipline's ONLCR turns
+   bash's =\n= into =\r\n=, and the =\r= does the column 0 part.
+3. So a line exactly as wide as the screen doesn't leave an empty line when
+   CR LF follows it.
+4. With =rest_for_one=, things started later depend on things started
+   earlier. The screen and parser are only meaningful for a given shell, so
+   a new Pty must restart them, but not the other way around.
+5. Bash exits, the Pty reads EOF and stops with ={:shutdown, _}=. It's
+   significant, so its supervisor shuts down, which is significant in the
+   application supervisor, which shuts down too.
