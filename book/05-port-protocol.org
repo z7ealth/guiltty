@@ -1,0 +1,146 @@
+#+TITLE: The port protocol: Elixir and the renderer
+#+STARTUP: overview
+
+* Why a port
+
+The renderer is a normal Linux program, [[file:../priv/][priv/guiltty_renderer_gl]]. Elixir
+starts it with =Port.open/2= and talks to it through its stdin and stdout
+pipes. That's an *Erlang port*: to Elixir it looks like a process you send
+messages to; to the renderer it's just reading stdin and writing stdout.
+
+The point is isolation. The renderer links SDL3, Mesa, FreeType and
+fontconfig: a lot of C. If any of it crashes, the kernel kills only the
+renderer process, the port reports an exit status, and Elixir carries on.
+Your shell and its screen live in the BEAM and never notice.
+
+#+begin_example
+  BEAM                                      renderer process
+  +---------------------+   stdin pipe      +----------------------+
+  |  Guiltty.Window     |------------------>|  reader thread       |
+  |  (owns the port)    |                   |  -> SDL user events  |
+  |                     |   stdout pipe     |                      |
+  |                     |<------------------|  main thread:        |
+  +---------------------+                   |  SDL events, drawing |
+                                            +----------------------+
+                                             stderr -> the BEAM's stderr
+#+end_example
+
+stdout belongs to the protocol, so the renderer never prints to it. Its
+diagnostics and the sanitizers' reports go to stderr, which lands in the
+terminal you started guiltty from.
+
+* Framing
+
+A pipe is a stream of bytes with no message boundaries. =packet: 4= makes
+the BEAM put a 4-byte big-endian length in front of everything it writes,
+and expect the same from the renderer:
+
+#+begin_example
+  +----+----+----+----+----+--------------------+
+  | 00 | 00 | 00 | 05 | 02 | 00 50 00 18         |   MSG_SETUP 80x24
+  +----+----+----+----+----+--------------------+
+   length = 5 bytes     tag   payload
+#+end_example
+
+On the Elixir side the length is invisible: =Port.command/2= adds it, and
+={port, {:data, bytes}}= arrives with it stripped. On the C side,
+[[file:../c_src/renderer/core/protocol.c::proto_read][proto_read]] reads the 4 bytes, rejects anything over 1 MiB (the length comes
+from outside the process, so it's untrusted), then reads exactly that many.
+
+* The messages
+
+All integers are big-endian (Elixir's default in binaries). The tags are a
+typed C23 enum, =enum msg_tag : uint8_t=, with a =static_assert= that it's
+one byte.
+
+| Tag | Name  | Direction        | Payload                                                       |
+|-----+-------+------------------+---------------------------------------------------------------|
+|   1 | HELLO | renderer->Elixir | u16 version, u8 name length, name                             |
+|   2 | SETUP | Elixir->renderer | u16 cols, u16 rows                                            |
+|   3 | ROWS  | Elixir->renderer | u16 cursor row, u16 cursor col, u16 count, then per row: u16 index, u16 length, bytes |
+|   4 | TEXT  | renderer->Elixir | UTF-8 text the user typed                                     |
+|   5 | KEY   | renderer->Elixir | u32 SDL keycode, u16 SDL modifier bits                        |
+
+Both sides are kept in sync by hand:
+[[file:../c_src/renderer/core/protocol.h][protocol.h]] and [[file:../lib/guiltty/window/protocol.ex][Guiltty.Window.Protocol]]. Any change bumps the
+version.
+
+* The handshake
+
+#+begin_example
+  Window                                renderer
+    | Port.open ------------------------> starts
+    |                                     |
+    |<----------------- HELLO v1 "gl" ----|
+    | version == 1? else stop             |
+    |---- SETUP 80x24 ------------------->| now it knows the window size:
+    |                                     | builds the atlas, opens the window
+    | Screen.subscribe                    |
+    |---- ROWS (all 24 rows) ------------>| draws
+    |          ...                        |
+    |---- ROWS (rows 22, 23) ------------>| draws
+    |<----------------- TEXT "l" ---------|
+    |<----------------- KEY Enter --------|
+#+end_example
+
+The hello carries the version so a renderer built from older C can't talk
+to newer Elixir by accident. The backend name ("gl", later "vk") is logged.
+
+* Shutdown, both ways
+
+| What happens                | Renderer                       | Elixir                                  |
+|-----------------------------+--------------------------------+-----------------------------------------|
+| You close the window        | exits with status 0            | ={:exit_status, 0}= -> Window stops     |
+| You type =exit= in bash     | stdin hits EOF -> exits 0      | session stops -> app stops -> port closes |
+| The renderer crashes        | killed by a signal             | ={:exit_status, 137}= -> Window restarts |
+| A malformed message arrives | exits with status 2            | Window stops with ={:renderer_exited, 2}= |
+
+Window and the session are both *significant* children of the application
+supervisor. Whichever stops normally first takes the application down, and
+stopping the application stops the other.
+
+A renderer crash is different: it's an abnormal exit, so the supervisor
+restarts Window, which starts a new renderer. The new Window subscribes to
+the Screen, the Screen sends every row, and the window reappears with the
+same contents. The plan lists this for MVP 4; it falls out of the design
+already. Try =kill -9 $(pgrep -x guiltty_rendere)= while guiltty runs.
+
+* Malformed messages
+
+Every read in the renderer goes through a =struct reader= whose =rd_u8=,
+=rd_u16= and =rd_bytes= refuse to read past the end of the message. A ROWS
+message that claims 5 rows but carries 1, or a row index past the grid,
+makes the renderer exit with status 2 instead of reading garbage memory. A
+test sends exactly that to the AddressSanitizer build.
+
+* Loot
+
+- Elixir's =Port= docs: =:spawn_executable=, =packet: 4=, =:exit_status=.
+- =pipe(7)=: pipes are byte streams, which is why framing exists.
+- =signal(7)=: exit status 137 is 128 + 9 (SIGKILL).
+- C23: typed enums and =static_assert=.
+
+* Questions
+
+1. Why is the renderer a port and not a NIF?
+2. What does =packet: 4= add, and why is it needed?
+3. Why does the renderer reject messages over 1 MiB?
+4. How does the renderer learn that guiltty is shutting down?
+5. Why does the window come back after =kill -9= on the renderer?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. A crash in a NIF kills the whole BEAM. A crashed port only closes, and
+   Elixir can start a new one.
+2. A 4-byte length before each message. Pipes have no message boundaries,
+   so without it the reader can't tell where one message ends.
+3. The length comes from another process. Trusting it blindly means a bad
+   or buggy sender could make it allocate gigabytes.
+4. The BEAM closes the port, so the renderer's stdin reaches EOF; its reader
+   thread reports that and the main loop exits.
+5. Exit status 137 is abnormal, so the supervisor restarts Window. The new
+   Window subscribes to the Screen, which still has the whole grid and sends
+   every row.

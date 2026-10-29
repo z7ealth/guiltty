@@ -9,6 +9,6 @@ the loot (what to read next) and a few questions to check yourself.
 3. [[file:02-pty-nif.org][The PTY NIF: a pseudoterminal inside the BEAM]]
 4. [[file:03-parser.org][Parser v0: bytes in, commands out]]
 5. [[file:04-screen-and-grid.org][The screen and the grid]]
-
-Chapters to come as the code grows: the port protocol, the renderer and
-input.
+6. [[file:05-port-protocol.org][The port protocol: Elixir and the renderer]]
+7. [[file:06-renderer.org][The renderer: from cells to pixels]]
+8. [[file:07-input.org][Input: from a key press to bash]]

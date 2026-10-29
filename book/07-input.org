@@ -1,0 +1,107 @@
+#+TITLE: Input: from a key press to bash
+#+STARTUP: overview
+
+* The path of one key
+
+#+begin_example
+  you press "l"
+     |
+  X11 / Wayland -> SDL3
+     |  SDL_EVENT_KEY_DOWN  (key = 'l', mod = 0)
+     |  SDL_EVENT_TEXT_INPUT ("l")
+     v
+  renderer: send KEY and TEXT over stdout
+     v
+  Guiltty.Window: Protocol.decode -> Keymap.to_bytes
+     |  {:key, ?l, 0}  -> nil  (letters come as text)
+     |  {:text, "l"}   -> "l"
+     v
+  Guiltty.Session.Pty.write -> write(master, "l")
+     v
+  kernel line discipline -> bash (readline) -> echoes "l"
+     v
+  ... and back through Parser -> Screen -> Window -> renderer
+#+end_example
+
+Note that what you see on screen is not what you typed: it's bash's *echo*.
+guiltty never draws your keys directly.
+
+* Two kinds of events
+
+SDL reports keyboard input twice, on purpose:
+
+- *Text input* (=SDL_EVENT_TEXT_INPUT=): the character that key produced,
+  after Shift, the keyboard layout and (from MVP 5) dead keys and input
+  methods. "Shift + 4" arrives as ="$"=. This is what printable keys use.
+- *Key events* (=SDL_EVENT_KEY_DOWN=): which key, plus modifier bits. This
+  is the only way to see Enter, Backspace, Ctrl+C and so on, which produce
+  no text.
+
+The renderer forwards both and lets [[file:../lib/guiltty/keymap.ex][Guiltty.Keymap]] decide. Plain letter
+keys map to =nil=, so a letter is never sent twice.
+
+* Input v0
+
+| Key              | SDL keycode   | Bytes sent          |
+|------------------+---------------+---------------------|
+| any printable    | (text event)  | the UTF-8 text      |
+| Enter, keypad Enter | =0x0D=, =0x40000058= | =\r=       |
+| Backspace        | =0x08=        | =0x7F= (DEL)        |
+| Tab              | =0x09=        | =\t=                |
+| Escape           | =0x1B=        | =0x1B=              |
+| Ctrl+A .. Ctrl+Z | =a= .. =z= + Ctrl | =0x01= .. =0x1A=  |
+
+Why these bytes:
+
+- *Enter is =\r=* because that's what a VT100's Return key sent. The line
+  discipline's ICRNL turns it into =\n= for programs that read lines.
+- *Backspace is DEL (=0x7F=)*, not BS (=0x08=): modern terminals agree on
+  it, and it's what =stty= sets as the erase character (=stty -a= shows
+  =erase = ^?=).
+- *Ctrl+letter clears the top bits*: =c= is =0x63=, Ctrl+C is =0x03=. That's
+  why it's written =^C=, and why Ctrl+I is the same byte as Tab and Ctrl+M
+  the same as Enter.
+
+* Ctrl+C is not a signal (yet)
+
+guiltty sends only the byte =0x03=. The *kernel* does the rest: the line
+discipline sees the =VINTR= character (=^C= by default, see =stty -a=) with
+=ISIG= on, and sends SIGINT to the terminal's foreground process group.
+That's why Ctrl+C stops =sleep 100= but not bash itself (bash is in a
+different process group). In raw mode, as in vim, =ISIG= is off and vim
+just receives the byte.
+
+* Escape then a letter
+
+Pressing Escape then =e= sends =\x1be=. Readline reads that as Meta+e and
+eats the =e=. Every terminal does this; it's why Escape followed by a key
+can act like Alt.
+
+* Loot
+
+- =termios(3)=: =ICRNL=, =ISIG=, =VINTR=, =VERASE=.
+- =stty -a=: your terminal's settings right now.
+- The SDL3 wiki: =SDL_EVENT_TEXT_INPUT=, =SDL_Keycode=, =SDL_Keymod=.
+- =ascii(7)=: the control characters.
+
+* Questions
+
+1. Why are letters sent from text events and not key events?
+2. Why does Ctrl+C stop =sleep 100= but not bash?
+3. Why is Backspace =0x7F=?
+4. What byte does Ctrl+[ produce, and which key does that match?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Text events already account for Shift, the layout and dead keys. Key
+   events only say which key was pressed.
+2. The kernel sends SIGINT to the foreground process group, which is
+   =sleep='s. Bash is in its own group, and while it waits for a command it
+   catches SIGINT itself and just shows a new prompt.
+3. It's DEL, the erase character modern systems agree on (=stty= shows
+   =erase = ^?=).
+4. =[= is =0x5B=; clearing the top bits gives =0x1B=: Escape. (Input v0
+   only maps Ctrl+A..Z, so guiltty doesn't send it yet.)

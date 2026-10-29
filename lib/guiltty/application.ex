@@ -10,8 +10,12 @@ defmodule Guiltty.Application do
     children =
       [{Registry, keys: :unique, name: Guiltty.Registry}] ++
         if Application.get_env(:guiltty, :autostart, true) do
-          # The session is significant: when its shell exits, the app stops.
-          [Supervisor.child_spec({Guiltty.Session.Supervisor, id: :main}, significant: true)]
+          # Both are significant: when the shell exits or the window closes,
+          # the application stops, and stopping takes the other one down.
+          [
+            Supervisor.child_spec({Guiltty.Session.Supervisor, id: :main}, significant: true),
+            Supervisor.child_spec({Guiltty.Window, session: :main}, significant: true)
+          ]
         else
           []
         end

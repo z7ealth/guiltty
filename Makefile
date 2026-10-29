@@ -1,21 +1,46 @@
 # Built by elixir_make during `mix compile`. It exports ERTS_INCLUDE_DIR;
 # the fallback lets you run `make` by hand too.
+#
+#   make             the PTY NIF and the OpenGL renderer (both builds)
+#   make debug       only the renderer with AddressSanitizer and UBSan,
+#                    priv/guiltty_renderer_gl-debug
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]), halt().')
 
 CC ?= gcc
 CFLAGS_C23 = -std=c23 -Wall -Wextra -Wpedantic -g
+SANITIZE = -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
 
 PRIV = priv
 NIF = $(PRIV)/pty_nif.so
 
-all: $(NIF)
+RENDERER_CORE = $(wildcard c_src/renderer/core/*.c)
+RENDERER_HEADERS = $(wildcard c_src/renderer/core/*.h)
+RENDERER_DEPS = sdl3 freetype2 fontconfig
+RENDERER_CFLAGS = $(shell pkg-config --cflags $(RENDERER_DEPS))
+RENDERER_LIBS = $(shell pkg-config --libs $(RENDERER_DEPS))
+
+GL_SRC = c_src/renderer/gl/gl_backend.c
+GL_SHADERS = $(wildcard c_src/renderer/gl/shaders/*)
+RENDERER_GL = $(PRIV)/guiltty_renderer_gl
+
+all: $(NIF) $(RENDERER_GL) $(RENDERER_GL)-debug
 
 $(NIF): c_src/pty_nif.c
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared -I$(ERTS_INCLUDE_DIR) -o $@ $< -lutil
 
-clean:
-	rm -f $(NIF)
+$(RENDERER_GL): $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
+	@mkdir -p $(PRIV)
+	$(CC) $(CFLAGS_C23) -O2 $(RENDERER_CFLAGS) -o $@ $(RENDERER_CORE) $(GL_SRC) $(RENDERER_LIBS)
 
-.PHONY: all clean
+debug: $(RENDERER_GL)-debug
+
+$(RENDERER_GL)-debug: $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
+	@mkdir -p $(PRIV)
+	$(CC) $(CFLAGS_C23) $(SANITIZE) $(RENDERER_CFLAGS) -o $@ $(RENDERER_CORE) $(GL_SRC) $(RENDERER_LIBS)
+
+clean:
+	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-debug
+
+.PHONY: all debug clean

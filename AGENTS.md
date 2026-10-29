@@ -203,11 +203,15 @@ mix deps.get
 mix compile                 # also builds c_src/ into priv/ via elixir_make
 mix test
 mix format --check-formatted
-iex -S mix                  # run guiltty
+mix guiltty                 # open a guiltty window; returns when it closes
+iex -S mix                  # same, with an iex shell alongside
+make debug                  # renderer with ASan + UBSan (also built by `make`)
+./priv/guiltty_renderer_gl-debug --demo   # the renderer alone, no Elixir
 ```
 
-The exact Makefile targets (`debug` with sanitizers, the standalone renderer
-build) are documented here once they exist.
+Tests run the `-debug` renderer headless (`SDL_VIDEO_DRIVER=offscreen`).
+Set `config :guiltty, renderer: "guiltty_renderer_gl-debug"` to run the app
+under the sanitizers.
 
 ## Environment
 
@@ -215,7 +219,8 @@ The user's machine is openSUSE (packages via `zypper`), with:
 
 - GCC 16, Elixir 1.20 on OTP 29 (via asdf)
 - FreeType, fontconfig, OpenGL and EGL development files present
-- **Not installed yet:** SDL3, Valgrind, Clang. Ask before installing system
+- SDL3 3.4, an X11 session (`DISPLAY=:0`)
+- **Not installed yet:** Valgrind, Clang. Ask before installing system
   packages and give the exact `zypper` command.
 
 ## References

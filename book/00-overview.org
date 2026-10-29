@@ -15,8 +15,8 @@ Everything else in guiltty is plumbing around those two jobs.
 
 * The whole pipe
 
-This is the shape guiltty will have at MVP 1. Every later MVP thickens the
-same pipe instead of adding new boxes.
+This is guiltty at MVP 1. Every later MVP thickens the same pipe instead of
+adding new boxes.
 
 #+begin_example
                         BEAM (one OS process, many Elixir processes)

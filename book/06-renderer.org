@@ -1,0 +1,173 @@
+#+TITLE: The renderer: from cells to pixels
+#+STARTUP: overview
+
+* Two halves: core and backend
+
+#+begin_example
+  c_src/renderer/
+  |-- core/                    knows SDL, FreeType, the protocol; no GPU API
+  |   |-- main.c               the port, the window, events, the cell mirror
+  |   |-- protocol.c/.h        framing and safe message reading
+  |   |-- atlas.c/.h           fontconfig + FreeType -> a glyph bitmap
+  |   `-- backend.h            the interface every backend implements
+  `-- gl/                      knows OpenGL; nothing about ports or fonts
+      |-- gl_backend.c
+      `-- shaders/cell.vert, cell.frag
+#+end_example
+
+The core never includes a GL header. It calls the backend through a struct
+of function pointers ([[file:../c_src/renderer/core/backend.h][backend.h]]):
+
+| Field          | When it's called                                      |
+|----------------+-------------------------------------------------------|
+| =window_flags= | read before creating the window (=SDL_WINDOW_OPENGL=) |
+| =configure=    | before the window exists: ask SDL for GL 3.3 core     |
+| =init=         | after the window exists: context, shaders, buffers    |
+| =upload_atlas= | once: the glyph bitmap becomes a texture              |
+| =draw_frame=   | whenever something changed: draw and present          |
+| =resize=       | when the drawable size changes                        |
+| =shutdown=     | on exit                                               |
+
+=gl_backend.c= defines =renderer_backend=, and the Makefile links core +
+gl into =guiltty_renderer_gl=. The Vulkan side quest adds =vk/= and a second
+binary, =guiltty_renderer_vk=, without touching the core.
+
+* The glyph atlas
+
+A GPU can't draw a font; it draws textures. So at startup the core turns the
+font into one picture holding every glyph guiltty can show:
+
+1. fontconfig resolves ="monospace"= to a file (here Source Code Pro).
+2. FreeType opens it at 18 px and measures one *cell*: the advance width of
+   =M= by ascender + descender.
+3. Each of ASCII 32..126 (95 glyphs) is rasterized into its own cell of a
+   16-column grid.
+
+#+begin_example
+   one 8-bit bitmap, 16 x 6 cells (cell = 11 x 23 px here)
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+  |   | ! | " | # | $ | % | & | ' | ( | ) | * | + | , | - | . | / |   32..47
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+  | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | : | ; | < | = | > | ? |   48..63
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+  | @ | A | B |  ...                                          | O |   64..79
+  |   ...                                                         |
+  | p | q | r | s | t | u | v | w | x | y | z | { | | | } | ~ |   |  112..126
+  +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+#+end_example
+
+Each byte is a *coverage* value: 0 = background, 255 = fully inked,
+in-between = anti-aliased edge. Character =c= lives in slot =c - 32=, at
+column =slot % 16=, row =slot / 16=.
+
+Glyphs are placed on a shared *baseline*: FreeType reports how far each
+glyph's bitmap reaches above the baseline (=bitmap_top=), and the baseline
+sits =ascender= pixels below the top of the cell. All atlas sizes go through
+=ckd_mul= (checked multiplication), so a silly font size can't overflow.
+
+* One draw call for the whole screen
+
+The OpenGL backend draws 1920 cells (80 x 24) with a single
+=glDrawArraysInstanced= call: 4 vertices (a quad, as a triangle strip) times
+1920 *instances*.
+
+#+begin_example
+  CPU (each frame)                        GPU
+  cells: "$ ls\0\0...  1920 bytes"  --->  per-instance attribute a_glyph
+                                          (divisor 1: one byte per quad)
+  atlas texture (uploaded once)     --->  sampler u_atlas
+  uniforms: cell size, viewport,    --->  for instance i, vertex v:
+            cols, cursor index              cell   = (i % cols, i / cols)
+                                            corner = (v & 1, v >> 1)
+                                            pixel  = origin + (cell + corner) * cell_size
+                                            texel  = (slot_xy(a_glyph) + corner) * cell_size
+#+end_example
+
+The vertex shader ([[file:../c_src/renderer/gl/shaders/cell.vert][cell.vert]]) needs no vertex buffer at all: it builds
+each corner from =gl_VertexID= and each cell position from =gl_InstanceID=.
+The only per-cell data is the character byte.
+
+The fragment shader ([[file:../c_src/renderer/gl/shaders/cell.frag][cell.frag]]) reads the coverage with =texelFetch=.
+Because the atlas is exactly the size it's drawn at, each screen pixel maps
+to one atlas texel, with no filtering or blur. It then mixes background and
+foreground by that coverage. The *block cursor* is the cell whose instance
+index equals =u_cursor=: it's drawn with fg and bg swapped.
+
+The shaders are compiled into the binary with C23 =#embed=, so the renderer
+is a single file with nothing to find at runtime.
+
+** Loading GL functions
+On Linux you can't count on linking against OpenGL 3.3 functions directly:
+the driver hands them out at runtime. The backend lists every function it
+uses once, in an X-macro (=GL_FUNCS=), and loads each with
+=SDL_GL_GetProcAddress=. If one is missing, it says which.
+
+* The event loop
+
+#+begin_example
+  reader thread                       main thread
+  -------------                       -----------
+  loop:                               loop:
+    read framed msg from stdin          SDL_WaitEvent  (sleeps until something happens)
+    SDL_PushEvent(port_event, msg) -->  port_event   -> apply ROWS to the cell mirror
+    on EOF: push (nullptr) ---------->  nullptr      -> quit
+                                        TEXT_INPUT   -> send TEXT
+                                        KEY_DOWN     -> send KEY
+                                        CLOSE        -> quit (status 0)
+                                        drain the rest of the queue, then
+                                        draw once if anything changed
+#+end_example
+
+Reading stdin blocks, and SDL's event loop wants the main thread, so a
+small reader thread turns port messages into SDL events. =SDL_PushEvent= is
+safe from any thread. Only the main thread writes to stdout, so outgoing
+messages never interleave.
+
+Draws are batched: after waking up, the loop drains every queued event and
+draws once. With vsync on (=SDL_GL_SetSwapInterval(1)=), it never draws more
+often than the screen refreshes.
+
+* Running it alone
+
+#+begin_src sh
+make                                     # both builds
+./priv/guiltty_renderer_gl --demo        # a fixed screen, no port
+./priv/guiltty_renderer_gl-debug --demo  # same, under ASan + UBSan
+#+end_src
+
+Closing the demo window under the debug build prints nothing: no leaks, no
+errors. In the test suite the debug build runs headless on SDL's offscreen
+driver, with leak checks off there only (Mesa's software EGL leaks 128 bytes
+from a library it has already unloaded).
+
+* Loot
+
+- LearnOpenGL: Hello Triangle, Shaders, Textures, Instancing.
+- The SDL3 wiki: =SDL_CreateWindow=, =SDL_GL_*=, =SDL_PushEvent=, text input.
+- FreeType tutorial step 2: glyph metrics, =bitmap_left=, =bitmap_top=.
+- fontconfig's =FcFontMatch=.
+- C23: =#embed=, =<stdckdint.h>=.
+
+* Questions
+
+1. Why does the core never include GL headers?
+2. What's in the atlas, and why build it on the CPU?
+3. How does the vertex shader know where cell 85 goes?
+4. How is the cursor drawn?
+5. Why does the renderer need a second thread?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. So a second backend (Vulkan) can be added without touching it, and the
+   GL build never needs Vulkan headers or the other way around.
+2. All 95 printable ASCII glyphs as coverage values. FreeType runs on the
+   CPU anyway, and a plain bitmap can go to any backend.
+3. =85 % 80 = 5=, =85 / 80 = 1=: column 5, row 1. Multiplied by the cell size
+   plus the padding, that's its pixel position.
+4. The fragment shader swaps foreground and background for the instance
+   whose index is =cursor_row * cols + cursor_col=.
+5. Reading stdin blocks. The main thread must keep handling window events,
+   so a reader thread blocks instead and posts each message as an SDL event.

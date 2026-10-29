@@ -74,3 +74,42 @@ it stops after EOF its supervisor shuts down, and so does the application.
 
 - Use `pidfd_open` so signalling the child can never hit a reused pid.
 - The ignored SIGCHLD means we never learn bash's exit status. Fine for now.
+
+## 2026-10-29 — MVP 1, steps 3 to 7: first light
+
+_Draft: agent, awaiting user_
+
+**Tried.** The renderer: a separate C program with a core (SDL3 window,
+port protocol, FreeType atlas) and an OpenGL 3.3 backend behind a struct of
+function pointers. The whole grid is one instanced draw call; shaders are
+baked in with `#embed`. `Guiltty.Window` runs it as a port with
+`{:packet, 4}`, checks the hello's protocol version, sends the setup and
+forwards screen updates. Keys come back as TEXT and KEY messages and
+`Guiltty.Keymap` turns them into bytes. `mix guiltty` opens a window.
+
+**Broke.**
+- `[[nodiscard]]` can't go on function-pointer struct members; GCC warns
+  and ignores it.
+- Under SDL's offscreen driver, LeakSanitizer reports 128 bytes from an
+  unloaded library (Mesa's software EGL). The headless tests run with
+  `detect_leaks=0`; on X11 the debug renderer exits with no reports at all.
+- A test raced the handshake and sent its bad message before the setup.
+  Window now has a `ready` flag, and a renderer whose stdin closes during
+  the handshake exits quietly.
+
+**Clicked.** The first frame drew correctly on the first try. And because
+the Screen sends every row to a new subscriber, `kill -9` on the renderer
+already brings the window back with its contents. That's an MVP 4 feature,
+free.
+
+Checked by hand with real X11 key events (XTest): `ls`, `echo`, `cat`,
+Backspace, Tab, Ctrl+C on `sleep 100`, Ctrl+D, scrolling with `seq 1 30`,
+`exit` closing the window, and closing the window ending bash, with no
+leftover processes.
+
+### Later
+
+- The cursor is always drawn, even while a program would hide it (DECTCEM,
+  MVP 2).
+- The window isn't resizable yet (MVP 2).
+- Font and size are fixed (Source Code Pro via fontconfig, 18 px).

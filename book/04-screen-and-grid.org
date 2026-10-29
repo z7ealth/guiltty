@@ -61,8 +61,9 @@ clears the set, so the Screen only sends what changed.
 [[file:../lib/guiltty/session/screen.ex][Guiltty.Session.Screen]] holds the grid and is the *authoritative* copy of
 what's on screen. After each batch of commands it sends
 ={:screen_update, id, [{row, binary}], {cursor_row, cursor_col}}= to its
-subscribers. From step 5 the subscriber is the =Window=. A new subscriber
-first gets every row, which is how a restarted renderer will redraw (MVP 4).
+subscribers: the =Window=, which forwards them to the renderer (see
+[[file:05-port-protocol.org][the port protocol]]). A new subscriber first gets every row, which is how
+a restarted renderer redraws.
 
 From iex:
 
@@ -76,11 +77,12 @@ Guiltty.Session.dump(:main) |> IO.puts()
 #+begin_example
   Guiltty.Supervisor (one_for_one, auto_shutdown: :any_significant)
   |-- Registry Guiltty.Registry         names: {session_id, :pty} etc.
-  `-- Session.Supervisor :main          (significant)
-      |   rest_for_one, auto_shutdown: :any_significant
-      |-- Pty      (significant)  owns the NIF resource and bash
-      |-- Screen                  owns the grid
-      `-- Parser                  owns the parser state
+  |-- Session.Supervisor :main          (significant)
+  |   |   rest_for_one, auto_shutdown: :any_significant
+  |   |-- Pty      (significant)  owns the NIF resource and bash
+  |   |-- Screen                  owns the grid
+  |   `-- Parser                  owns the parser state
+  `-- Window                            (significant) owns the renderer port
 #+end_example
 
 Data flows Pty -> Parser -> Screen:
@@ -114,8 +116,9 @@ The Pty is marked *significant*. When it stops with ={:shutdown, _}= (bash
 exited), its =:transient= restart policy says don't restart, and
 =auto_shutdown: :any_significant= shuts down the whole session. The session
 supervisor is itself significant in the application supervisor, so the
-application stops too. That's the "=exit= closes the window" rule, done with
-plain OTP.
+application stops too, which stops the Window and closes the renderer.
+That's the "=exit= closes the window" rule, done with plain OTP. Closing the
+window works the same way from the other side: Window is significant too.
 
 * Loot
 

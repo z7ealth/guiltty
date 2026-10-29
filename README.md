@@ -1,21 +1,21 @@
-# Guiltty
+# guiltty
 
-**TODO: Add description**
+A GPU terminal emulator in Elixir, with a little C: a PTY NIF and an
+OpenGL renderer that runs as its own process.
 
-## Installation
+## Run it
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `guiltty` to your list of dependencies in `mix.exs`:
+Needs Elixir 1.20, GCC 15+ and the SDL3, FreeType and fontconfig
+development packages.
 
-```elixir
-def deps do
-  [
-    {:guiltty, "~> 0.1.0"}
-  ]
-end
+```sh
+mix deps.get
+mix guiltty        # opens a window running bash
+mix test
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/guiltty>.
+## Learn how it works
 
+- `book/` explains every part, with diagrams. Start at `book/index.org`.
+- `DEVLOG.md` is what happened along the way.
+- `AGENTS.md` has the rules for working on the code.
