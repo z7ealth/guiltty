@@ -1,0 +1,77 @@
+| row: row + 1}
+159:  def index(grid), do: scroll_up(grid, 1)
+162:  def reverse_index(%{row: row} = grid) when row > 0, do: %{grid | row: row
+- 1}
+163:  def reverse_index(grid), do: scroll_down(grid, 1)
+166:  def scroll_up(grid, n) do
+174:  def scroll_down(grid, n) do
+187:  def erase_display(grid, 0) do
+192:  def erase_display(grid, 1) do
+197:  def erase_display(grid, 2), do: Enum.reduce(0..(grid.rows - 1), grid, &bla
+nk_row(&2, &1))
+198:  def erase_display(grid, _mode), do: grid
+201:  def erase_line(grid, 0), do: blank_cells(grid, grid.row, min(grid.col, gri
+d.cols - 1), grid.cols)
+202:  def erase_line(grid, 1), do: blank_cells(grid, grid.row, 0, min(grid.col,
+grid.cols - 1) + 1)
+203:  def erase_line(grid, 2), do: blank_row(grid, grid.row)
+204:  def erase_line(grid, _mode), do: grid
+207:  def erase_chars(grid, n) do
+214:  def set_pen(grid, attrs, fg, bg), do: %{grid | attrs: attrs, fg: fg, bg: b
+g}
+219:  def reset(grid), do: new(grid.cols, grid.rows)
+227:  def resize(grid, cols, rows) do
+
+--- cursor 23,0 visible
+--- styles
+1 0-2 fg=2
+1 3-3 fg=6
+1 6-9 bold fg=1
+2 0-2 fg=2
+2 3-3 fg=6
+2 6-9 bold fg=1
+4 0-2 fg=2
+4 3-3 fg=6
+4 6-9 bold fg=1
+5 0-2 fg=2
+5 3-3 fg=6
+5 6-9 bold fg=1
+6 0-2 fg=2
+6 3-3 fg=6
+6 6-9 bold fg=1
+7 0-2 fg=2
+7 3-3 fg=6
+7 6-9 bold fg=1
+8 0-2 fg=2
+8 3-3 fg=6
+8 6-9 bold fg=1
+9 0-2 fg=2
+9 3-3 fg=6
+9 6-9 bold fg=1
+11 0-2 fg=2
+11 3-3 fg=6
+11 6-9 bold fg=1
+12 0-2 fg=2
+12 3-3 fg=6
+12 6-9 bold fg=1
+14 0-2 fg=2
+14 3-3 fg=6
+14 6-9 bold fg=1
+16 0-2 fg=2
+16 3-3 fg=6
+16 6-9 bold fg=1
+17 0-2 fg=2
+17 3-3 fg=6
+17 6-9 bold fg=1
+18 0-2 fg=2
+18 3-3 fg=6
+18 6-9 bold fg=1
+19 0-2 fg=2
+19 3-3 fg=6
+19 6-9 bold fg=1
+21 0-2 fg=2
+21 3-3 fg=6
+21 6-9 bold fg=1
+22 0-2 fg=2
+22 3-3 fg=6
+22 6-9 bold fg=1

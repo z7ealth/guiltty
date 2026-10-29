@@ -11,6 +11,8 @@ constexpr int atlas_grid_cols = 16;
 
 struct atlas {
     int cell_w, cell_h; // one terminal cell, in pixels
+    int baseline; // pixels from the top of a cell down to the baseline
+    int line_thickness; // for underline and strikethrough
     int width, height; // the whole bitmap, in pixels
     uint8_t *pixels; // width * height coverage values, row-major
 };

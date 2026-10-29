@@ -70,6 +70,8 @@ bool atlas_build(struct atlas *atlas, const char *font_path, int pixel_size) {
         goto done_face;
     atlas->cell_w = (int)((face->glyph->advance.x + 32) >> 6);
     atlas->cell_h = ascender - descender;
+    atlas->baseline = ascender;
+    atlas->line_thickness = pixel_size >= 24 ? 2 : 1;
 
     int count = atlas_last_char - atlas_first_char + 1;
     int grid_rows = (count + atlas_grid_cols - 1) / atlas_grid_cols;

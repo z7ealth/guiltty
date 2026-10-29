@@ -1,0 +1,47 @@
+[?1049h[22;0;0t[24;1H[?1h=[4mLS[24m(1)                            User Commands                            [4mLS[24m(1)[m
+[m
+[1mNAME[0m[m
+       ls - list directory contents[m
+[m
+[1mSYNOPSIS[0m[m
+       [1mls [22m[[4mOPTION[24m]... [[4mFILE[24m]...[m
+[m
+[1mDESCRIPTION[0m[m
+       List  information  about  the  FILEs (the current directory by default).[m
+       Sort entries alphabetically if none of [1m-cftuvSUX [22mnor  [1m--sort  [22mis  speci-[m
+       fied.[m
+[m
+       Mandatory arguments to long options are mandatory for short options too.[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-a\[1m-a, --all[22m]8;;\[m]8;;\
+              do not ignore entries starting with .[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-A\[1m-A, --almost-all[22m]8;;\[m]8;;\
+              do not list implied . and ..[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls--author\[1m--author[22m]8;;\[m]8;;\
+              with [1m-l[22m, print the author of each file[m
+[7m Manual page ls(1) line 1 (press h for help or q to quit)[27m[K[K[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-b\[1m-b, --escape[22m]8;;\[m]8;;\
+              print C-style escapes for nongraphic characters[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls--block-size\[1m--block-size=SIZE[22m]8;;\[m]8;;\
+              with   [1m-l[22m,   scale  sizes  by  SIZE  when  printing  them;  e.g.,[m
+              '--block-size=M'; see SIZE format below[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-B\[1m-B, --ignore-backups[22m]8;;\[m]8;;\
+              do not list implied entries ending with ~[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-c\[1m-c[22m]8;;\     with [1m-lt[22m: sort by, and show, ctime (time of last change  of  file[m]8;;\
+              status information); with [1m-l[22m: show ctime and sort by name; other-[m
+              wise: sort by ctime, newest first[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-C\[1m-C[22m]8;;\     list entries by columns[m]8;;\
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls--color\[1m--color[=WHEN][22m]8;;\[m]8;;\
+              color the output WHEN; more info below[m
+[m
+       ]8;;https://www.gnu.org/software/coreutils/manual/coreutils.html#ls-d\[1m-d, --directory[22m]8;;\[m]8;;\
+              list directories themselves, not their contents[m
+[m
+[7m Manual page ls(1) line 24 (press h for help or q to quit)[27m[K[K[?1l>[?1049l[23;0;0t

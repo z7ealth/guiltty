@@ -1,0 +1,50 @@
+|  mix.exs                               |   5 +-
+|  mix.lock                              |   3 +
+|  test/guiltty/grid_test.exs            |  57 +++++
+|  test/guiltty/parser_test.exs          |  60 +++++
+|  test/guiltty/session/pty_nif_test.exs |  62 +++++
+|  test/guiltty/session_test.exs         |  61 +++++
+|  27 files changed, 2283 insertions(+), 9 deletions(-)
+|
+* commit dbe6d90321ddacd0e3d39ad94b42d37808c1fca0
+  Author: H?ctor Alonso Salinas Garc?a <ha_sg@outlook.com>
+  Date:   Tue Oct 27 12:30:16 2026 -0600
+
+      First bonfire lit
+
+   .formatter.exs             |  4 ++++
+   .gitignore                 | 24 ++++++++++++++++++++++++
+   README.md                  | 21 +++++++++++++++++++++
+   lib/guiltty.ex             | 18 ++++++++++++++++++
+   lib/guiltty/application.ex | 20 ++++++++++++++++++++
+   mix.exs                    | 29 +++++++++++++++++++++++++++++
+   test/guiltty_test.exs      |  8 ++++++++
+   test/test_helper.exs       |  1 +
+   8 files changed, 125 insertions(+)
+
+--- cursor 23,0 visible
+--- styles
+0 0-0 fg=1
+0 47-47 fg=2
+0 48-48 fg=1
+1 0-0 fg=1
+1 47-47 fg=2
+2 0-0 fg=1
+2 47-51 fg=2
+3 0-0 fg=1
+3 47-51 fg=2
+4 0-0 fg=1
+4 47-51 fg=2
+5 0-0 fg=1
+5 47-51 fg=2
+6 0-0 fg=1
+7 0-0 fg=1
+8 2-48 fg=3
+14 35-38 fg=2
+15 35-58 fg=2
+16 35-55 fg=2
+17 35-52 fg=2
+18 35-54 fg=2
+19 35-63 fg=2
+20 35-42 fg=2
+21 35-35 fg=2

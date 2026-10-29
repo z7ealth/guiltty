@@ -1,0 +1,45 @@
+[32m[K59[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:bold), do: @bold
+[32m[K60[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:dim), do: @dim
+[32m[K61[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:italic), do: @italic
+[32m[K62[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:underline), do: @underline
+[32m[K63[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:blink), do: @blink
+[32m[K64[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:inverse), do: @inverse
+[32m[K65[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:hidden), do: @hidden
+[32m[K66[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kattr(:strike), do: @strike
+[32m[K69[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kindexed(n), do: 0x01_000000 ||| n
+[32m[K72[m[K[36m[K:[m[K  [01;31m[Kdef [m[Krgb(r, g, b), do: 0x02_000000 ||| r <<< 16 ||| g <<< 8 ||| b
+[32m[K74[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kcell_size, do: @cell_size
+[32m[K77[m[K[36m[K:[m[K  [01;31m[Kdef [m[Knew(cols \\ 80, rows \\ 24) do
+[32m[K85[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kcursor(grid), do: {grid.row, min(grid.col, grid.cols - 1)}
+[32m[K88[m[K[36m[K:[m[K  [01;31m[Kdef [m[Ktake_dirty(grid) do
+[32m[K94[m[K[36m[K:[m[K  [01;31m[Kdef [m[Ksnapshot(grid), do: grid.lines |> Tuple.to_list() |> Enum.with_index(fn l, i -> {i, l} end)
+[32m[K97[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kdump(grid) do
+[32m[K102[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kline_text(line), do: for(<<c, _::binary-size(9) <- line>>, into: "", do: <<c>>)
+[32m[K105[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kcell(grid, row, col) do
+[32m[K114[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kprint(grid, <<>>), do: grid
+[32m[K116[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kprint(%{col: col, cols: cols} = grid, text) when col >= cols do
+[32m[K120[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kprint(grid, text) do
+[32m[K134[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kcarriage_return(grid), do: %{grid | col: 0}
+[32m[K136[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kbackspace(grid), do: %{grid | col: max(min(grid.col, grid.cols - 1) - 1, 0)}
+[32m[K138[m[K[36m[K:[m[K  [01;31m[Kdef [m[Ktab(grid) do
+[32m[K144[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kmove_to(grid, row, col) do
+[32m[K149[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kmove_by(grid, drow, dcol) do
+[32m[K153[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kset_cursor_visible(grid, visible), do: %{grid | cursor_visible: visible}
+[32m[K158[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kindex(%{row: row, rows: rows} = grid) when row < rows - 1, do: %{grid | row: row + 1}
+[32m[K159[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kindex(grid), do: scroll_up(grid, 1)
+[32m[K162[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kreverse_index(%{row: row} = grid) when row > 0, do: %{grid | row: row - 1}
+[32m[K163[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kreverse_index(grid), do: scroll_down(grid, 1)
+[32m[K166[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kscroll_up(grid, n) do
+[32m[K174[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kscroll_down(grid, n) do
+[32m[K187[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_display(grid, 0) do
+[32m[K192[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_display(grid, 1) do
+[32m[K197[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_display(grid, 2), do: Enum.reduce(0..(grid.rows - 1), grid, &blank_row(&2, &1))
+[32m[K198[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_display(grid, _mode), do: grid
+[32m[K201[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_line(grid, 0), do: blank_cells(grid, grid.row, min(grid.col, grid.cols - 1), grid.cols)
+[32m[K202[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_line(grid, 1), do: blank_cells(grid, grid.row, 0, min(grid.col, grid.cols - 1) + 1)
+[32m[K203[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_line(grid, 2), do: blank_row(grid, grid.row)
+[32m[K204[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_line(grid, _mode), do: grid
+[32m[K207[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kerase_chars(grid, n) do
+[32m[K214[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kset_pen(grid, attrs, fg, bg), do: %{grid | attrs: attrs, fg: fg, bg: bg}
+[32m[K219[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kreset(grid), do: new(grid.cols, grid.rows)
+[32m[K227[m[K[36m[K:[m[K  [01;31m[Kdef [m[Kresize(grid, cols, rows) do

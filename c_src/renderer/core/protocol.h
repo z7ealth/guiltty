@@ -10,32 +10,48 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 1;
+constexpr uint16_t protocol_version = 2;
 
 // Largest message we accept; anything bigger is a protocol error.
-constexpr uint32_t max_message_size = 1u << 20;
+constexpr uint32_t max_message_size = 1u << 24;
 
 enum msg_tag : uint8_t {
     // renderer -> Elixir: u16 version, u8 name_len, name
     MSG_HELLO = 1,
-    // Elixir -> renderer: u16 cols, u16 rows. Sent once, after the hello.
+    // Elixir -> renderer, once after the hello: u16 cols, u16 rows, then
+    // 259 colors of 3 bytes (r, g, b): the 256-color palette, then the
+    // default foreground, default background and cursor.
     MSG_SETUP = 2,
-    // Elixir -> renderer: u16 cursor_row, u16 cursor_col, u16 count,
-    // then count times: u16 row, u16 len, len bytes of cells
+    // Elixir -> renderer: u16 cols, u16 rows (the grid this describes),
+    // u16 cursor_row, u16 cursor_col, u8 cursor_visible, u16 count, then
+    // count times: u16 row, then cols cells of wire_cell_size bytes.
     MSG_ROWS = 3,
     // renderer -> Elixir: UTF-8 text typed by the user
     MSG_TEXT = 4,
     // renderer -> Elixir: u32 SDL keycode, u16 SDL modifiers
     MSG_KEY = 5,
+    // renderer -> Elixir: u16 cols, u16 rows that now fit the window
+    MSG_RESIZE = 6,
 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");
 
+// One cell on the wire, exactly as Guiltty.Grid stores it:
+// u8 char, u8 attrs, u32 fg, u32 bg. A color's top byte says how to read
+// the rest: 0 = default, 1 = palette index in the low byte, 2 = 0xRRGGBB.
+constexpr size_t wire_cell_size = 10;
+enum color_kind : uint8_t { COLOR_DEFAULT = 0, COLOR_INDEXED = 1, COLOR_RGB = 2 };
+
+constexpr size_t palette_size = 256;
+constexpr size_t setup_colors = palette_size + 3;
+
 // Fixed-size parts of messages, in bytes.
 constexpr size_t frame_header_size = sizeof(uint32_t);
-constexpr size_t rows_header_size = sizeof(uint8_t) + 3 * sizeof(uint16_t);
-constexpr size_t row_header_size = 2 * sizeof(uint16_t);
-constexpr size_t key_message_size = sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint16_t);
-static_assert(rows_header_size == 7);
+constexpr size_t setup_message_size = 1 + 2 * sizeof(uint16_t) + 3 * setup_colors;
+constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 1 + sizeof(uint16_t);
+constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
+constexpr size_t resize_message_size = 1 + 2 * sizeof(uint16_t);
+static_assert(setup_message_size == 782);
+static_assert(rows_header_size == 12);
 static_assert(key_message_size == 7);
 
 enum read_result { READ_OK, READ_EOF, READ_ERROR };
@@ -56,6 +72,7 @@ struct reader {
 
 [[nodiscard]] bool rd_u8(struct reader *r, uint8_t *out);
 [[nodiscard]] bool rd_u16(struct reader *r, uint16_t *out);
+[[nodiscard]] bool rd_u32(struct reader *r, uint32_t *out);
 [[nodiscard]] bool rd_bytes(struct reader *r, size_t n, const uint8_t **out);
 
 void put_u16(uint8_t *p, uint16_t v);

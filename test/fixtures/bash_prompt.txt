@@ -1,0 +1,37 @@
+hsalinas@hs-suse:~/Projects/guiltty> echo hello from bash
+hello from bash
+hsalinas@hs-suse:~/Projects/guiltty> ls -d /usr/*
+/usr/bin      /usr/lib      /usr/local  /usr/src
+/usr/etc      /usr/lib64    /usr/sbin   /usr/x86_64-suse-linux
+/usr/include  /usr/libexec  /usr/share
+hsalinas@hs-suse:~/Projects/guiltty> exit
+exit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 8,0 visible
+--- styles
+3 0-7 bold fg=4
+3 14-21 bold fg=4
+3 28-37 bold fg=4
+3 40-47 bold fg=4
+4 0-7 bold fg=4
+4 14-23 bold fg=4
+4 28-36 bold fg=4
+4 40-61 bold fg=4
+5 0-11 bold fg=4
+5 14-25 bold fg=4
+5 28-37 bold fg=4

@@ -1,7 +1,11 @@
 #version 330 core
 
 // One instance per cell, four vertices per instance (a triangle strip).
-layout(location = 0) in uint a_glyph; // the cell's ASCII byte
+// Per-cell data (struct cell, 8 bytes):
+layout(location = 0) in uint a_glyph; // ASCII byte
+layout(location = 1) in uint a_attrs; // bold, underline, strike bits
+layout(location = 2) in vec3 a_fg; // final colors, 0..1
+layout(location = 3) in vec3 a_bg;
 
 uniform vec2 u_viewport; // window size in pixels
 uniform vec2 u_origin; // top-left padding in pixels
@@ -9,9 +13,13 @@ uniform vec2 u_cell; // cell size in pixels
 uniform int u_cols; // grid columns
 uniform int u_atlas_cols; // glyphs per atlas row
 uniform int u_first_char; // first character in the atlas
-uniform int u_cursor; // instance index of the cursor cell
+uniform int u_cursor; // instance index of the cursor cell, -1 if hidden
 
 out vec2 v_texel; // position in the atlas, in texels
+out vec2 v_local; // position inside the cell, in pixels
+flat out uint v_attrs;
+flat out vec3 v_fg;
+flat out vec3 v_bg;
 flat out int v_is_cursor;
 
 void main() {
@@ -26,5 +34,9 @@ void main() {
     int slot = int(a_glyph) - u_first_char;
     vec2 slot_xy = vec2(slot % u_atlas_cols, slot / u_atlas_cols);
     v_texel = (slot_xy + corner) * u_cell;
+    v_local = corner * u_cell;
+    v_attrs = a_attrs;
+    v_fg = a_fg;
+    v_bg = a_bg;
     v_is_cursor = gl_InstanceID == u_cursor ? 1 : 0;
 }

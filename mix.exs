@@ -30,7 +30,8 @@ defmodule Guiltty.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:elixir_make, "~> 0.10.1", runtime: false}
+      {:elixir_make, "~> 0.10.1", runtime: false},
+      {:stream_data, "~> 1.4", only: :test}
     ]
   end
 end

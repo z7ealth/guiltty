@@ -1,0 +1,36 @@
+/tmp/claude-1000/lsdemo
+|-- README.md
+|-- archive.tar.gz
+|-- broken -> missing
+|-- build
+|-- docs
+|-- link -> README.md
+|-- notes.txt
+|-- photo.png
+|-- pipe
+|-- run.sh
+`-- src
+
+4 directories, 8 files
+
+
+
+
+
+
+
+
+
+
+--- cursor 14,0 visible
+--- styles
+0 0-22 bold fg=4
+2 4-17 bold fg=1
+3 4-9 bold fg=1 bg=0
+4 4-8 fg=4 bg=2
+5 4-7 bold fg=4
+6 4-7 bold fg=6
+8 4-12 bold fg=5
+9 4-7 fg=3 bg=0
+10 4-9 bold fg=2
+11 4-6 bold fg=4

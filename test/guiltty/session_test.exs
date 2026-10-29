@@ -27,9 +27,17 @@ defmodule Guiltty.SessionTest do
     assert Session.dump(id) =~ "$ echo $((6 * 7))"
   end
 
-  test "TERM is dumb", %{id: id} do
-    Session.write(id, "echo $TERM\r")
-    assert eventually(fn -> Session.dump(id) =~ ~r/^dumb$/m end)
+  test "TERM is xterm-256color with truecolor", %{id: id} do
+    Session.write(id, "echo $TERM $COLORTERM\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^xterm-256color truecolor$/m end)
+  end
+
+  test "resizing reaches the grid and the kernel", %{id: id} do
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    :ok = Session.resize(id, 100, 30)
+    Session.write(id, "tput cols; tput lines\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^100\n30$/m end)
+    assert Session.dump(id) |> String.split("\n") |> length() == 30
   end
 
   test "Ctrl+C interrupts the foreground job", %{id: id} do

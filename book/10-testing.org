@@ -1,0 +1,107 @@
+#+TITLE: Testing a terminal with real bytes
+#+STARTUP: overview
+
+* Why real bytes
+
+It's easy to write a test with the escape sequence you /think/ =ls= sends.
+It's more useful to record what =ls= really sends, and check that guiltty
+draws what a real terminal would. guiltty's tests do both, in layers:
+
+| Layer                | Tests                                  | Where                          |
+|----------------------+----------------------------------------+--------------------------------|
+| parser               | sequences, limits, properties          | [[file:../test/guiltty/parser_test.exs][parser_test.exs]]   |
+| grid and terminal    | each cursor, erase and resize case     | [[file:../test/guiltty/grid_test.exs][grid_test.exs]]       |
+| SGR                  | every attribute and color form         | [[file:../test/guiltty/sgr_test.exs][sgr_test.exs]]         |
+| real programs        | recorded fixtures vs. snapshots        | [[file:../test/guiltty/golden_test.exs][golden_test.exs]]   |
+| NIF, session, window | a real bash and a real (headless) renderer | session_test, window_test |
+
+* Recording fixtures
+
+[[file:../test/fixtures/record.sh][test/fixtures/record.sh]] runs a command under =script(1)= in an 80x24
+=xterm-256color= PTY and keeps exactly the bytes it wrote:
+
+#+begin_src sh
+test/fixtures/record.sh ls_color 'ls --color=always -l'
+test/fixtures/record.sh less_page 'less -R /usr/etc/services' ' ' ' ' b q
+#+end_src
+
+Extra arguments are keys, typed after a pause so the program has drawn
+first. Lessons learned while recording:
+
+- Pause long enough. =man= takes a moment to format; keys typed before
+  =less= starts get lost, and the recording hangs.
+- openSUSE's =man ls= first asks which =ls= you mean (=ls(1)= or =ls(1p)=):
+  use =man 1 ls=.
+- =/etc/services= moved to =/usr/etc/services= on openSUSE.
+- =LC_ALL=C= keeps output ASCII until MVP 5 (git's author names are still
+  UTF-8, and show as =?=).
+
+* Golden snapshots
+
+[[file:../test/guiltty/golden_test.exs][golden_test.exs]] feeds each =NAME.bytes= through the parser and the terminal
+at 80x24, and compares the result to =NAME.txt=:
+
+#+begin_example
+$ git status
+...the screen text, 24 lines...
+--- cursor 23,0 visible
+--- styles
+1 7-18 bold
+4 0-3 fg=1
+9 0-79 bg=#336699
+#+end_example
+
+The styles section lists every run of non-default cells, so a broken color
+shows up in the diff, not just broken text. Each fixture is also fed one
+byte at a time, which must give the same screen.
+
+To update snapshots after an intended change:
+
+#+begin_src sh
+GUILTTY_UPDATE_GOLDEN=1 mix test test/guiltty/golden_test.exs
+git diff test/fixtures/      # read it: this is the review
+#+end_src
+
+* Checking the snapshots against another emulator
+
+A snapshot only proves guiltty does what it did yesterday. To check it's
+/right/, the MVP 2 snapshots were compared, cell by cell, with
+[[https://github.com/selectel/pyte][pyte]], an independent VT emulator written in Python: same bytes, same
+80x24 screen, then compare the text, the cursor, bold, underline, inverse
+and both colors. All 13 fixtures matched. The two differences found were
+representation only (pyte names =31= "red" but writes =38;5;1= as a hex
+value; guiltty stores both as palette 1), and UTF-8 (pyte decodes it,
+guiltty shows =?= until MVP 5).
+
+* Property tests
+
+[[https://hexdocs.pm/stream_data][StreamData]] generates inputs instead of us writing them:
+
+- *Random bytes never crash the parser.*
+- *Chunking doesn't matter*: random mixes of real sequences, cut at random
+  points, parse to the same commands as when fed whole.
+
+* Loot
+
+- =script(1)= from util-linux.
+- StreamData's =check all= and generators.
+- "Golden master" (or snapshot) testing.
+
+* Questions
+
+1. Why record fixtures instead of writing the escape sequences by hand?
+2. What does a snapshot prove, and what doesn't it?
+3. Why feed each fixture one byte at a time too?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Real programs send things you wouldn't think of (=ESC 7= around titles,
+   =ESC[22;0;0t=, =ESC(B=). Hand-written tests only test what you already
+   know.
+2. That guiltty draws the same as when the snapshot was taken. Not that it
+   was right then; that needs a reference, like a real terminal or pyte.
+3. To catch state that doesn't survive a split read: a read can end
+   anywhere, and the screen must not change because of it.

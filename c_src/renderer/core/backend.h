@@ -10,12 +10,38 @@
 
 #include "atlas.h"
 
-// Everything needed to draw one frame. cells holds cols * rows bytes, one
-// ASCII character per cell, row-major.
+// Attribute bits, the same as Guiltty.Grid's.
+enum cell_attr : uint8_t {
+    ATTR_BOLD = 0x01,
+    ATTR_DIM = 0x02,
+    ATTR_ITALIC = 0x04,
+    ATTR_UNDERLINE = 0x08,
+    ATTR_BLINK = 0x10,
+    ATTR_INVERSE = 0x20,
+    ATTR_HIDDEN = 0x40,
+    ATTR_STRIKE = 0x80,
+};
+
+// A cell ready to draw: the core has already applied the theme, inverse,
+// dim and hidden, so a backend only sees final colors. This is also the
+// per-instance vertex data the GL backend uploads.
+struct cell {
+    uint8_t ch; // printable ASCII
+    uint8_t attrs; // the backend still draws bold, underline and strike
+    uint8_t fg[3];
+    uint8_t bg[3];
+};
+static_assert(sizeof(struct cell) == 8, "uploaded as-is, 8 bytes per cell");
+
+// Everything needed to draw one frame. cells holds cols * rows entries,
+// row-major.
 struct frame {
     uint16_t cols, rows;
-    const uint8_t *cells;
+    const struct cell *cells;
     uint16_t cursor_row, cursor_col;
+    bool cursor_visible;
+    uint8_t cursor_rgb[3];
+    uint8_t clear_rgb[3]; // the padding around the grid
     int origin_x, origin_y; // padding from the window's top-left, in pixels
 };
 
@@ -28,9 +54,9 @@ struct backend {
     // Called before the window exists (e.g. to request a GL version).
     bool (*configure)(void);
     // Returns the backend's private state, or nullptr on failure.
-    void *(*init)(SDL_Window *window, uint16_t cols, uint16_t rows);
+    void *(*init)(SDL_Window *window);
     bool (*upload_atlas)(void *state, const struct atlas *atlas);
-    // Draws and presents one frame.
+    // Draws and presents one frame. The grid size may change between frames.
     void (*draw_frame)(void *state, const struct frame *frame);
     void (*resize)(void *state, int width_px, int height_px);
     void (*shutdown)(void *state);

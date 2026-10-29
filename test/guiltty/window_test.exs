@@ -65,6 +65,15 @@ defmodule Guiltty.WindowTest do
     assert Process.alive?(window)
   end
 
+  test "a resize from the renderer reaches the grid and the shell", %{id: id, window: window} do
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    # What the renderer sends when the user makes the window 100x30.
+    send(window, {port(window), {:data, <<6, 100::16, 30::16>>}})
+    assert eventually(fn -> length(String.split(Session.dump(id), "\n")) == 30 end)
+    Session.write(id, "stty size\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^30 100$/m end)
+  end
+
   test "stopping the window ends the renderer process", %{window: window} do
     {:os_pid, os_pid} = Port.info(port(window), :os_pid)
     assert File.exists?("/proc/#{os_pid}")
@@ -75,8 +84,9 @@ defmodule Guiltty.WindowTest do
   test "the renderer rejects a malformed message without crashing", %{window: window} do
     port = port(window)
     ref = Process.monitor(window)
-    # A rows message claiming more rows than it carries.
-    Port.command(port, <<3, 0::16, 0::16, 5::16, 0::16, 3::16, "ab">>)
+    # A rows message for the right grid size, claiming 5 rows but carrying
+    # half of one.
+    Port.command(port, <<3, 80::16, 24::16, 0::16, 0::16, 1, 5::16, 0::16, 0::size(400)-unit(8)>>)
     # The renderer exits with status 2 (protocol error), not a sanitizer crash.
     assert_receive {:DOWN, ^ref, :process, ^window, {:renderer_exited, 2}}, 3000
   end

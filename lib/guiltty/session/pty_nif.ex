@@ -27,6 +27,9 @@ defmodule Guiltty.Session.PtyNif do
   @doc "Sends `{:select, pty, :undefined, :ready_output}` once writable."
   def select_write(_pty), do: :erlang.nif_error(:not_loaded)
 
+  @doc "Sets the terminal size (TIOCSWINSZ); the kernel sends SIGWINCH."
+  def resize(_pty, _cols, _rows), do: :erlang.nif_error(:not_loaded)
+
   @doc "Closes the master, which hangs up the child's terminal."
   def close(_pty), do: :erlang.nif_error(:not_loaded)
 

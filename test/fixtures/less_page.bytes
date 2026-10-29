@@ -1,0 +1,92 @@
+[?1049h[22;0;0t[24;1H[?1h=#[m
+# Network services, Internet style[m
+#[m
+# Note that it is presently the policy of IANA to assign a single well-known[m
+# port number for both TCP and UDP; hence, most entries here have two entries[m
+# even if the protocol doesn't support UDP operations.[m
+#[m
+# This list could be found on:[m
+#            http://www.iana.org/assignments/service-names-port-numbers/service-[m names-port-numbers.xml[m
+#[m
+# See also: services(5)[m
+#[m
+#[m
+# SERVICE NAME AND TRANSPORT PROTOCOL PORT NUMBER REGISTRY[m
+#[m
+# (last updated on 2019-04-15)[m
+#[m
+# [m
+# Service names and port numbers are used to distinguish between different[m
+# services that run over transport protocols such as TCP, UDP, DCCP, and[m
+# SCTP.[m
+# [m
+[7m/usr/etc/services lines 1-22/12572 0%[27m[K[K# Service names are assigned on a first-come, first-served process, as[m
+# documented in [RFC6335].[m
+# [m
+# Port numbers are assigned in various ways, based on three ranges: System[m
+# Ports (0-1023), User Ports (1024-49151), and the Dynamic and/or Private[m
+# Ports (49152-65535); the difference uses of these ranges is described in[m
+# [RFC6335]. According to Section 8.1.2 of [RFC6335], System Ports are [m
+# assigned by the "IETF Review" or "IESG Approval" procedures described in [m
+# [RFC8126]. User Ports are assigned by IANA using the "IETF Review" process, [m
+# the "IESG Approval" process, or the "Expert Review" process, as per [m
+# [RFC6335]. Dynamic Ports are not assigned.[m
+# [m
+# The registration procedures for service names and port numbers are[m
+# described in [RFC6335].[m
+# [m
+# Assigned ports both System and User ports SHOULD NOT be used without[m
+# or prior to IANA registration.[m
+# [m
+# ************************************************************************[m
+# * PLEASE NOTE THE FOLLOWING:                                           *[m
+# *                                                                      *[m
+# * ASSIGNMENT OF A PORT NUMBER DOES NOT IN ANY WAY IMPLY AN             *[m
+# * ENDORSEMENT OF AN APPLICATION OR PRODUCT, AND THE FACT THAT NETWORK  *[m
+[7m/usr/etc/services lines 23-45/12572 0%[27m[K[K# * TRAFFIC IS FLOWING TO OR FROM A REGISTERED PORT DOES NOT MEAN THAT   *[m
+# * IT IS "GOOD" TRAFFIC, NOR THAT IT NECESSARILY CORRESPONDS TO THE     *[m
+# * ASSIGNED SERVICE. FIREWALL AND SYSTEM ADMINISTRATORS SHOULD          *[m
+# * CHOOSE HOW TO CONFIGURE THEIR SYSTEMS BASED ON THEIR KNOWLEDGE OF    *[m
+# * THE TRAFFIC IN QUESTION, NOT WHETHER THERE IS A PORT NUMBER          *[m
+# * REGISTERED OR NOT.                                                   *[m
+# ************************************************************************[m
+#[m
+# Service Name       Port/Proto   Description, Update Date, References[m
+# ------------       ----------   ------------------------------------[m
+#[m
+tcpmux             1/tcp        # TCP Port Service Multiplexer  [Mark_Lottor][m
+tcpmux             1/udp        # TCP Port Service Multiplexer  [Mark_Lottor][m
+compressnet        2/tcp        # Management Utility [m
+compressnet        2/udp        # Management Utility [m
+compressnet        3/tcp        # Compression Process  [Bernie_Volz][m
+compressnet        3/udp        # Compression Process  [Bernie_Volz][m
+#                  4/tcp        Unassigned [m
+#                  4/udp        Unassigned [m
+rje                5/tcp        # Remote Job Entry  [Jon_Postel][m
+rje                5/udp        # Remote Job Entry  [Jon_Postel][m
+#                  6/tcp        Unassigned [m
+#                  6/udp        Unassigned [m
+[7m/usr/etc/services lines 46-68/12572 0%[27m[K[K[HM# * ENDORSEMENT OF AN APPLICATION OR PRODUCT, AND THE FACT THAT NETWORK  *[m
+[HM# * ASSIGNMENT OF A PORT NUMBER DOES NOT IN ANY WAY IMPLY AN             *[m
+[HM# *                                                                      *[m
+[HM# * PLEASE NOTE THE FOLLOWING:                                           *[m
+[HM# ************************************************************************[m
+[HM# [m
+[HM# or prior to IANA registration.[m
+[HM# Assigned ports both System and User ports SHOULD NOT be used without[m
+[HM# [m
+[HM# described in [RFC6335].[m
+[HM# The registration procedures for service names and port numbers are[m
+[HM# [m
+[HM# [RFC6335]. Dynamic Ports are not assigned.[m
+[HM# the "IESG Approval" process, or the "Expert Review" process, as per [m
+[HM# [RFC8126]. User Ports are assigned by IANA using the "IETF Review" process, [m
+[HM# assigned by the "IETF Review" or "IESG Approval" procedures described in [m
+[HM# [RFC6335]. According to Section 8.1.2 of [RFC6335], System Ports are [m
+[HM# Ports (49152-65535); the difference uses of these ranges is described in[m
+[HM# Ports (0-1023), User Ports (1024-49151), and the Dynamic and/or Private[m
+[HM# Port numbers are assigned in various ways, based on three ranges: System[m
+[HM# [m
+[HM# documented in [RFC6335].[m
+[HM# Service names are assigned on a first-come, first-served process, as[m
+[24;1H[K[7m/usr/etc/services lines 23-45/12572 0%[27m[K[K[?1l>[?1049l[23;0;0t

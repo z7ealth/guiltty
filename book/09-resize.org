@@ -1,0 +1,101 @@
+#+TITLE: Resize: from a dragged window to SIGWINCH
+#+STARTUP: overview
+
+* Who knows the size
+
+Three places need to agree on how big the terminal is:
+
+| Who          | Knows it as                     | Why it needs it                    |
+|--------------+---------------------------------+------------------------------------|
+| the renderer | pixels, so it works out cells   | it owns the window                 |
+| the Screen   | the grid's columns and rows     | where text wraps, where LF scrolls |
+| the kernel   | =struct winsize= on the PTY      | programs ask it: =tput cols=       |
+
+The renderer is the only one that sees the window, so it starts the chain.
+
+* The chain
+
+#+begin_example
+  you drag the window edge
+     |
+  SDL: WINDOW_PIXEL_SIZE_CHANGED 1100 x 420
+     |
+  renderer: cols = (1100 - 2*6) / 11 = 98     rows = (420 - 2*6) / 23 = 17
+     |      clears its cell mirror to 98x17, sends RESIZE 98 17
+     v
+  Window ----> Session.resize(:main, 98, 17)
+                 |
+                 |-- 1. Screen.resize: Grid.resize (no reflow), every row dirty,
+                 |      sends a full update tagged 98x17 -----------------> renderer draws
+                 |
+                 `-- 2. Pty.resize: ioctl(master, TIOCSWINSZ, {17, 98})
+                          |
+                        kernel: size changed -> SIGWINCH to the foreground job
+                          |
+                        bash / less / man: ioctl(TIOCGWINSZ) -> redraw for 98x17
+#+end_example
+
+The order inside =Session.resize= matters: the grid has its new size
+*before* SIGWINCH goes out, so the program's redraw lands on a grid that
+already fits it.
+
+* Updates from before the resize
+
+Messages already on their way can describe the old size:
+
+#+begin_example
+  Screen sends ROWS 80x24 ...     renderer resizes to 98x17
+                     \___________ arrives late: "80x24"? not my size -> dropped
+  Screen sends ROWS 98x17 (full)  -> applied
+#+end_example
+
+That's why every ROWS message carries the grid size it describes. Dropping
+a stale update is safe because the resize always produces a full update at
+the new size right after.
+
+* No reflow
+
+=Grid.resize= doesn't re-wrap text. Rows are cut or padded on the right,
+and added or removed at the bottom. One exception: if shrinking would push
+the cursor off the screen, rows are removed from the top instead, so the
+line you're typing on stays. Reflow (re-wrapping long lines) is an NG+
+quest, and only really matters once there's scrollback.
+
+* The kernel side
+
+=TIOCSWINSZ= stores the size in the terminal and, if it changed, sends
+SIGWINCH to the terminal's *foreground process group*: the job you're
+running, not every process. Programs that care install a SIGWINCH handler
+and ask for the size again with =TIOCGWINSZ=. bash does it to know where to
+wrap your command line; =less= and =man= redraw the page.
+
+Try it in guiltty: run =less= on a big file, resize the window, and watch
+it redraw. Or check what programs see:
+
+#+begin_src sh
+tput cols; tput lines; stty size
+#+end_src
+
+* Loot
+
+- =ioctl_tty(2)=: =TIOCGWINSZ=, =TIOCSWINSZ=.
+- =signal(7)=: SIGWINCH.
+- =tput(1)=, =stty(1)=.
+
+* Questions
+
+1. Why does the renderer decide the new size, and not Elixir?
+2. Who receives SIGWINCH?
+3. Why resize the grid before the PTY?
+4. Why is it safe to drop a ROWS message of the wrong size?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Only the renderer knows the window's pixels and the font's cell size.
+2. The terminal's foreground process group.
+3. So the program's redraw, triggered by SIGWINCH, already finds a grid of
+   the right size.
+4. A resize always ends with a full update at the new size.

@@ -82,6 +82,15 @@ bool rd_u16(struct reader *r, uint16_t *out) {
     return true;
 }
 
+bool rd_u32(struct reader *r, uint32_t *out) {
+    if (r->left < 4)
+        return false;
+    *out = (uint32_t)r->p[0] << 24 | (uint32_t)r->p[1] << 16 | (uint32_t)r->p[2] << 8 | r->p[3];
+    r->p += 4;
+    r->left -= 4;
+    return true;
+}
+
 bool rd_bytes(struct reader *r, size_t n, const uint8_t **out) {
     if (r->left < n)
         return false;

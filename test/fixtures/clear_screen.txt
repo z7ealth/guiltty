@@ -1,0 +1,27 @@
+after clear
+green
+
+
+
+
+                    moved
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 7,0 visible
+--- styles
+1 0-4 fg=2

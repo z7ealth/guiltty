@@ -56,10 +56,17 @@ one byte.
 | Tag | Name  | Direction        | Payload                                                       |
 |-----+-------+------------------+---------------------------------------------------------------|
 |   1 | HELLO | renderer->Elixir | u16 version, u8 name length, name                             |
-|   2 | SETUP | Elixir->renderer | u16 cols, u16 rows                                            |
-|   3 | ROWS  | Elixir->renderer | u16 cursor row, u16 cursor col, u16 count, then per row: u16 index, u16 length, bytes |
+|   2 | SETUP | Elixir->renderer | u16 cols, u16 rows, then 259 colors of 3 bytes: palette 0-255, fg, bg, cursor |
+|   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u16 count, then per row: u16 index, cols x 10-byte cells |
 |   4 | TEXT  | renderer->Elixir | UTF-8 text the user typed                                     |
 |   5 | KEY   | renderer->Elixir | u32 SDL keycode, u16 SDL modifier bits                        |
+|   6 | RESIZE| renderer->Elixir | u16 cols, u16 rows that fit the window now                    |
+
+This is version 2 (MVP 2). Version 1 had no colors and no RESIZE.
+
+ROWS carries the grid size it describes, so the renderer can drop updates
+sent before a resize reached the Screen ([[file:09-resize.org][the resize chapter]]). Rows are
+sent exactly as the grid stores them, 10 bytes per cell ([[file:08-colors.org][the colors chapter]]).
 
 Both sides are kept in sync by hand:
 [[file:../c_src/renderer/core/protocol.h][protocol.h]] and [[file:../lib/guiltty/window/protocol.ex][Guiltty.Window.Protocol]]. Any change bumps the
@@ -71,16 +78,17 @@ version.
   Window                                renderer
     | Port.open ------------------------> starts
     |                                     |
-    |<----------------- HELLO v1 "gl" ----|
-    | version == 1? else stop             |
-    |---- SETUP 80x24 ------------------->| now it knows the window size:
-    |                                     | builds the atlas, opens the window
+    |<----------------- HELLO v2 "gl" ----|
+    | version == 2? else stop             |
+    |---- SETUP 80x24 + theme ----------->| now it knows the window size and
+    |                                     | colors: builds the atlas, opens the window
     | Screen.subscribe                    |
     |---- ROWS (all 24 rows) ------------>| draws
     |          ...                        |
     |---- ROWS (rows 22, 23) ------------>| draws
     |<----------------- TEXT "l" ---------|
     |<----------------- KEY Enter --------|
+    |<----------------- RESIZE 98x17 -----|  the user dragged the window
 #+end_example
 
 The hello carries the version so a renderer built from older C can't talk

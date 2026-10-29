@@ -7,32 +7,42 @@ defmodule Guiltty.Window.Protocol do
   Keep in sync with `c_src/renderer/core/protocol.h`.
   """
 
-  @version 1
+  alias Guiltty.Theme
+
+  @version 2
 
   @hello 1
   @setup 2
   @rows 3
   @text 4
   @key 5
+  @resize 6
 
   @type event ::
           {:hello, version :: non_neg_integer(), backend :: binary()}
           | {:text, binary()}
           | {:key, keycode :: non_neg_integer(), mods :: non_neg_integer()}
+          | {:resize, cols :: pos_integer(), rows :: pos_integer()}
 
   @doc "The protocol version this side speaks."
   def version, do: @version
 
-  @spec setup(pos_integer(), pos_integer()) :: binary()
-  def setup(cols, rows), do: <<@setup, cols::16, rows::16>>
+  @doc "Initial grid size and the theme: 256 palette colors, then fg, bg and cursor."
+  @spec setup(pos_integer(), pos_integer(), Theme.t()) :: iodata()
+  def setup(cols, rows, theme) do
+    colors = Theme.palette(theme) ++ [theme.fg, theme.bg, theme.cursor]
+    [<<@setup, cols::16, rows::16>> | Enum.map(colors, fn {r, g, b} -> <<r, g, b>> end)]
+  end
 
-  @doc "Changed rows plus the cursor, as `{row, col}`."
-  @spec rows([{non_neg_integer(), binary()}], {non_neg_integer(), non_neg_integer()}) :: iodata()
-  def rows(rows, {cursor_row, cursor_col}) do
-    [
-      <<@rows, cursor_row::16, cursor_col::16, length(rows)::16>>
-      | Enum.map(rows, fn {index, bytes} -> [<<index::16, byte_size(bytes)::16>>, bytes] end)
-    ]
+  @doc """
+  A screen update. Rows are sent as the grid stores them: `cols` cells of
+  10 bytes each. The renderer drops updates whose size doesn't match its
+  own (they were sent before a resize reached the screen).
+  """
+  @spec rows(map()) :: iodata()
+  def rows(%{size: {cols, rows}, rows: lines, cursor: {crow, ccol}, cursor_visible: visible}) do
+    header = <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), length(lines)::16>>
+    [header | Enum.map(lines, fn {index, row} -> [<<index::16>>, row] end)]
   end
 
   @spec decode(binary()) :: {:ok, event()} | {:error, {:bad_message, binary()}}
@@ -41,5 +51,12 @@ defmodule Guiltty.Window.Protocol do
 
   def decode(<<@text, text::binary>>), do: {:ok, {:text, text}}
   def decode(<<@key, keycode::32, mods::16>>), do: {:ok, {:key, keycode, mods}}
+
+  def decode(<<@resize, cols::16, rows::16>>) when cols > 0 and rows > 0,
+    do: {:ok, {:resize, cols, rows}}
+
   def decode(other), do: {:error, {:bad_message, other}}
+
+  defp bool(true), do: 1
+  defp bool(false), do: 0
 end

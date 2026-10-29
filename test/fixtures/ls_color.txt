@@ -1,0 +1,45 @@
+total 4
+-rw-r--r--. 1 hsalinas hsalinas  0  README.md
+-rw-r--r--. 1 hsalinas hsalinas  0  archive.tar.gz
+lrwxrwxrwx. 1 hsalinas hsalinas  7  broken -> missing
+drwxr-xrwx. 2 hsalinas hsalinas 40  build
+drwxr-xr-x. 2 hsalinas hsalinas 40  docs
+lrwxrwxrwx. 1 hsalinas hsalinas  9  link -> README.md
+-rw-r--r--. 1 hsalinas hsalinas  0  notes.txt
+-rw-r--r--. 1 hsalinas hsalinas  0  photo.png
+prw-r--r--. 1 hsalinas hsalinas  0  pipe
+-rwxr-xr-x. 1 hsalinas hsalinas 10  run.sh
+drwxr-xr-x. 2 hsalinas hsalinas 40  src
+README.md       broken@  docs/  notes.txt  pipe|    src/
+archive.tar.gz  build/   link@  photo.png  run.sh*
+
+
+
+
+
+
+
+
+
+
+--- cursor 14,0 visible
+--- styles
+2 36-49 bold fg=1
+3 36-41 bold fg=1 bg=0
+3 46-52 bold fg=1 bg=0
+4 36-40 fg=4 bg=2
+5 36-39 bold fg=4
+6 36-39 bold fg=6
+8 36-44 bold fg=5
+9 36-39 fg=3 bg=0
+10 36-41 bold fg=2
+11 36-38 bold fg=4
+12 16-21 bold fg=1 bg=0
+12 25-28 bold fg=4
+12 43-46 fg=3 bg=0
+12 52-54 bold fg=4
+13 0-13 bold fg=1
+13 16-20 fg=4 bg=2
+13 25-28 bold fg=6
+13 32-40 bold fg=5
+13 43-48 bold fg=2

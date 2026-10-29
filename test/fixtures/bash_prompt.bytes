@@ -1,0 +1,8 @@
+7]2;hsalinas@hs-suse:~/Projects/guiltty]1;hs-suse8hsalinas@hs-suse:~/Projects/guiltty> echo hello from bash
+hello from bash
+7]2;hsalinas@hs-suse:~/Projects/guiltty]1;hs-suse8hsalinas@hs-suse:~/Projects/guiltty> ls -d /usr/*
+[0m[01;34m/usr/bin[0m      [01;34m/usr/lib[0m      [01;34m/usr/local[0m  [01;34m/usr/src[0m
+[01;34m/usr/etc[0m      [01;34m/usr/lib64[0m    [01;34m/usr/sbin[0m   [01;34m/usr/x86_64-suse-linux[0m
+[01;34m/usr/include[0m  [01;34m/usr/libexec[0m  [01;34m/usr/share[0m
+7]2;hsalinas@hs-suse:~/Projects/guiltty]1;hs-suse8hsalinas@hs-suse:~/Projects/guiltty> exit
+exit

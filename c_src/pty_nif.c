@@ -319,6 +319,22 @@ static ERL_NIF_TERM nif_select_write(ErlNifEnv *env, int, const ERL_NIF_TERM arg
     return do_select(env, argv, ERL_NIF_SELECT_WRITE);
 }
 
+// resize(pty, cols, rows) -> :ok | {:error, reason}
+// TIOCSWINSZ stores the new size in the terminal; if it changed, the kernel
+// sends SIGWINCH to the terminal's foreground process group (ioctl_tty(2)).
+static ERL_NIF_TERM nif_resize(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
+    struct pty *pty;
+    unsigned cols, rows;
+    if (!get_pty(env, argv[0], &pty) || !enif_get_uint(env, argv[1], &cols) ||
+        !enif_get_uint(env, argv[2], &rows) || cols == 0 || rows == 0 || cols > USHRT_MAX ||
+        rows > USHRT_MAX)
+        return enif_make_badarg(env);
+    if (pty->fd < 0)
+        return make_errno_error(env, EBADF);
+    struct winsize ws = {.ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols};
+    return ioctl(pty->fd, TIOCSWINSZ, &ws) < 0 ? make_errno_error(env, errno) : atom_ok;
+}
+
 // close(pty) -> :ok. Closing the master hangs up the terminal: the kernel
 // sends SIGHUP to the session, which is how bash learns the window is gone.
 static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
@@ -381,6 +397,7 @@ static ErlNifFunc funcs[] = {
     {"write", 2, nif_write, 0},
     {"select_read", 1, nif_select_read, 0},
     {"select_write", 1, nif_select_write, 0},
+    {"resize", 3, nif_resize, 0},
     {"close", 1, nif_close, 0},
     {"wait", 1, nif_wait, 0},
     {"kill", 2, nif_kill, 0},

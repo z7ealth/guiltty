@@ -142,7 +142,10 @@ completely; noted for later.)
 
 [[file:../lib/guiltty/session/pty.ex][Guiltty.Session.Pty]] wraps all of this:
 
-- On start it opens the PTY with =TERM=dumb= but doesn't read yet.
+- On start it opens the PTY with =TERM=xterm-256color= and
+  =COLORTERM=truecolor= (MVP 1 used =TERM=dumb=), but doesn't read yet.
+- =resize/3= calls the NIF's =resize=, an =ioctl(TIOCSWINSZ)= ([[file:09-resize.org][the resize
+  chapter]]).
 - When the parser attaches, it arms =select_read=.
 - On =:ready_input= it reads up to 16 chunks, sends each to the parser as
   ={:pty_data, bytes}=, then re-arms.

@@ -1,0 +1,115 @@
+* [33mcommit 0edd183b75b7f0353620d2944d653721903cc5b0[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;33mtag: [m[1;33mv0.1.0[m[33m, [m[1;31morigin/master[m[33m)[m
+[31m|[m Author: Héctor Alonso Salinas García <ha_sg@outlook.com>
+[31m|[m Date:   Thu Oct 29 17:27:52 2026 -0600
+[31m|[m 
+[31m|[m     MVP 1 finished
+[31m|[m 
+[31m|[m  .gitignore                        |  3 [32m++[m[31m-[m
+[31m|[m  AGENTS.md                         |  6 [32m+++[m[31m---[m
+[31m|[m  DEVLOG.md                         | 26 [32m++++++++++++++++++++++[m
+[31m|[m  Makefile                          | 12 [32m+++++[m[31m------[m
+[31m|[m  book/00-overview.org              |  2 [32m+[m[31m-[m
+[31m|[m  book/02-pty-nif.org               |  7 [32m++++[m[31m--[m
+[31m|[m  book/04-screen-and-grid.org       | 43 [32m++++++++++++++++++++++++++++++++++++[m[31m-[m
+[31m|[m  book/05-port-protocol.org         |  4 [32m++[m[31m--[m
+[31m|[m  book/06-renderer.org              |  8 [32m+++[m[31m----[m
+[31m|[m  c_src/renderer/core/main.c        |  4 [32m++[m[31m--[m
+[31m|[m  config/config.exs                 |  2 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/application.ex        | 12 [32m++++++++++[m[31m-[m
+[31m|[m  lib/guiltty/session.ex            | 29 [32m+++++++++++++++++++++++++[m
+[31m|[m  lib/guiltty/session/parser.ex     |  2 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/session/pty.ex        | 19 [32m+++++++++[m[31m-------[m
+[31m|[m  lib/guiltty/session/screen.ex     |  2 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/session/supervisor.ex |  6 [32m+++++[m[31m-[m
+[31m|[m  lib/guiltty/window.ex             | 31 [32m+++++++++++++++++++++++[m[31m---[m
+[31m|[m  mix.exs                           |  8 [32m++++++[m[31m-[m
+[31m|[m  test/guiltty/session_test.exs     | 14 [32m++++++++++++[m
+[31m|[m  test/guiltty/window_test.exs      | 15 [32m+++++++++++++[m
+[31m|[m  21 files changed, 216 insertions(+), 39 deletions(-)
+[31m|[m 
+* [33mcommit 3f50902bd1a2a2e875194f957a20d2dee2092017[m
+[31m|[m Author: Héctor Alonso Salinas García <ha_sg@outlook.com>
+[31m|[m Date:   Thu Oct 29 16:53:54 2026 -0600
+[31m|[m 
+[31m|[m     MVP 1 finished
+[31m|[m 
+[31m|[m  AGENTS.md                             |  13 [32m+[m[31m-[m
+[31m|[m  DEVLOG.md                             |  39 [32m++++[m
+[31m|[m  Makefile                              |  31 [32m+++[m[31m-[m
+[31m|[m  README.md                             |  28 [32m+[m[31m--[m
+[31m|[m  book/00-overview.org                  |   4 [32m+[m[31m-[m
+[31m|[m  book/04-screen-and-grid.org           |  21 [32m++[m[31m-[m
+[31m|[m  book/05-port-protocol.org             | 146 [32m+++++++++++++++[m
+[31m|[m  book/06-renderer.org                  | 173 [32m++++++++++++++++++[m
+[31m|[m  book/07-input.org                     | 107 [32m+++++++++++[m
+[31m|[m  book/index.org                        |   6 [32m+[m[31m-[m
+[31m|[m  c_src/renderer/core/atlas.c           | 110 [32m++++++++++++[m
+[31m|[m  c_src/renderer/core/atlas.h           |  23 [32m+++[m
+[31m|[m  c_src/renderer/core/backend.h         |  39 [32m++++[m
+[31m|[m  c_src/renderer/core/main.c            | 309 [32m++++++++++++++++++++++++++++++++[m
+[31m|[m  c_src/renderer/core/protocol.c        | 104 [32m+++++++++++[m
+[31m|[m  c_src/renderer/core/protocol.h        |  62 [32m+++++++[m
+[31m|[m  c_src/renderer/gl/gl_backend.c        | 284 [32m+++++++++++++++++++++++++++++[m
+[31m|[m  c_src/renderer/gl/shaders/cell.frag   |  19 [32m++[m
+[31m|[m  c_src/renderer/gl/shaders/cell.vert   |  30 [32m++++[m
+[31m|[m  config/config.exs                     |  10 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/application.ex            |   8 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/keymap.ex                 |  46 [32m+++++[m
+[31m|[m  lib/guiltty/window.ex                 | 112 [32m++++++++++++[m
+[31m|[m  lib/guiltty/window/protocol.ex        |  45 [32m+++++[m
+[31m|[m  lib/mix/tasks/guiltty.ex              |  21 [32m+++[m
+[31m|[m  test/guiltty/keymap_test.exs          |  37 [32m++++[m
+[31m|[m  test/guiltty/window/protocol_test.exs |  22 [32m+++[m
+[31m|[m  test/guiltty/window_test.exs          |  68 [32m+++++++[m
+[31m|[m  28 files changed, 1878 insertions(+), 39 deletions(-)
+[31m|[m 
+* [33mcommit 74b0346d1f30cb5d96c466d24e53d5e78fe6595f[m
+[31m|[m Author: Héctor Alonso Salinas García <ha_sg@outlook.com>
+[31m|[m Date:   Thu Oct 29 16:36:00 2026 -0600
+[31m|[m 
+[31m|[m     MVP 1
+[31m|[m 
+[31m|[m  .gitignore                            |   5 [32m+[m
+[31m|[m  AGENTS.md                             | 226 [32m+++++++++++++++++++[m
+[31m|[m  DEVLOG.md                             |  76 [32m+++++++[m
+[31m|[m  Makefile                              |  21 [32m++[m
+[31m|[m  book/00-overview.org                  |  86 [32m+++++++[m
+[31m|[m  book/01-pseudoterminals.org           | 185 [32m+++++++++++++++[m
+[31m|[m  book/02-pty-nif.org                   | 187 [32m+++++++++++++++[m
+[31m|[m  book/03-parser.org                    | 112 [32m+++++++++[m
+[31m|[m  book/04-screen-and-grid.org           | 151 [32m+++++++++++++[m
+[31m|[m  book/index.org                        |  14 [32m++[m
+[31m|[m  c_src/pty_nif.c                       | 389 [32m++++++++++++++++++++++++++++++++[m
+[31m|[m  config/config.exs                     |   5 [32m+[m
+[31m|[m  lib/guiltty/application.ex            |  16 [32m+[m[31m-[m
+[31m|[m  lib/guiltty/grid.ex                   | 104 [32m+++++++++[m
+[31m|[m  lib/guiltty/parser.ex                 | 115 [32m++++++++++[m
+[31m|[m  lib/guiltty/session.ex                |  19 [32m++[m
+[31m|[m  lib/guiltty/session/parser.ex         |  33 [32m+++[m
+[31m|[m  lib/guiltty/session/pty.ex            | 172 [32m++++++++++++++[m
+[31m|[m  lib/guiltty/session/pty_nif.ex        |  38 [32m++++[m
+[31m|[m  lib/guiltty/session/screen.ex         |  58 [32m+++++[m
+[31m|[m  lib/guiltty/session/supervisor.ex     |  32 [32m+++[m
+[31m|[m  mix.exs                               |   5 [32m+[m[31m-[m
+[31m|[m  mix.lock                              |   3 [32m+[m
+[31m|[m  test/guiltty/grid_test.exs            |  57 [32m+++++[m
+[31m|[m  test/guiltty/parser_test.exs          |  60 [32m+++++[m
+[31m|[m  test/guiltty/session/pty_nif_test.exs |  62 [32m+++++[m
+[31m|[m  test/guiltty/session_test.exs         |  61 [32m+++++[m
+[31m|[m  27 files changed, 2283 insertions(+), 9 deletions(-)
+[31m|[m 
+* [33mcommit dbe6d90321ddacd0e3d39ad94b42d37808c1fca0[m
+  Author: Héctor Alonso Salinas García <ha_sg@outlook.com>
+  Date:   Tue Oct 27 12:30:16 2026 -0600
+  
+      First bonfire lit
+  
+   .formatter.exs             |  4 [32m++++[m
+   .gitignore                 | 24 [32m++++++++++++++++++++++++[m
+   README.md                  | 21 [32m+++++++++++++++++++++[m
+   lib/guiltty.ex             | 18 [32m++++++++++++++++++[m
+   lib/guiltty/application.ex | 20 [32m++++++++++++++++++++[m
+   mix.exs                    | 29 [32m+++++++++++++++++++++++++++++[m
+   test/guiltty_test.exs      |  8 [32m++++++++[m
+   test/test_helper.exs       |  1 [32m+[m
+   8 files changed, 125 insertions(+)

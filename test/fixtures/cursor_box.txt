@@ -1,0 +1,26 @@
+
+
+         +----------+
+         |  inside  |
+         +----------+
+
+
+abc
+  z
+ doneol5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 11,0 visible
+--- styles

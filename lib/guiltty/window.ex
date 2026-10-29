@@ -12,8 +12,7 @@ defmodule Guiltty.Window do
 
   require Logger
 
-  alias Guiltty.Keymap
-  alias Guiltty.Session
+  alias Guiltty.{Keymap, Session, Theme}
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.Protocol
 
@@ -75,8 +74,8 @@ defmodule Guiltty.Window do
     {:stop, {:renderer_exited, status}, %{state | port: nil}}
   end
 
-  def handle_info({:screen_update, _id, rows, cursor}, state) do
-    Port.command(state.port, Protocol.rows(rows, cursor))
+  def handle_info({:screen_update, _id, update}, state) do
+    Port.command(state.port, Protocol.rows(update))
     {:noreply, state}
   end
 
@@ -90,11 +89,17 @@ defmodule Guiltty.Window do
   defp handle_event({:hello, version, backend}, state) do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
-      Port.command(state.port, Protocol.setup(state.cols, state.rows))
+      Port.command(state.port, Protocol.setup(state.cols, state.rows, Theme.default()))
       {:noreply, %{subscribe(state) | ready: true}}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
     end
+  end
+
+  # The user resized the window and the renderer worked out the new grid.
+  defp handle_event({:resize, cols, rows}, state) do
+    Session.resize(state.session, cols, rows)
+    {:noreply, %{state | cols: cols, rows: rows}}
   end
 
   defp handle_event(event, state) do

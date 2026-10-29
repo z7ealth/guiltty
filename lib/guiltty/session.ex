@@ -45,4 +45,13 @@ defmodule Guiltty.Session do
 
   @doc "The session's screen as text."
   defdelegate dump(id), to: Screen
+
+  @doc """
+  Resizes the session: the grid first, then the PTY. In that order, the
+  redraw that SIGWINCH triggers lands on a grid that already has the new size.
+  """
+  def resize(id, cols, rows) do
+    :ok = Screen.resize(id, cols, rows)
+    Pty.resize(id, cols, rows)
+  end
 end

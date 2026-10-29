@@ -1,112 +1,153 @@
-#+TITLE: Parser v0: bytes in, commands out
+#+TITLE: The parser: bytes in, commands out
 #+STARTUP: overview
 
-* What it does
+* Syntax, not meaning
 
-Bash sends a mix of text and *control sequences*. [[file:../lib/guiltty/parser.ex][Guiltty.Parser]] splits
-them apart and turns them into commands for the screen:
+Bash, =ls= and =less= send a mix of text and *control sequences*.
+[[file:../lib/guiltty/parser.ex][Guiltty.Parser]] only works out the *shape* of each sequence and turns it into
+a command. What a command *does* is the job of [[file:../lib/guiltty/terminal.ex][Guiltty.Terminal]] (next
+chapter). Keeping them apart means the parser never needs to change when
+guiltty learns a new sequence.
 
-| Bytes                    | Command          |
-|--------------------------+------------------|
-| printable ASCII run      | ={:print, "ls"}= |
-| =\r= (CR)                | =:cr=            |
-| =\n= (LF), also VT, FF   | =:lf=            |
-| =\b= (BS)                | =:bs=            |
-| =\t= (HT)                | =:ht=            |
-| escape sequences         | (skipped)        |
-| BEL, DEL, other controls | (ignored)        |
-| a UTF-8 character        | ={:print, "?"}=  |
+| Bytes                       | Command                              |
+|-----------------------------+--------------------------------------|
+| printable ASCII run         | ={:print, "ls"}=                     |
+| =\r=                        | =:cr=                                |
+| =\n=, VT, FF                | =:lf=                                |
+| =\b=, =\t=                  | =:bs=, =:ht=                         |
+| =ESC [ 1 ; 31 m=            | ={:csi, nil, [1, 31], "", ?m}=       |
+| =ESC [ ? 25 l=              | ={:csi, ??, [25], "", ?l}=           |
+| =ESC [ 38 : 2 : : 255 : 0 : 0 m= | ={:csi, nil, [[38, 2, nil, 255, 0, 0]], "", ?m}= |
+| =ESC M=, =ESC ( B=          | ={:esc, "", ?M}=, ={:esc, "(", ?B}=  |
+| =ESC ] 0 ; title BEL=       | ={:osc, "0;title"}=                  |
+| =ESC P ... ESC \=           | (dropped: DCS)                       |
+| a UTF-8 character           | ={:print, "?"}= until MVP 5          |
 
-MVP 1 can't draw colors or move the cursor, so escape sequences are only
-recognized well enough to skip them whole. If they weren't, =\e[01;31m= would
-print as =[01;31m=.
+* The anatomy of a CSI sequence
+
+ECMA-48 defines every CSI ("Control Sequence Introducer") sequence the same
+way, whatever it means:
+
+#+begin_example
+   ESC [   ?        1 ; 31          SP            m
+   -----   ------   -----------     -----------   -----
+   CSI     private  parameters      intermediates final byte
+           marker   0x30-0x3F       0x20-0x2F     0x40-0x7E
+           < = > ?  digits ; :                    picks the function
+#+end_example
+
+- The *final byte* says what to do: =m= is SGR (colors), =H= moves the cursor,
+  =J= erases.
+- *Parameters* are numbers separated by =;=. An empty one (=ESC [ ; 5 H=)
+  means "use the default", and is =nil= here. =:= separates
+  *sub-parameters* inside one parameter: =38:2::255:0:0= is a single
+  parameter, a 24-bit color, kept together as a list.
+- A *private marker* (=?= mostly) means "not in the standard": =ESC [ ? 25 l=
+  is a DEC extension (hide the cursor).
+- *Intermediates* are rare: =ESC [ 2 SP q= sets the cursor shape.
 
 * The state machine
 
-The parser remembers which kind of sequence it's in the middle of. That's
-the whole state: one atom.
+This is Paul Williams' parser for DEC terminals (vt100.net), the de facto
+model every modern terminal follows. Each byte moves the parser between
+states:
 
 #+begin_example
-                   printable -> {:print, run}
-                   CR LF BS HT -> command
-                  +------+
-                  |      v
-               +-----------+   ESC    +----------+
-     +-------->|  ground   |--------->|  escape  |-----------------+
-     |         +-----------+          +----------+                 |
-     |               ^                 |  |  |  | 0x20-0x2F         |
-     |  final byte   |              [  |  |  |  v                  |
-     |  0x40-0x7E    |                 |  |  | +---------------+   |
-     |         +-----------+           |  |  | | escape_inter- |   |
-     +---------|    csi    |<----------+  |  | | mediate       |---+ final
-               +-----------+              |  | +---------------+   | -> ground
-                                          |  |                     |
-                       ] P X ^ _          |  | any other byte -----+
-                     +--------------------+  |   (e.g. ESC 7)
-                     v                       |
-               +-----------+   ESC   +------------+
-               |  string   |-------->| string_esc |-- \ (ST) --> ground
-               +-----------+         +------------+
-                 |  BEL -> ground          | other byte -> escape
-                 +--------------------------
+                       printable -> print
+                       C0        -> execute
+                 +--------+
+          +----->| ground |<-----------------------------------------+
+          |      +--------+                                          |
+          |          | ESC                                           |
+          |          v                                               |
+          |      +--------+  0x20-2F  +---------------------+  final |
+          |      | escape |---------->| escape_intermediate |--------+
+          |      +--------+           +---------------------+  esc_dispatch
+          |       |  |  |  final 0x30-7E -> esc_dispatch ------------+
+          |     [ |  |  +-------------------------------+            |
+          |       v  | ] P X ^ _                        |            |
+          |  +-----------+                              v            |
+          |  | csi_entry |                     +---------------+     |
+          |  +-----------+                     | osc_string /  |     |
+          |   |  |     |                       | ignored_string|--ST-+
+          |   |  |     | digits ; : < = > ?    +---------------+
+          |   |  |     v
+          |   |  |  +-----------+  0x20-2F  +------------------+
+          |   |  |  | csi_param |---------->| csi_intermediate |
+          |   |  |  +-----------+           +------------------+
+          |   |  |     | final                 | final
+          |   |  |     v                       v
+          +---|--+-- csi_dispatch <------------+
+              |
+              +-- malformed (e.g. "?" after digits) -> csi_ignore -> final -> ground
 #+end_example
 
-=CAN= (=0x18=) and =SUB= (=0x1A=) abort any sequence and return to ground.
+Three rules apply in every state except the strings:
 
-This is a small slice of Paul Williams' DEC parser, which MVP 2 implements in
-full (with parameters, intermediates and DCS).
+- *ESC* always starts a new sequence, abandoning the current one.
+- *CAN* and *SUB* (=0x18=, =0x1A=) abort the sequence and go back to ground.
+- *Other C0 controls are executed right away*, even in the middle of a
+  sequence: =ESC [ 1 CR 2 H= performs the CR and then moves to row 12. Real
+  terminals behave this way, so we do too.
+
+Strings are different: inside an OSC everything up to BEL or ST (=ESC \=)
+is data. DCS, SOS, PM and APC strings are swallowed whole for now.
+
+* Limits
+
+Anything the parser stores comes from a program you might not trust (try
+=cat= on a random file). So it caps everything:
+
+| What              | Cap    | Beyond it               |
+|-------------------+--------+-------------------------|
+| parameters        | 32     | extra ones are dropped  |
+| one parameter     | 65535  | it stays at 65535       |
+| OSC data          | 4 KiB  | the rest is dropped     |
 
 * Sequences that cross reads
 
 A read can end in the middle of a sequence: one read ends with =\e[01;3= and
-the next starts with =1mred=. Because the state is kept in the parser value
-between calls, the second read continues in =csi= and skips =1m= correctly.
+the next starts with =1mred=. The parser is a value (a struct), and
+everything it was doing, including half-built parameters, carries over to
+the next =feed/2= call.
 
-#+begin_src elixir
-{p, cmds1} = Guiltty.Parser.feed(Guiltty.Parser.new(), "a\e[01;3")
-# cmds1 = [{:print, "a"}], p.state = :csi
-{_p, cmds2} = Guiltty.Parser.feed(p, "1mred")
-# cmds2 = [{:print, "red"}]
-#+end_src
-
-The test suite checks this for every possible split point of a sample that
-has the openSUSE prompt sequences, an OSC ended by ST and a UTF-8 character.
+A property test feeds random combinations of sequences, cut at random
+points, and checks the commands are always the same as when fed whole.
+Another feeds random bytes and checks it never crashes.
 
 * Fast path for text
 
-Most bytes are plain text, so the =ground= state first counts how many
-printable bytes are in a row and emits them as a single ={:print, run}= with a
-sub-binary (no copying), instead of one command per byte.
-
-* Where it runs
-
-The pure module is wrapped by a process, [[file:../lib/guiltty/session/parser.ex][Guiltty.Session.Parser]], which
-receives ={:pty_data, bytes}= from the Pty, keeps the parser value in its
-state and casts the commands to the Screen. If it crashes, only it restarts
-(see [[file:04-screen-and-grid.org][the screen chapter]]).
+Most bytes are plain text, so =ground= counts how many printable bytes come
+in a row and emits them as a single ={:print, run}= (a sub-binary, no
+copying), instead of one command per byte. OSC data is collected in runs
+the same way.
 
 * Loot
 
-- =console_codes(4)=: the Linux console's sequences, a readable overview.
-- ECMA-48 sections 5 and 8: C0 controls, ESC, CSI, control strings.
-- vt100.net's "A parser for DEC's ANSI-compatible video terminals".
+- vt100.net, "A parser for DEC's ANSI-compatible video terminals": the state
+  diagram this follows.
+- ECMA-48, section 5.4: the structure of control sequences.
+- =console_codes(4)=: what the Linux console does with them.
 
 * Questions
 
-1. Why does the parser need to remember state between reads?
-2. How does the parser know where a CSI sequence ends?
-3. What two ways can an OSC end?
-4. Why does =señor= print as =se?or= instead of =se??or=?
+1. How does the parser know where a CSI sequence ends?
+2. What's the difference between =38;2;255;0;0= and =38:2::255:0:0=?
+3. Why execute a CR that arrives in the middle of a CSI sequence?
+4. Why cap the number of parameters?
+5. Why are parsing and meaning in different modules?
 
 ** Answers
 :PROPERTIES:
 :VISIBILITY: folded
 :END:
 
-1. A read can stop in the middle of a sequence; without the state, the rest
-   would be printed as text.
-2. At its final byte, any byte from =0x40= to =0x7E= (letters and a few symbols
-   like =@= and =~=).
-3. With BEL (=\x07=) or with ST (=ESC \=).
-4. =ñ= is two bytes in UTF-8. The lead byte (=0xC3=) prints one =?=, and the
-   continuation byte (=0xB1=) is skipped.
+1. At its final byte, anything from =0x40= to =0x7E=.
+2. The first is five separate parameters that SGR has to group by
+   convention. The second is one parameter with sub-parameters, so it's
+   unambiguous (and leaves room for a color-space id between the colons).
+3. Real terminals do, and programs (rarely) rely on it.
+4. Bytes come from programs we don't control. Without a cap, a hostile
+   =ESC [ 1;1;1;...= could make the parser build a huge list.
+5. The parser can be finished and tested once; new features only touch
+   =Terminal=, and a syntax bug can't hide in the code that moves cursors.

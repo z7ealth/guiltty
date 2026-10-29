@@ -3,31 +3,47 @@
 
 * The grid
 
-[[file:../lib/guiltty/grid.ex][Guiltty.Grid]] is the screen as data: 24 rows, each a binary of exactly 80
-bytes, plus a cursor. ASCII only, so one byte is one cell.
+[[file:../lib/guiltty/grid.ex][Guiltty.Grid]] is the screen as data: rows of cells, a cursor, and the
+*pen* (the style new text is written with). A cell is 10 bytes (character,
+attributes, foreground, background; see [[file:08-colors.org][the colors chapter]]), and each
+row is one binary of =cols= cells.
 
 #+begin_example
-  lines (a tuple of 24 binaries)              cursor
-  0  "$ echo hi                    ...   "     row 2
-  1  "hi                           ...   "     col 2
-  2  "$                            ...   "
-  ...
-  23 "                             ...   "
-     |<----------- 80 bytes ------------->|
+  lines (a tuple of rows)                         cursor     pen
+  0  [$][ ][e][c][h][o][ ][h][i] ... [ ]          row 2      attrs 0
+  1  [h][i][ ][ ][ ][ ][ ][ ][ ] ... [ ]          col 2      fg default
+  2  [$][ ][ ][ ][ ][ ][ ][ ][ ] ... [ ]                     bg default
+      \__ each [x] is <<char, attrs, fg::32, bg::32>>, 10 bytes
 #+end_example
 
 A row being a plain binary is handy: it's already exactly what the renderer
-will draw, so a changed row can go straight into a port message.
+needs, so a changed row goes straight into a port message.
 
-* The commands
+* From commands to the grid
 
-| Command        | Effect                                                    |
-|----------------+-----------------------------------------------------------|
-| ={:print, s}=  | write =s= at the cursor, wrapping at the right edge       |
-| =:cr=          | cursor to column 0                                        |
-| =:lf=          | cursor down one row; on the last row, scroll up           |
-| =:bs=          | cursor left one, never past column 0                      |
-| =:ht=          | cursor to the next multiple of 8, at most the last column |
+The parser only knows syntax. [[file:../lib/guiltty/terminal.ex][Guiltty.Terminal]] decides what each command
+means and calls the grid:
+
+| Command                  | Name          | Effect                                       |
+|--------------------------+---------------+----------------------------------------------|
+| ={:print, s}=            |               | write =s= with the pen, wrapping at the edge |
+| =:cr= =:lf= =:bs= =:ht=  | C0            | column 0; down (scroll at bottom); left; tab |
+| =CSI n A= / =B= / =C= / =D= | CUU CUD CUF CUB | move up, down, right, left n           |
+| =CSI n E= / =F=          | CNL CPL       | down / up n lines, to column 1              |
+| =CSI n G=, =CSI n d=     | CHA VPA       | to column n, to row n                        |
+| =CSI r;c H=              | CUP           | to row r, column c (1-based)                 |
+| =CSI n J=                | ED            | erase below (0), above (1), all (2)          |
+| =CSI n K=                | EL            | erase right (0), left (1), the line (2)      |
+| =CSI n X=                | ECH           | erase n cells, cursor stays                  |
+| =CSI ... m=              | SGR           | change the pen ([[file:08-colors.org][colors]])                   |
+| =CSI ? 25 h= / =l=       | DECTCEM       | show / hide the cursor                       |
+| =ESC D=, =ESC E=, =ESC M= | IND NEL RI   | index, next line, reverse index              |
+| =ESC c=                  | RIS           | full reset                                   |
+
+Positions are 1-based on the wire and 0-based in the grid, and a missing or
+0 count means 1. Moves clamp at the edges. Everything else (the alternate
+screen, scroll regions, cursor save) is ignored until MVP 3. Reverse index
+came early because =less= uses it to scroll back.
 
 Note that =:lf= doesn't go back to column 0. Bash's =\n= reaches us as =\r\n=
 because the line discipline's ONLCR adds the =\r=.
@@ -60,7 +76,7 @@ clears the set, so the Screen only sends what changed.
 
 [[file:../lib/guiltty/session/screen.ex][Guiltty.Session.Screen]] holds the grid and is the *authoritative* copy of
 what's on screen. After each batch of commands it sends
-={:screen_update, id, [{row, binary}], {cursor_row, cursor_col}}= to its
+={:screen_update, id, %{size:, rows:, cursor:, cursor_visible:}}= to its
 subscribers: the =Window=, which forwards them to the renderer (see
 [[file:05-port-protocol.org][the port protocol]]). A new subscriber first gets every row, which is how
 a restarted renderer redraws.
@@ -92,7 +108,7 @@ Data flows Pty -> Parser -> Screen:
    | {:pty_data, bytes}      |                          |
    |------------------------>| feed/2                   |
    |                         | {:apply, commands}       |
-   |                         |------------------------->| Grid.apply/2
+   |                         |------------------------->| Terminal.apply/2
    |                         |                          | {:screen_update, ...}
    |                         |                          |-----> subscribers
 #+end_example

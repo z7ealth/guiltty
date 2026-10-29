@@ -1,0 +1,26 @@
+# Service names are assigned on a first-come, first-served process, as
+# documented in [RFC6335].
+#
+# Port numbers are assigned in various ways, based on three ranges: System
+# Ports (0-1023), User Ports (1024-49151), and the Dynamic and/or Private
+# Ports (49152-65535); the difference uses of these ranges is described in
+# [RFC6335]. According to Section 8.1.2 of [RFC6335], System Ports are
+# assigned by the "IETF Review" or "IESG Approval" procedures described in
+# [RFC8126]. User Ports are assigned by IANA using the "IETF Review" process,
+# the "IESG Approval" process, or the "Expert Review" process, as per
+# [RFC6335]. Dynamic Ports are not assigned.
+#
+# The registration procedures for service names and port numbers are
+# described in [RFC6335].
+#
+# Assigned ports both System and User ports SHOULD NOT be used without
+# or prior to IANA registration.
+#
+# ************************************************************************
+# * PLEASE NOTE THE FOLLOWING:                                           *
+# *                                                                      *
+# * ASSIGNMENT OF A PORT NUMBER DOES NOT IN ANY WAY IMPLY AN             *
+# * ENDORSEMENT OF AN APPLICATION OR PRODUCT, AND THE FACT THAT NETWORK  *
+
+--- cursor 23,0 visible
+--- styles

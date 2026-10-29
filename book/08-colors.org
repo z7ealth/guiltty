@@ -1,0 +1,156 @@
+#+TITLE: Colors: from SGR to pixels
+#+STARTUP: overview
+
+* SGR
+
+Programs color text with SGR, "Select Graphic Rendition": =ESC [ ... m=.
+It doesn't color anything by itself; it changes the *pen*, the style every
+character printed afterwards gets, until the next SGR.
+
+#+begin_example
+  bytes:   ESC[1;31m  E r r o r  ESC[0m  :   d i s k   f u l l
+  pen:     bold red ----------->  reset ------------------------>
+  cells:   E r r o r are bold red; ": disk full" is default
+#+end_example
+
+[[file:../lib/guiltty/sgr.ex][Guiltty.SGR]] reads the parameters left to right:
+
+| Parameters        | Meaning                                        |
+|-------------------+------------------------------------------------|
+| none or =0=       | reset everything                               |
+| =1= =2= =3= =4=   | bold, dim, italic, underline                   |
+| =5= =7= =8= =9=   | blink, inverse, hidden, strikethrough          |
+| =22= .. =29=      | turn those off                                 |
+| =30= .. =37=      | foreground palette 0-7                         |
+| =90= .. =97=      | foreground palette 8-15 ("bright")             |
+| =40= .. =47=, =100= .. =107= | background                          |
+| =38;5;n=          | foreground palette n, 0-255                    |
+| =38;2;r;g;b=      | foreground 24-bit color ("truecolor")          |
+| =39=, =49=        | default foreground, background                 |
+
+So =ESC[1;38;5;208;4m= is bold, palette 208 (orange), underline.
+
+* Three kinds of color
+
+A cell stores each color as 32 bits:
+
+#+begin_example
+   0x00 000000   default       "whatever the theme's text color is"
+   0x01 0000NN   palette NN    "color number NN in the theme's palette"
+   0x02 RRGGBB   24-bit        "exactly this color"
+#+end_example
+
+The grid keeps colors *symbolic*. =ESC[31m= stores "palette 1", not "red".
+Which red is the theme's decision, made in the renderer. Changing themes
+(MVP 4) then means sending one new palette, not repainting every cell.
+
+* The palette
+
+256 colors, laid out like xterm's:
+
+#+begin_example
+    0-7     the 8 ANSI colors: black red green yellow blue magenta cyan white
+    8-15    their bright versions                  } from the theme
+   16-231   a 6x6x6 color cube: 16 + 36r + 6g + b, levels 0 95 135 175 215 255
+  232-255   24 grays from 8 to 238
+#+end_example
+
+[[file:../lib/guiltty/theme.ex][Guiltty.Theme]] holds the 16 theme colors, the default foreground and
+background, and the cursor color. Window sends all 259 in the setup message.
+
+* Cells
+
+Each cell in the grid is 10 bytes, and each row is one binary of them:
+
+#+begin_example
+  +------+-------+--------------+--------------+
+  | char | attrs |   fg (u32)   |   bg (u32)   |
+  +------+-------+--------------+--------------+
+     1      1           4              4         = 10 bytes
+
+  attrs bits: 0x01 bold  0x02 dim  0x04 italic  0x08 underline
+              0x10 blink 0x20 inverse 0x40 hidden 0x80 strikethrough
+#+end_example
+
+The renderer understands the same layout, so a changed row goes into the
+port message *as is*: no conversion in Elixir at all.
+
+* Erasing keeps the background
+
+When a program erases (=ESC[K=, =ESC[2J=), the erased cells take the *current
+background color*. That's the =bce= ("back color erase") capability, and
+xterm-256color's terminfo entry says we have it, so programs rely on it: a
+status bar is often drawn by setting a background and erasing the line.
+
+* From cell to pixels
+
+The renderer turns each 10-byte cell into a ready-to-draw 8-byte one
+([[file:../c_src/renderer/core/main.c::decode_cell][decode_cell]]):
+
+#+begin_example
+  fg, bg  --theme-->  RGB         default -> theme fg/bg
+                                  palette n -> palette[n]  (bold + n<8 -> n+8)
+                                  24-bit -> itself
+  inverse  ->  swap fg and bg
+  dim      ->  fg halfway to bg
+  hidden   ->  no glyph
+#+end_example
+
+Bold making colors 0-7 bright is xterm's old default, and still what many
+programs expect.
+
+* Two draw passes
+
+The GPU draws the grid twice ([[file:../c_src/renderer/gl/shaders/cell.frag][cell.frag]]):
+
+#+begin_example
+  pass 0 (backgrounds)          pass 1 (glyphs, blended)
+  +----+----+----+----+         +----+----+----+----+
+  |####|####|    |####|   +     | l  | s  |    | -  |   =  colored text
+  +----+----+----+----+         +----+----+----+----+
+  opaque, every cell            coverage = alpha, transparent elsewhere
+#+end_example
+
+In pass 1 each pixel's color is the cell's foreground with the glyph's
+*coverage* as alpha, and the GPU blends it over the background. Splitting
+the passes means a glyph that spills past its cell (later: wide characters)
+is never painted over by its neighbor's background.
+
+Pass 1 also draws:
+
+- *Bold*: there's one font weight, so each glyph is smeared one pixel to
+  the right (coverage = max of this pixel and its left neighbor).
+- *Underline* and *strikethrough*: rows of full coverage at fixed heights
+  in the cell.
+- *Text under the cursor* in the cell's background color, over the cursor
+  block drawn in pass 0.
+
+* Loot
+
+- XTerm control sequences, "Character Attributes (SGR)".
+- ECMA-48, section 8.3.117 (SGR).
+- =terminfo(5)=: =bce=, =colors=, =setaf=/=setab=; try =infocmp xterm-256color=.
+- LearnOpenGL, "Blending".
+
+* Questions
+
+1. What does =ESC[0m= do, and why do programs send it after colored text?
+2. Why does the grid store "palette 1" instead of an RGB red?
+3. What's the difference between =ESC[31m= and =ESC[38;5;1m=?
+4. Why must erased cells take the current background?
+5. Why draw backgrounds and glyphs in separate passes?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. It resets the pen to defaults. Without it, everything printed after
+   would stay colored, including your prompt.
+2. Which red is the theme's choice. Keeping it symbolic lets the theme
+   change without touching the grid.
+3. None for guiltty: both mean palette entry 1.
+4. The =bce= capability promises it, and programs draw bars by setting a
+   background and erasing.
+5. So a glyph wider than its cell isn't covered by the next cell's
+   background; and it keeps each pass's shader simple.

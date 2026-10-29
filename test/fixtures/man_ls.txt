@@ -1,0 +1,36 @@
+
+       -b, --escape
+              print C-style escapes for nongraphic characters
+
+       --block-size=SIZE
+              with   -l,   scale  sizes  by  SIZE  when  printing  them;  e.g.,
+              '--block-size=M'; see SIZE format below
+
+       -B, --ignore-backups
+              do not list implied entries ending with ~
+
+       -c     with -lt: sort by, and show, ctime (time of last change  of  file
+              status information); with -l: show ctime and sort by name; other-
+              wise: sort by ctime, newest first
+
+       -C     list entries by columns
+
+       --color[=WHEN]
+              color the output WHEN; more info below
+
+       -d, --directory
+              list directories themselves, not their contents
+
+
+--- cursor 23,0 visible
+--- styles
+1 7-18 bold
+4 7-23 bold
+5 21-22 bold
+8 7-26 bold
+11 7-8 bold
+11 19-21 bold
+12 40-41 bold
+15 7-8 bold
+17 7-20 bold
+20 7-21 bold

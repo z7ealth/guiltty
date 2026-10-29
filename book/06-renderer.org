@@ -65,16 +65,23 @@ glyph's bitmap reaches above the baseline (=bitmap_top=), and the baseline
 sits =ascender= pixels below the top of the cell. All atlas sizes go through
 =ckd_mul= (checked multiplication), so a silly font size can't overflow.
 
-* One draw call for the whole screen
+* Two draw calls for the whole screen
 
-The OpenGL backend draws 1920 cells (80 x 24) with a single
-=glDrawArraysInstanced= call: 4 vertices (a quad, as a triangle strip) times
-1920 *instances*.
+The OpenGL backend draws every cell (1920 for 80 x 24) with
+=glDrawArraysInstanced=: 4 vertices (a quad, as a triangle strip) times one
+*instance* per cell. It does it twice: backgrounds first, then glyphs
+blended on top (see [[file:08-colors.org][the colors chapter]] for why).
+
+Each instance reads its cell, a =struct cell= of 8 bytes, as vertex
+attributes:
 
 #+begin_example
+  struct cell { ch, attrs, fg[3], bg[3] }      ->  a_glyph  a_attrs  a_fg  a_bg
+              (colors already resolved by the core)   uint    uint     vec3  vec3
+
   CPU (each frame)                        GPU
-  cells: "$ ls\0\0...  1920 bytes"  --->  per-instance attribute a_glyph
-                                          (divisor 1: one byte per quad)
+  cells: 1920 x 8 bytes             --->  per-instance attributes
+                                          (divisor 1: once per quad)
   atlas texture (uploaded once)     --->  sampler u_atlas
   uniforms: cell size, viewport,    --->  for instance i, vertex v:
             cols, cursor index              cell   = (i % cols, i / cols)
@@ -85,13 +92,17 @@ The OpenGL backend draws 1920 cells (80 x 24) with a single
 
 The vertex shader ([[file:../c_src/renderer/gl/shaders/cell.vert][cell.vert]]) needs no vertex buffer at all: it builds
 each corner from =gl_VertexID= and each cell position from =gl_InstanceID=.
-The only per-cell data is the character byte.
+The only per-cell data is the cell itself.
 
 The fragment shader ([[file:../c_src/renderer/gl/shaders/cell.frag][cell.frag]]) reads the coverage with =texelFetch=.
 Because the atlas is exactly the size it's drawn at, each screen pixel maps
-to one atlas texel, with no filtering or blur. It then mixes background and
-foreground by that coverage. The *block cursor* is the cell whose instance
-index equals =u_cursor=: it's drawn with fg and bg swapped.
+to one atlas texel, with no filtering or blur. The *block cursor* is the
+cell whose instance index equals =u_cursor= (=-1= when a program hides it):
+pass 0 paints it in the cursor color, and pass 1 draws its glyph in the
+cell's background color.
+
+The grid can change size between frames (the window was resized); the
+backend grows its buffer when that happens.
 
 The shaders are compiled into the binary with C23 =#embed=, so the renderer
 is a single file with nothing to find at runtime.

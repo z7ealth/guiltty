@@ -139,3 +139,36 @@ so the window closes and reopens.
 **Clicked.** To see why a supervisor gave up, remove the logger's primary
 filters (`:logger.remove_primary_filter/1`) and the hidden supervisor
 reports show up.
+
+## 2026-10-29 — MVP 2: Color
+
+_Draft: agent, awaiting user_
+
+**Tried.** Parser v1 (Paul Williams' DEC state machine, with colon
+sub-parameters and caps on everything), a `Guiltty.Terminal` that gives the
+commands meaning, and a grid of 10-byte cells with a pen: SGR with 16, 256
+and 24-bit colors, cursor movement, erase with back-color-erase, DECTCEM.
+The renderer now gets the theme's 256-color palette in the setup message,
+resolves each cell's colors itself, and draws in two passes (backgrounds,
+then blended glyphs with fake bold, underline and strikethrough). The
+window resizes: the renderer reports the new grid, the Screen resizes
+without reflow, and `TIOCSWINSZ` makes the kernel send SIGWINCH. Protocol
+version 2. `TERM=xterm-256color`, `COLORTERM=truecolor`.
+
+**Broke.**
+- Recording fixtures: `/etc/services` doesn't exist on openSUSE (it's in
+  `/usr/etc`); `man ls` stops to ask which `ls` (use `man 1 ls`); keys typed
+  before `less` is ready get lost and the recording hangs; and the
+  recorder's `set -e` swallowed a nonzero exit silently.
+- C23: `constexpr` allows one declarator per declaration.
+- My live `git log` went through `less`, which draws at the bottom of the
+  screen without the alternate screen (mode 1049, MVP 3).
+
+**Clicked.** 13 recorded fixtures, and every snapshot matched pyte (an
+independent Python VT emulator) cell by cell: text, cursor, bold,
+underline, inverse and colors.
+
+### Later
+
+- MVP 3: alternate screen (1049), DECSC/DECRC, scroll regions, arrow keys.
+- `less`'s `ESC[22;0;0t` (save the window title) is ignored.

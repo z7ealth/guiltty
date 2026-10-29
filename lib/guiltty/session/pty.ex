@@ -26,6 +26,12 @@ defmodule Guiltty.Session.Pty do
   @doc "Sends bytes to the shell, as if typed."
   def write(id, bytes), do: GenServer.cast(Session.via(id, :pty), {:write, bytes})
 
+  @doc """
+  Tells the kernel the terminal's new size (TIOCSWINSZ). The kernel then
+  sends SIGWINCH to the foreground job, and programs like `less` redraw.
+  """
+  def resize(id, cols, rows), do: GenServer.call(Session.via(id, :pty), {:resize, cols, rows})
+
   @doc "Makes `pid` the receiver of `{:pty_data, bytes}` messages."
   def attach_parser(id, pid), do: GenServer.call(Session.via(id, :pty), {:attach_parser, pid})
 
@@ -50,12 +56,13 @@ defmodule Guiltty.Session.Pty do
     end
   end
 
-  # The child gets our environment with TERM=dumb, which asks programs not to
-  # send fancy escape sequences (MVP 1 can't draw them anyway).
+  # The child gets our environment, saying it runs in an xterm-256color
+  # terminal with 24-bit color. TERM picks the terminfo entry programs use
+  # to know which escape sequences to send.
   defp build_env(overrides) do
     System.get_env()
-    |> Map.drop(["COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"])
-    |> Map.put("TERM", "dumb")
+    |> Map.drop(["TERM_PROGRAM", "TERM_PROGRAM_VERSION"])
+    |> Map.merge(%{"TERM" => "xterm-256color", "COLORTERM" => "truecolor"})
     |> Map.merge(overrides)
     |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
   end
@@ -64,6 +71,10 @@ defmodule Guiltty.Session.Pty do
   def handle_call({:attach_parser, pid}, _from, state) do
     Process.monitor(pid)
     {:reply, :ok, arm(%{state | parser: pid})}
+  end
+
+  def handle_call({:resize, cols, rows}, _from, state) do
+    {:reply, PtyNif.resize(state.pty, cols, rows), state}
   end
 
   @impl true

@@ -1,10 +1,12 @@
-// OpenGL 3.3 core backend. The whole grid is one draw call: an instanced
-// quad per cell, with the cell's character as the per-instance attribute.
-// Read: LearnOpenGL "Hello Triangle", "Shaders", "Textures" and
-// "Instancing".
+// OpenGL 3.3 core backend. The whole grid is two instanced draw calls: a
+// quad per cell, first for the backgrounds, then for the glyphs. Each
+// instance reads its cell (struct cell, 8 bytes) as vertex attributes.
+// Read: LearnOpenGL "Hello Triangle", "Shaders", "Textures", "Instancing"
+// and "Blending".
 
 #include <GL/glcorearb.h>
 #include <SDL3/SDL.h>
+#include <stddef.h>
 #include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +29,9 @@ static const char cell_frag_src[] = {
     X(PFNGLCLEARPROC, Clear)                                                              \
     X(PFNGLVIEWPORTPROC, Viewport)                                                        \
     X(PFNGLGETERRORPROC, GetError)                                                        \
+    X(PFNGLENABLEPROC, Enable)                                                            \
+    X(PFNGLDISABLEPROC, Disable)                                                          \
+    X(PFNGLBLENDFUNCPROC, BlendFunc)                                                      \
     X(PFNGLCREATESHADERPROC, CreateShader)                                                \
     X(PFNGLSHADERSOURCEPROC, ShaderSource)                                                \
     X(PFNGLCOMPILESHADERPROC, CompileShader)                                              \
@@ -53,6 +58,7 @@ static const char cell_frag_src[] = {
     X(PFNGLBUFFERSUBDATAPROC, BufferSubData)                                              \
     X(PFNGLDELETEBUFFERSPROC, DeleteBuffers)                                              \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray)                          \
+    X(PFNGLVERTEXATTRIBPOINTERPROC, VertexAttribPointer)                                  \
     X(PFNGLVERTEXATTRIBIPOINTERPROC, VertexAttribIPointer)                                \
     X(PFNGLVERTEXATTRIBDIVISORPROC, VertexAttribDivisor)                                  \
     X(PFNGLGENTEXTURESPROC, GenTextures)                                                  \
@@ -75,17 +81,14 @@ struct gl {
     SDL_GLContext context;
     struct gl_funcs f;
     GLuint program, vao, cell_buffer, atlas_texture;
-    uint16_t cols, rows;
+    size_t capacity; // cells the buffer can hold
     int width, height; // drawable size in pixels
-    int cell_w, cell_h;
+    int cell_w, cell_h, baseline, line_thickness;
     struct {
-        GLint viewport, origin, cell, cols, atlas_cols, first_char, cursor, atlas, fg, bg;
+        GLint viewport, origin, cell, cols, atlas_cols, first_char, cursor, pass, atlas,
+            cursor_color, underline_y, strike_y, line_thickness;
     } u; // uniform locations
 };
-
-// Tomorrow Night-ish colors; themes come with MVP 4's config.
-static constexpr float fg_rgb[3] = {0.773f, 0.784f, 0.776f};
-static constexpr float bg_rgb[3] = {0.114f, 0.122f, 0.129f};
 
 [[nodiscard]] static bool load_funcs(struct gl_funcs *f) {
 #define X(type, name)                                                                     \
@@ -146,9 +149,12 @@ static constexpr float bg_rgb[3] = {0.114f, 0.122f, 0.129f};
     LOC(atlas_cols, "u_atlas_cols");
     LOC(first_char, "u_first_char");
     LOC(cursor, "u_cursor");
+    LOC(pass, "u_pass");
     LOC(atlas, "u_atlas");
-    LOC(fg, "u_fg");
-    LOC(bg, "u_bg");
+    LOC(cursor_color, "u_cursor_color");
+    LOC(underline_y, "u_underline_y");
+    LOC(strike_y, "u_strike_y");
+    LOC(line_thickness, "u_line_thickness");
 #undef LOC
     return true;
 }
@@ -162,13 +168,11 @@ static bool gl_configure(void) {
 
 static void gl_shutdown(void *state);
 
-static void *gl_init(SDL_Window *window, uint16_t cols, uint16_t rows) {
+static void *gl_init(SDL_Window *window) {
     struct gl *gl = calloc(1, sizeof *gl);
     if (gl == nullptr)
         return nullptr;
     gl->window = window;
-    gl->cols = cols;
-    gl->rows = rows;
 
     gl->context = SDL_GL_CreateContext(window);
     if (gl->context == nullptr) {
@@ -183,21 +187,24 @@ static void *gl_init(SDL_Window *window, uint16_t cols, uint16_t rows) {
         return nullptr;
     }
 
-    // The per-cell buffer: one byte per cell, fed to a_glyph once per
-    // instance (divisor 1) instead of once per vertex.
-    size_t ncells;
-    if (ckd_mul(&ncells, (size_t)cols, (size_t)rows)) {
-        gl_shutdown(gl);
-        return nullptr;
+    // The per-cell buffer. Each attribute advances once per instance
+    // (divisor 1) instead of once per vertex. The buffer itself is sized on
+    // the first draw, and again whenever the grid grows.
+    struct gl_funcs *f = &gl->f;
+    f->GenVertexArrays(1, &gl->vao);
+    f->BindVertexArray(gl->vao);
+    f->GenBuffers(1, &gl->cell_buffer);
+    f->BindBuffer(GL_ARRAY_BUFFER, gl->cell_buffer);
+    constexpr GLsizei stride = sizeof(struct cell);
+    f->VertexAttribIPointer(0, 1, GL_UNSIGNED_BYTE, stride, (void *)offsetof(struct cell, ch));
+    f->VertexAttribIPointer(1, 1, GL_UNSIGNED_BYTE, stride, (void *)offsetof(struct cell, attrs));
+    // Normalized: the bytes 0..255 arrive in the shader as 0.0..1.0.
+    f->VertexAttribPointer(2, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride, (void *)offsetof(struct cell, fg));
+    f->VertexAttribPointer(3, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride, (void *)offsetof(struct cell, bg));
+    for (GLuint i = 0; i < 4; i++) {
+        f->EnableVertexAttribArray(i);
+        f->VertexAttribDivisor(i, 1);
     }
-    gl->f.GenVertexArrays(1, &gl->vao);
-    gl->f.BindVertexArray(gl->vao);
-    gl->f.GenBuffers(1, &gl->cell_buffer);
-    gl->f.BindBuffer(GL_ARRAY_BUFFER, gl->cell_buffer);
-    gl->f.BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ncells, nullptr, GL_DYNAMIC_DRAW);
-    gl->f.EnableVertexAttribArray(0);
-    gl->f.VertexAttribIPointer(0, 1, GL_UNSIGNED_BYTE, 1, nullptr);
-    gl->f.VertexAttribDivisor(0, 1);
     return gl;
 }
 
@@ -205,6 +212,8 @@ static bool gl_upload_atlas(void *state, const struct atlas *atlas) {
     struct gl *gl = state;
     gl->cell_w = atlas->cell_w;
     gl->cell_h = atlas->cell_h;
+    gl->baseline = atlas->baseline;
+    gl->line_thickness = atlas->line_thickness;
     gl->f.GenTextures(1, &gl->atlas_texture);
     gl->f.ActiveTexture(GL_TEXTURE0);
     gl->f.BindTexture(GL_TEXTURE_2D, gl->atlas_texture);
@@ -224,19 +233,31 @@ static void gl_resize(void *state, int width_px, int height_px) {
     gl->f.Viewport(0, 0, width_px, height_px);
 }
 
+static float unit(uint8_t v) { return (float)v / 255.0f; }
+
 static void gl_draw_frame(void *state, const struct frame *frame) {
     struct gl *gl = state;
     struct gl_funcs *f = &gl->f;
-    GLsizei ncells = (GLsizei)frame->cols * frame->rows;
+    size_t ncells = (size_t)frame->cols * frame->rows;
+    size_t bytes;
+    if (ckd_mul(&bytes, ncells, sizeof(struct cell)))
+        return;
 
-    f->ClearColor(bg_rgb[0], bg_rgb[1], bg_rgb[2], 1.0f);
+    f->ClearColor(unit(frame->clear_rgb[0]), unit(frame->clear_rgb[1]), unit(frame->clear_rgb[2]),
+                  1.0f);
     f->Clear(GL_COLOR_BUFFER_BIT);
 
-    // MVP 1 re-uploads every cell each frame: 1920 bytes. Damage tracking
-    // comes in MVP 3.
+    // Every cell, every frame: 15 KB for 80x24. Damage tracking comes in
+    // MVP 3. Grow the buffer when the grid outgrows it.
     f->BindBuffer(GL_ARRAY_BUFFER, gl->cell_buffer);
-    f->BufferSubData(GL_ARRAY_BUFFER, 0, ncells, frame->cells);
+    if (ncells > gl->capacity) {
+        f->BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, frame->cells, GL_DYNAMIC_DRAW);
+        gl->capacity = ncells;
+    } else {
+        f->BufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)bytes, frame->cells);
+    }
 
+    int cursor = frame->cursor_visible ? frame->cursor_row * frame->cols + frame->cursor_col : -1;
     f->UseProgram(gl->program);
     f->Uniform2f(gl->u.viewport, (float)gl->width, (float)gl->height);
     f->Uniform2f(gl->u.origin, (float)frame->origin_x, (float)frame->origin_y);
@@ -244,15 +265,30 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1i(gl->u.cols, frame->cols);
     f->Uniform1i(gl->u.atlas_cols, atlas_grid_cols);
     f->Uniform1i(gl->u.first_char, atlas_first_char);
-    f->Uniform1i(gl->u.cursor, frame->cursor_row * frame->cols + frame->cursor_col);
+    f->Uniform1i(gl->u.cursor, cursor);
     f->Uniform1i(gl->u.atlas, 0);
-    f->Uniform3f(gl->u.fg, fg_rgb[0], fg_rgb[1], fg_rgb[2]);
-    f->Uniform3f(gl->u.bg, bg_rgb[0], bg_rgb[1], bg_rgb[2]);
+    f->Uniform3f(gl->u.cursor_color, unit(frame->cursor_rgb[0]), unit(frame->cursor_rgb[1]),
+                 unit(frame->cursor_rgb[2]));
+    // Underline just below the baseline; strikethrough through the middle
+    // of lowercase letters.
+    f->Uniform1i(gl->u.underline_y, gl->baseline + 1);
+    f->Uniform1i(gl->u.strike_y, gl->baseline - gl->cell_h / 4);
+    f->Uniform1i(gl->u.line_thickness, gl->line_thickness);
 
     f->BindVertexArray(gl->vao);
     f->ActiveTexture(GL_TEXTURE0);
     f->BindTexture(GL_TEXTURE_2D, gl->atlas_texture);
-    f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, ncells);
+
+    // Pass 0: backgrounds, opaque.
+    f->Disable(GL_BLEND);
+    f->Uniform1i(gl->u.pass, 0);
+    f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
+
+    // Pass 1: glyphs, blended by coverage (out_color's alpha).
+    f->Enable(GL_BLEND);
+    f->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    f->Uniform1i(gl->u.pass, 1);
+    f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
 
     SDL_GL_SwapWindow(gl->window);
 }
