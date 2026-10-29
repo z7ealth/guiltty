@@ -36,7 +36,7 @@ adding new boxes.
          | master fd                     port stdin  |   | port stdout
          |                               (rows)      v   | (key events)
   +------|------+                               +-------------------+
-  |  kernel PTY |                               | guiltty_renderer  |
+  |  kernel PTY |                               | guiltty_gl        |
   |  /dev/pts/N |                               | (separate C proc) |
   +------|------+                               | SDL3 + OpenGL     |
          | slave fd 0,1,2                       +-------------------+

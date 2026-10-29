@@ -116,7 +116,7 @@ guiltty/
 │       ├── core/            # port protocol, SDL3 window and input, FreeType atlas
 │       ├── gl/              # OpenGL 3.3 core backend (MVP 1)
 │       └── vk/              # Vulkan backend (side quest)
-├── priv/                    # built binaries: guiltty_renderer_gl, later _vk
+├── priv/                    # built binaries: guiltty_gl, later guiltty_vk
 ├── Makefile                 # built through elixir_make
 ├── test/fixtures/           # recorded byte streams
 ├── book/                    # Org-mode guide to how guiltty works (see "The book")
@@ -206,11 +206,11 @@ mix format --check-formatted
 mix guiltty                 # open a guiltty window; returns when it closes
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
-./priv/guiltty_renderer_gl-debug --demo   # the renderer alone, no Elixir
+./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir
 ```
 
 Tests run the `-debug` renderer headless (`SDL_VIDEO_DRIVER=offscreen`).
-Set `config :guiltty, renderer: "guiltty_renderer_gl-debug"` to run the app
+Set `config :guiltty, renderer: "guiltty_gl-dbg"` to run the app
 under the sanitizers.
 
 ## Environment

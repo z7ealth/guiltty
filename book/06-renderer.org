@@ -29,8 +29,8 @@ of function pointers ([[file:../c_src/renderer/core/backend.h][backend.h]]):
 | =shutdown=     | on exit                                               |
 
 =gl_backend.c= defines =renderer_backend=, and the Makefile links core +
-gl into =guiltty_renderer_gl=. The Vulkan side quest adds =vk/= and a second
-binary, =guiltty_renderer_vk=, without touching the core.
+gl into =guiltty_gl=. The Vulkan side quest adds =vk/= and a second
+binary, =guiltty_vk=, without touching the core.
 
 * The glyph atlas
 
@@ -131,8 +131,8 @@ often than the screen refreshes.
 
 #+begin_src sh
 make                                     # both builds
-./priv/guiltty_renderer_gl --demo        # a fixed screen, no port
-./priv/guiltty_renderer_gl-debug --demo  # same, under ASan + UBSan
+./priv/guiltty_gl --demo        # a fixed screen, no port
+./priv/guiltty_gl-dbg --demo  # same, under ASan + UBSan
 #+end_src
 
 Closing the demo window under the debug build prints nothing: no leaks, no

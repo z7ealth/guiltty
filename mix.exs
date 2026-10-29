@@ -9,7 +9,13 @@ defmodule Guiltty.MixProject do
       start_permanent: Mix.env() == :prod,
       compilers: [:elixir_make] ++ Mix.compilers(),
       make_clean: ["clean"],
-      deps: deps()
+      deps: deps(),
+      releases: [
+        # Temporary: when guiltty stops (window closed or shell exited), the
+        # VM isn't brought down as a crash. Guiltty.Application.stop/1 then
+        # stops it cleanly.
+        guiltty: [applications: [guiltty: :temporary]]
+      ]
     ]
   end
 

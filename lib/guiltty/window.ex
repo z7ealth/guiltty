@@ -13,10 +13,12 @@ defmodule Guiltty.Window do
   require Logger
 
   alias Guiltty.Keymap
+  alias Guiltty.Session
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.Protocol
 
   @hello_timeout 5_000
+  @resubscribe_ms 50
 
   @doc """
   Options: `:session` (required), `:renderer` (a binary in priv/), `:env`
@@ -80,13 +82,16 @@ defmodule Guiltty.Window do
 
   def handle_info(:timeout, state), do: {:stop, :no_hello_from_renderer, state}
 
+  # The Screen restarted (it crashed, or the whole session did). The new one
+  # doesn't know about us, so subscribe again.
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, subscribe(state)}
+  def handle_info(:subscribe, state), do: {:noreply, subscribe(state)}
+
   defp handle_event({:hello, version, backend}, state) do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
       Port.command(state.port, Protocol.setup(state.cols, state.rows))
-      # The screen answers with every row, then sends changes as they happen.
-      :ok = Screen.subscribe(state.session, self())
-      {:noreply, %{state | ready: true}}
+      {:noreply, %{subscribe(state) | ready: true}}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
     end
@@ -99,6 +104,26 @@ defmodule Guiltty.Window do
     end
 
     {:noreply, state}
+  end
+
+  # Subscribe to the session's Screen and monitor it. The Screen answers with
+  # every row, then sends changes as they happen. If it isn't running right
+  # now (mid-restart), try again shortly.
+  defp subscribe(state) do
+    with pid when is_pid(pid) <- GenServer.whereis(Session.via(state.session, :screen)),
+         Process.monitor(pid),
+         :ok <- Screen.subscribe(state.session, self()) do
+      state
+    else
+      _ ->
+        Process.send_after(self(), :subscribe, @resubscribe_ms)
+        state
+    end
+  catch
+    # The Screen died between finding it and subscribing.
+    :exit, _ ->
+      Process.send_after(self(), :subscribe, @resubscribe_ms)
+      state
   end
 
   @impl true

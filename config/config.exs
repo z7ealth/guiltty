@@ -8,4 +8,4 @@ config :guiltty, autostart: config_env() != :test
 # AddressSanitizer and UBSan; tests always use it.
 config :guiltty,
   renderer:
-    if(config_env() == :test, do: "guiltty_renderer_gl-debug", else: "guiltty_renderer_gl")
+    if(config_env() == :test, do: "guiltty_gl-dbg", else: "guiltty_gl")

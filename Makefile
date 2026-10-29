@@ -3,7 +3,7 @@
 #
 #   make             the PTY NIF and the OpenGL renderer (both builds)
 #   make debug       only the renderer with AddressSanitizer and UBSan,
-#                    priv/guiltty_renderer_gl-debug
+#                    priv/guiltty_gl-dbg
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]), halt().')
 
@@ -22,9 +22,9 @@ RENDERER_LIBS = $(shell pkg-config --libs $(RENDERER_DEPS))
 
 GL_SRC = c_src/renderer/gl/gl_backend.c
 GL_SHADERS = $(wildcard c_src/renderer/gl/shaders/*)
-RENDERER_GL = $(PRIV)/guiltty_renderer_gl
+RENDERER_GL = $(PRIV)/guiltty_gl
 
-all: $(NIF) $(RENDERER_GL) $(RENDERER_GL)-debug
+all: $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg
 
 $(NIF): c_src/pty_nif.c
 	@mkdir -p $(PRIV)
@@ -34,13 +34,13 @@ $(RENDERER_GL): $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) -O2 $(RENDERER_CFLAGS) -o $@ $(RENDERER_CORE) $(GL_SRC) $(RENDERER_LIBS)
 
-debug: $(RENDERER_GL)-debug
+debug: $(RENDERER_GL)-dbg
 
-$(RENDERER_GL)-debug: $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
+$(RENDERER_GL)-dbg: $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) $(SANITIZE) $(RENDERER_CFLAGS) -o $@ $(RENDERER_CORE) $(GL_SRC) $(RENDERER_LIBS)
 
 clean:
-	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-debug
+	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg
 
 .PHONY: all debug clean

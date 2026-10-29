@@ -53,6 +53,20 @@ defmodule Guiltty.SessionTest do
     assert Session.dump(id) =~ ~r/^before$/m
   end
 
+  test "killing the session supervisor brings back a working session", %{id: id, sup: sup} do
+    old_pty = GenServer.whereis(Session.via(id, :pty))
+    Process.exit(sup, :kill)
+
+    # The old Pty still exits cleanly, and the new one can take its name.
+    assert eventually(fn ->
+             pty = GenServer.whereis(Session.via(id, :pty))
+             pty != nil and pty != old_pty
+           end)
+
+    Session.write(id, "echo reborn\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^reborn$/m end)
+  end
+
   test "exit ends the session", %{id: id, sup: sup} do
     ref = Process.monitor(sup)
     Session.write(id, "exit\r")

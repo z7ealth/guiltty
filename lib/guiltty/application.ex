@@ -20,7 +20,17 @@ defmodule Guiltty.Application do
           []
         end
 
-    opts = [strategy: :one_for_one, name: Guiltty.Supervisor, auto_shutdown: :any_significant]
+    # rest_for_one: everything after the Registry uses it for names, so if it
+    # restarts, they restart too.
+    opts = [strategy: :rest_for_one, name: Guiltty.Supervisor, auto_shutdown: :any_significant]
     Supervisor.start_link(children, opts)
+  end
+
+  # In a release nothing else runs in the VM, so once guiltty has stopped
+  # there's no reason to keep it alive. Under iex or mix, leave it running.
+  @impl true
+  def stop(_state) do
+    if System.get_env("RELEASE_NAME"), do: System.stop(0)
+    :ok
   end
 end

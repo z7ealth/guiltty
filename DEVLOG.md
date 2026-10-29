@@ -113,3 +113,29 @@ leftover processes.
   MVP 2).
 - The window isn't resizable yet (MVP 2).
 - Font and size are fixed (Source Code Pro via fontconfig, 18 px).
+
+## 2026-10-29 — Killing things from Observer
+
+_Draft: agent, awaiting user_
+
+**Broke.** Killing the session supervisor from Observer closed the window
+and, in a release, stopped the VM. The old Pty traps exits, so it was still
+in `terminate/2` (waiting up to a second for bash) when the root supervisor
+restarted the session; the new Pty found `{:main, :pty}` taken
+(`already_started`), the restart failed and the root supervisor gave up.
+Elixir hides those supervisor reports by default, so it looked like a
+silent shutdown.
+
+Also found: after the Screen restarted, the Window stayed subscribed to
+nobody and stopped updating. And killing the Registry stopped the app.
+
+**Fixed.** The Pty's `terminate/2` returns at once and a helper process
+waits for bash. `Session.start_named/3` waits for a dying previous owner of
+a name before registering. The Window monitors the Screen and subscribes
+again. The root supervisor is now `rest_for_one`, with the Registry first.
+Every kill now recovers; restarting the session also restarts the Window,
+so the window closes and reopens.
+
+**Clicked.** To see why a supervisor gave up, remove the logger's primary
+filters (`:logger.remove_primary_filter/1`) and the hidden supervisor
+reports show up.

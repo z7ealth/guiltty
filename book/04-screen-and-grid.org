@@ -75,7 +75,7 @@ Guiltty.Session.dump(:main) |> IO.puts()
 * One session, three processes
 
 #+begin_example
-  Guiltty.Supervisor (one_for_one, auto_shutdown: :any_significant)
+  Guiltty.Supervisor (rest_for_one, auto_shutdown: :any_significant)
   |-- Registry Guiltty.Registry         names: {session_id, :pty} etc.
   |-- Session.Supervisor :main          (significant)
   |   |   rest_for_one, auto_shutdown: :any_significant
@@ -110,6 +110,47 @@ it:
 A new parser attaches to the Pty in its =init/1=, and the Pty starts
 reading again. A test kills the parser mid-session and checks that the
 screen keeps its contents and the shell keeps working.
+
+When the Screen restarts, the new one has no subscribers. The Window
+monitors the Screen, and when it goes down it subscribes to the new one
+(retrying every 50 ms until it exists), so the window keeps updating.
+
+One level up, the root supervisor is =rest_for_one= too:
+
+| Crash             | Restarts                         |
+|-------------------+----------------------------------|
+| Registry          | Registry, the session, Window    |
+| Session.Supervisor| the session, Window              |
+| Window            | Window (a new renderer)          |
+
+The Registry comes first because every session process finds the others
+through it; if it restarts, all its names are gone, so everything after it
+restarts too.
+
+** Killing a supervisor
+Killing a supervisor with =Process.exit(pid, :kill)= (or from Observer)
+found two bugs on the way, both worth knowing:
+
+#+begin_example
+  t=0   session supervisor killed
+        |-> root supervisor: "child died, restart it"  -> new Pty wants {:main, :pty}
+        `-> old Pty gets an exit signal, but it traps exits,
+            so it runs terminate/2 first ... still holding {:main, :pty}
+  =>    new Pty: {:error, {:already_started, old_pty}}
+        restart fails -> root gives up -> the whole app stops
+#+end_example
+
+The fixes:
+
+1. The Pty's =terminate/2= returns immediately and leaves the waiting for
+   bash to a helper process, so the old Pty is gone within microseconds.
+2. =Guiltty.Session.start_named/3= starts every session process. If the
+   name is still held by a process that's on its way out, it waits for that
+   process to exit (at most a second) and tries once more. Registry frees a
+   name as soon as its owner is no longer alive.
+
+Tests kill the session supervisor and the Screen and check that a working
+session comes back and the window follows it.
 
 ** When bash exits
 The Pty is marked *significant*. When it stops with ={:shutdown, _}= (bash

@@ -14,7 +14,7 @@ defmodule Guiltty.Session.Parser do
   alias Guiltty.Session.{Pty, Screen}
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Session.via(opts[:id], :parser))
+    Session.start_named(opts[:id], :parser, &GenServer.start_link(__MODULE__, opts, name: &1))
   end
 
   @impl true

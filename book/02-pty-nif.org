@@ -150,8 +150,11 @@ completely; noted for later.)
   it waits for =:ready_output= and writes the rest.
 - On =:eof= (EIO), it closes the master, waits for bash to go, and stops with
   ={:shutdown, status}=, which ends the session.
-- On shutdown, =terminate/2= closes the master (the kernel sends SIGHUP),
-  waits half a second, then sends SIGHUP and finally SIGKILL.
+- On shutdown, =terminate/2= closes the master (the kernel sends SIGHUP)
+  and returns at once. A short-lived helper process holds on to the NIF
+  resource and gives the shell half a second, then sends SIGHUP and finally
+  SIGKILL. The Pty itself must die quickly: see "Killing a supervisor" in
+  [[file:04-screen-and-grid.org][chapter 4]].
 
 * Loot
 

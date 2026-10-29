@@ -50,6 +50,21 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> Session.dump(id) =~ ~r/^key-path$/m end)
   end
 
+  test "the window follows a restarted screen", %{id: id, window: window} do
+    for role <- [:screen, :supervisor] do
+      old = GenServer.whereis(Session.via(id, :screen))
+      Process.exit(GenServer.whereis(Session.via(id, role)), :kill)
+
+      assert eventually(fn ->
+               screen = GenServer.whereis(Session.via(id, :screen))
+               screen not in [nil, old] and window in :sys.get_state(screen).subscribers
+             end),
+             "window not subscribed after killing #{role}"
+    end
+
+    assert Process.alive?(window)
+  end
+
   test "stopping the window ends the renderer process", %{window: window} do
     {:os_pid, os_pid} = Port.info(port(window), :os_pid)
     assert File.exists?("/proc/#{os_pid}")

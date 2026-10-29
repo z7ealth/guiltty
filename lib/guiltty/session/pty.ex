@@ -20,7 +20,7 @@ defmodule Guiltty.Session.Pty do
   @sigkill 9
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Session.via(opts[:id], :pty))
+    Session.start_named(opts[:id], :pty, &GenServer.start_link(__MODULE__, opts, name: &1))
   end
 
   @doc "Sends bytes to the shell, as if typed."
@@ -96,7 +96,12 @@ defmodule Guiltty.Session.Pty do
   def terminate(_reason, state) do
     # Closing the master hangs up the terminal, so the kernel sends SIGHUP.
     PtyNif.close(state.pty)
-    reap(state.pty, @sighup)
+    # Give the shell time to exit in a separate process, so this one (and
+    # its registered name) is gone right away. The helper holds the NIF
+    # resource, so its destructor can't SIGKILL the shell early.
+    pty = state.pty
+    Task.start(fn -> reap(pty, @sighup) end)
+    :ok
   end
 
   defp drain(state, 0), do: {:noreply, arm(state)}
@@ -111,10 +116,8 @@ defmodule Guiltty.Session.Pty do
         {:noreply, arm(state)}
 
       :eof ->
-        PtyNif.close(state.pty)
-        status = reap(state.pty, @sighup)
-        Logger.info("pty: shell #{state.os_pid} ended: #{inspect(status)}")
-        {:stop, {:shutdown, status}, state}
+        Logger.info("pty: shell #{state.os_pid} ended")
+        {:stop, {:shutdown, :shell_exited}, state}
 
       {:error, reason} ->
         {:stop, {:read_failed, reason}, state}
@@ -148,8 +151,8 @@ defmodule Guiltty.Session.Pty do
     end
   end
 
-  # Wait for the child to exit so it doesn't stay a zombie. Ask nicely
-  # first, then SIGKILL.
+  # Wait for the shell to exit: ask with SIGHUP first, then SIGKILL. The BEAM
+  # ignores SIGCHLD, so the kernel reaps it and there's no zombie either way.
   defp reap(pty, signal) do
     with :running <- wait_for(pty, 500),
          _ <- PtyNif.kill(pty, signal),

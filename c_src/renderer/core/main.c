@@ -2,8 +2,8 @@
 // Erlang port. It keeps a mirror of the visible cells, draws them through a
 // backend, and reports keys. If it crashes, only the window goes away.
 //
-//   guiltty_renderer_gl           port mode: talks the protocol on stdin/stdout
-//   guiltty_renderer_gl --demo    standalone: draws a fixed screen, no port
+//   guiltty_gl           port mode: talks the protocol on stdin/stdout
+//   guiltty_gl --demo    standalone: draws a fixed screen, no port
 //
 // stdout belongs to the protocol. Diagnostics go to stderr only.
 

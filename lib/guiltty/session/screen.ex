@@ -13,7 +13,7 @@ defmodule Guiltty.Session.Screen do
   alias Guiltty.Session
 
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Session.via(opts[:id], :screen))
+    Session.start_named(opts[:id], :screen, &GenServer.start_link(__MODULE__, opts, name: &1))
   end
 
   def apply(id, commands), do: GenServer.cast(Session.via(id, :screen), {:apply, commands})

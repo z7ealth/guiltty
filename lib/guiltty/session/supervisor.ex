@@ -16,7 +16,11 @@ defmodule Guiltty.Session.Supervisor do
   alias Guiltty.Session.{Parser, Pty, Screen}
 
   def start_link(opts) do
-    Supervisor.start_link(__MODULE__, opts, name: Session.via(opts[:id], :supervisor))
+    Session.start_named(
+      opts[:id],
+      :supervisor,
+      &Supervisor.start_link(__MODULE__, opts, name: &1)
+    )
   end
 
   @impl true
