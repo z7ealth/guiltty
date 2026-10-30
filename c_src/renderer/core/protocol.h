@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 2;
+constexpr uint16_t protocol_version = 3;
 
 // Largest message we accept; anything bigger is a protocol error.
 constexpr uint32_t max_message_size = 1u << 24;
@@ -32,7 +32,16 @@ enum msg_tag : uint8_t {
     MSG_KEY = 5,
     // renderer -> Elixir: u16 cols, u16 rows that now fit the window
     MSG_RESIZE = 6,
+    // Elixir -> renderer: the window title, UTF-8
+    MSG_TITLE = 7,
+    // renderer -> Elixir: text pasted from the clipboard, UTF-8
+    MSG_PASTE = 8,
+    // renderer -> Elixir: u8 kind (mouse_kind), u8 button (0 left, 1 middle,
+    // 2 right, 3 none; for the wheel 0 up, 1 down), u16 col, u16 row (cells,
+    // 0-based), u16 SDL modifiers
+    MSG_MOUSE = 9,
 };
+enum mouse_kind : uint8_t { MOUSE_PRESS = 0, MOUSE_RELEASE = 1, MOUSE_MOTION = 2, MOUSE_WHEEL = 3 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");
 
 // One cell on the wire, exactly as Guiltty.Grid stores it:
@@ -50,6 +59,8 @@ constexpr size_t setup_message_size = 1 + 2 * sizeof(uint16_t) + 3 * setup_color
 constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 1 + sizeof(uint16_t);
 constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
 constexpr size_t resize_message_size = 1 + 2 * sizeof(uint16_t);
+constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t);
+static_assert(mouse_message_size == 9);
 static_assert(setup_message_size == 782);
 static_assert(rows_header_size == 12);
 static_assert(key_message_size == 7);

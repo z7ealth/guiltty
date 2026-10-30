@@ -5,7 +5,9 @@ defmodule Guiltty.GoldenTest do
   and the resulting screen is compared to a saved snapshot.
 
   A snapshot (`NAME.txt`) has the screen text, then every run of styled
-  cells. To rewrite them after an intended change:
+  cells. For programs that use the alternate screen (less, vim...), it
+  first records that screen as it was just before the program left it, then
+  the main screen it returned to. To rewrite them after an intended change:
 
       GUILTTY_UPDATE_GOLDEN=1 mix test test/guiltty/golden_test.exs
 
@@ -26,7 +28,7 @@ defmodule Guiltty.GoldenTest do
     @path path
 
     test "#{name} matches its snapshot" do
-      actual = @path |> File.read!() |> render() |> snapshot()
+      actual = @path |> File.read!() |> full_snapshot()
       expected_path = Path.rootname(@path) <> ".txt"
 
       if @update or not File.exists?(expected_path) do
@@ -50,6 +52,30 @@ defmodule Guiltty.GoldenTest do
     {_p, cmds} = Parser.feed(Parser.new(), bytes)
     Terminal.apply(Grid.new(80, 24), cmds)
   end
+
+  @alt_exits [47, 1047, 1049]
+
+  # The alternate screen just before the last time it was left, if ever,
+  # then the final screen.
+  defp full_snapshot(bytes) do
+    {_p, cmds} = Parser.feed(Parser.new(), bytes)
+    last_exit = Enum.find_index(Enum.reverse(cmds), &alt_exit?/1)
+
+    alt =
+      if last_exit do
+        before = Enum.take(cmds, length(cmds) - last_exit - 1)
+
+        "=== alternate screen, before the program left it\n" <>
+          snapshot(Terminal.apply(Grid.new(80, 24), before)) <> "=== main screen, at the end\n"
+      else
+        ""
+      end
+
+    alt <> snapshot(Terminal.apply(Grid.new(80, 24), cmds))
+  end
+
+  defp alt_exit?({:csi, ??, params, "", ?l}), do: Enum.any?(params, &(&1 in @alt_exits))
+  defp alt_exit?(_), do: false
 
   defp render_bytewise(bytes) do
     {_p, grid} =

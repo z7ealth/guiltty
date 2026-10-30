@@ -104,6 +104,18 @@ cell's background color.
 The grid can change size between frames (the window was resized); the
 backend grows its buffer when that happens.
 
+** Damage tracking
+The GPU keeps last frame's cells in its buffer, so each frame only uploads
+the rows that changed since the previous one. The core tracks the range
+(=dirty_first= .. =dirty_last=) as ROWS messages arrive, and the backend
+uploads just that slice with =glBufferSubData=. Both passes still draw every
+cell: drawing is cheap, uploading is what costs. A new grid size moves
+every cell, so then everything is uploaded.
+
+Draws are batched by vsync: =SDL_GL_SwapWindow= waits for the screen's
+refresh, messages pile up meanwhile, and the next loop applies them all
+before drawing once.
+
 The shaders are compiled into the binary with C23 =#embed=, so the renderer
 is a single file with nothing to find at runtime.
 

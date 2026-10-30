@@ -1,0 +1,52 @@
+[?1049h[22;0;0t[>4;2m[?1h=[?2004h[?1004h[1;24r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[?25l[24;1H"/tmp/claude-1000/sample.ex" 99L, 4228B[2;1H½[6n[2;1H  [3;1HPzz\[0%m[6n[3;1H           [1;1H[>c]10;?]11;?[14t[16t[1;1Hdefmodule Guiltty.SGR do
+  @moduledoc """[2;17H[K[3;1H  SGR, Select Graphic Rendition (`CSI ... m`): sets the pen that new text[3;74H[K[4;3His written with.
+
+  | Parameter[7C| Effect[34C|
+  |-----------------|-----------------------------------------|
+  | none, `0`[7C| reset everything[24C|
+  | `1` `2` `3` `4` | bold, dim, italic, underline[12C|
+  | `5` `7` `8` `9` | blink, inverse, hidden, strikethrough   |
+  | `21`[12C| double underline (drawn as underline)   |
+  | `22`..`29`      | turn those off (22 = bold and dim)      |
+  | `30`..`37`      | foreground palette 0-7[18C|
+  | `90`..`97`      | foreground palette 8-15 (bright)[8C|
+  | `40`..`47`, `100`..`107` | the same for the background    |
+  | `38;5;n`, `48;5;n` | palette color n (0-255)[14C|
+  | `38;2;r;g;b`, `48;2;r;g;b` | 24-bit color[17C|
+  | `39`, `49`      | default foreground, background[10C|
+
+  The extended colors also come in the colon form, `38:5:n` and
+  `38:2::r:g:b` (with an optional color-space id between the colons).
+  """[24;63H1,1[11CTop[?25h[1;1H[?4m[?25l[24;53H20j[1;1H[24;53H   [18;1H[1;23r[1;1H[3M[1;24r[21;3Himport Bitwise
+
+  alias Guiltty.Grid[24;1H[K[24;63H21,1[11C3%[?25h[18;1H[?25l[24;53H^D[18;1H[24;53H  [18;5H[1;23r[1;1H[11M[1;24r[14;3H@spec apply(Grid.t(), [Guiltty.Parser.param()]) :: Grid.t()
+  def apply(grid, []), do: reset(grid)
+
+  def apply(grid, params) do
+    {attrs, fg, bg} = sgr(params, {grid.attrs, grid.fg, grid.bg})
+    Grid.set_pen(grid, attrs, fg, bg)
+  end
+
+  defp reset(grid), do: Grid.set_pen(grid, 0, 0, 0)[24;63H[K[24;63H32,5[10C18%[?25h[18;5H[?25l[24;63H[K[24;1H:split[?25h[?25l[1;3H[K[2;3H@spec apply(Grid.t(), [Guiltty.Parser.param()]) :: Grid.t()[2;63H[K[3;3Hdef apply(grid, []), do: reset(grid)[3;39H[K[4;3H[K[5;3Hdef apply(grid, params) do
+    {attrs, fg, bg} = sgr(params, {grid.attrs, grid.fg, grid.bg})
+    Grid.set_pen(grid, attrs, fg, bg)[7;38H[K[8;3Hend
+
+  defp reset(grid), do: Grid.set_pen(grid, 0, 0, 0)
+
+[1m[7m/tmp/claude-1000/sample.ex                                    32,5           29%[m[14;3Halias Guiltty.Grid[14;21H[K[15;3H[K[16;3H@spec apply(Grid.t(), [Guiltty.Parser.param()]) :: Grid.t()[17;19H[]), do: reset(grid)[18;5H[K[19;3Hdef apply(grid, params) do[19;29H[K[20;3H  {attrs, fg, bg} = sgr(params, {grid.attrs, grid.fg, grid.bg})
+    Grid.set_pen(grid, attrs, fg, bg)
+  end[22;6H[K[23;1H[7m/tmp/claude-1000/sample.ex                                    32,5           26%[?25h[6;5H[?25l[m[24;70H^Ww[6;5H[24;70H   [18;5H[12;1H[7m/tmp/claude-1000/sample.ex[m[1m[7m [m[7m                                    32,5           29%[13;22r[m[13;1H[2M[1;24r[22;3Hdefp reset(grid), do: Grid.set_pen(grid, 0, 0, 0)
+[1m[7m/tmp/claude-1000/sample.ex                                    32,5           29%[m[24;1H[K[?25h[18;5H[?25l[24;70HG[18;5H[24;70H [22;1H[14;3Hdefp on({attrs, fg, bg}, name), do: {attrs ||| Grid.attr(name), fg, bg}[15;6Hp off({attrs, fg, bg}, name), do: {attrs &&& bnot(Grid.attr(name)), fg, bg}[17;6Hp color({attrs, _fg, bg}, 38, c), do: {attrs, c, bg}
+  defp color({attrs, fg, _bg}, 48, c), do: {attrs, fg, c}[18;58H[K[19;5H[K[20;3Hdefp byte(nil), do: 0
+  defp byte(n), do: min(n, 255)
+en[22;4H[K[?25h[?25l[23;63H[1m[7m99,1 [10CBot[22;1H[?25h[?25l[m[24;70Ho[22;1H[24;70H [22;1H
+
+[1m-- INSERT --[m[12;28H[7m[+][13;22r[m[22;1H
+[1;24r[23;28H[1m[7m[+][32C100,1[?25h[22;1H[?25l[mhello from guiltty[?25h[?25l[23;68H[1m[7m9[22;19H[?25h[m[24;1H[K[22;18H[?25l[24;70H^[[22;18H[24;70H  [22;19H[23;68H[1m[7m8 [22;18H[?25h[?25l
+
+[m:q![?25h[?25l[1;3H`38:2::r:g:b` (with an optional color-space id between the colons).
+  """[2;6H[K[3;3H[K[4;3Himport Bitwise[5;3H[K[6;3Halias Guiltty.Grid[6;21H[K[7;5H[K[8;3H@spec apply(Grid.t(), [Guiltty.Parser.param()]) :: Grid.t()
+  def apply(grid, []), do: reset(grid)[10;3H[K[11;3Hdef apply(grid, params) do
+    {attrs, fg, bg} = sgr(params, {grid.attrs, grid.fg, grid.bg})[12;66H[K[13;3H  Grid.set_pen(grid, attrs, fg, bg)[13;39H[K[14;3Hend[14;6H[K[16;8Hreset(grid), do: Grid.set_pen(grid, 0, 0, 0)[16;52H[K[17;3H[K[18;3Hdefp sgr([], pen), do: pen[19;3H[K[20;3H# 38;5;n  38;2;r;g;b  (and 48 for the background)
+  defp sgr([which, 5, n | rest], pen) when which in [38, 48],
+    do: sgr(rest, color(pen, which, Grid.indexed(byte(n))))[23;1H[K[24;63H32,5[10C25%[?25h[12;5H[?25l[24;1H[K[24;1H:q![?25h[?25l[?2004l[>4;m[23;2t[23;1t[24;1H[K[24;1H[?1004l[?2004l[?1l>[?1049l[23;0;0t[?25h[>4;m

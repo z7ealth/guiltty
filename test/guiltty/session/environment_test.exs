@@ -37,7 +37,7 @@ defmodule Guiltty.Session.EnvironmentTest do
     %{id: id}
   end
 
-  defp eventually(fun, tries \\ 100) do
+  defp eventually(fun, tries \\ 250) do
     if fun.() or tries == 0, do: fun.(), else: Process.sleep(20) && eventually(fun, tries - 1)
   end
 

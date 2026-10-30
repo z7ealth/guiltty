@@ -11,6 +11,7 @@
 #define _GNU_SOURCE
 
 #include <SDL3/SDL.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdckdint.h>
 #include <stdio.h>
@@ -41,9 +42,12 @@ struct renderer {
     int cell_w, cell_h;
     uint16_t cols, rows;
     struct cell *cells; // cols * rows
+    int dirty_first, dirty_last; // rows changed since the last draw
     uint16_t cursor_row, cursor_col;
     bool cursor_visible;
     struct theme theme;
+    int mouse_col, mouse_row; // the cell the pointer was last reported in
+    uint8_t buttons_held; // bit n = mouse button n (0 left, 1 middle, 2 right)
     uint32_t port_event; // SDL user event type for port messages
     bool demo;
     bool dirty;
@@ -119,6 +123,30 @@ static void send_key(SDL_Keycode key, SDL_Keymod mod) {
     msg[0] = MSG_KEY;
     put_u32(msg + 1, key);
     put_u16(msg + 5, mod);
+    (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
+}
+
+// Pasted text can be large: cap it at what a message may carry.
+static void send_paste(const char *text) {
+    size_t n = strlen(text);
+    if (n == 0)
+        return;
+    if (n > max_message_size - 1)
+        n = max_message_size - 1;
+    uint8_t *msg = malloc(n + 1);
+    if (msg == nullptr)
+        return;
+    msg[0] = MSG_PASTE;
+    memcpy(msg + 1, text, n);
+    (void)proto_write(STDOUT_FILENO, msg, (uint32_t)(n + 1));
+    free(msg);
+}
+
+static void send_mouse(enum mouse_kind kind, uint8_t button, int col, int row) {
+    uint8_t msg[mouse_message_size] = {MSG_MOUSE, kind, button};
+    put_u16(msg + 3, (uint16_t)col);
+    put_u16(msg + 5, (uint16_t)row);
+    put_u16(msg + 7, SDL_GetModState());
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
 }
 
@@ -208,8 +236,15 @@ static struct cell blank_cell(const struct theme *t) {
     r->rows = rows;
     r->cursor_row = r->cursor_row < rows ? r->cursor_row : rows - 1;
     r->cursor_col = r->cursor_col < cols ? r->cursor_col : cols - 1;
+    r->dirty_first = 0;
+    r->dirty_last = rows - 1;
     r->dirty = true;
     return true;
+}
+
+static void mark_row(struct renderer *r, int row) {
+    r->dirty_first = row < r->dirty_first ? row : r->dirty_first;
+    r->dirty_last = row > r->dirty_last ? row : r->dirty_last;
 }
 
 // How many cells fit in a drawable of w x h pixels.
@@ -240,6 +275,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
         struct cell *dst = r->cells + (size_t)row * cols;
         for (uint16_t c = 0; c < cols; c++)
             decode_cell(&r->theme, wire + (size_t)c * wire_cell_size, &dst[c]);
+        mark_row(r, row);
     }
     r->cursor_row = crow < rows ? crow : rows - 1;
     r->cursor_col = ccol < cols ? ccol : cols - 1;
@@ -256,11 +292,22 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     switch ((enum msg_tag)tag) {
     case MSG_ROWS:
         return apply_rows(r, &rd);
+    case MSG_TITLE: {
+        // SDL wants a C string; titles are short (Elixir caps them).
+        char title[1024];
+        size_t n = rd.left < sizeof title - 1 ? rd.left : sizeof title - 1;
+        memcpy(title, rd.p, n);
+        title[n] = '\0';
+        SDL_SetWindowTitle(r->window, title);
+        return true;
+    }
     case MSG_HELLO:
     case MSG_SETUP:
     case MSG_TEXT:
     case MSG_KEY:
     case MSG_RESIZE:
+    case MSG_PASTE:
+    case MSG_MOUSE:
         break;
     }
     fprintf(stderr, "renderer: unexpected message tag %u\n", tag);
@@ -337,6 +384,8 @@ static void draw(struct renderer *r) {
         .cols = r->cols,
         .rows = r->rows,
         .cells = r->cells,
+        .dirty_first = r->dirty_first,
+        .dirty_last = r->dirty_last,
         .cursor_row = r->cursor_row,
         .cursor_col = r->cursor_col,
         .cursor_visible = r->cursor_visible,
@@ -347,6 +396,73 @@ static void draw(struct renderer *r) {
     memcpy(frame.clear_rgb, r->theme.bg, 3);
     renderer_backend.draw_frame(r->backend, &frame);
     r->dirty = false;
+    r->dirty_first = INT_MAX;
+    r->dirty_last = -1;
+}
+
+// The cell under a point in the window, clamped to the grid.
+static void cell_at(const struct renderer *r, float x, float y, int *col, int *row) {
+    *col = SDL_clamp(((int)x - padding_px) / r->cell_w, 0, r->cols - 1);
+    *row = SDL_clamp(((int)y - padding_px) / r->cell_h, 0, r->rows - 1);
+}
+
+// SDL numbers buttons 1 left, 2 middle, 3 right; the protocol 0, 1, 2.
+static bool protocol_button(uint8_t sdl_button, uint8_t *out) {
+    if (sdl_button < SDL_BUTTON_LEFT || sdl_button > SDL_BUTTON_RIGHT)
+        return false;
+    *out = (uint8_t)(sdl_button - SDL_BUTTON_LEFT);
+    return true;
+}
+
+// Mouse events go to Elixir, which reports them to the program only if it
+// asked (and as it asked). Motion is sent only when the pointer enters a
+// new cell, so moving within one cell costs nothing.
+static void handle_mouse(struct renderer *r, const SDL_Event *ev) {
+    int col, row;
+    uint8_t button;
+    switch (ev->type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (!protocol_button(ev->button.button, &button))
+            return;
+        cell_at(r, ev->button.x, ev->button.y, &col, &row);
+        if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+            r->buttons_held |= (uint8_t)(1u << button);
+        else
+            r->buttons_held &= (uint8_t)~(1u << button);
+        send_mouse(ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN ? MOUSE_PRESS : MOUSE_RELEASE, button,
+                   col, row);
+        break;
+    case SDL_EVENT_MOUSE_MOTION:
+        cell_at(r, ev->motion.x, ev->motion.y, &col, &row);
+        if (col == r->mouse_col && row == r->mouse_row)
+            return;
+        // Report the lowest button held, or 3 for none.
+        button = 3;
+        for (uint8_t b = 0; b < 3; b++)
+            if (r->buttons_held & (1u << b)) {
+                button = b;
+                break;
+            }
+        send_mouse(MOUSE_MOTION, button, col, row);
+        break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (ev->wheel.y == 0)
+            return;
+        cell_at(r, ev->wheel.mouse_x, ev->wheel.mouse_y, &col, &row);
+        send_mouse(MOUSE_WHEEL, ev->wheel.y > 0 ? 0 : 1, col, row);
+        break;
+    default:
+        return;
+    }
+    r->mouse_col = col;
+    r->mouse_row = row;
+}
+
+// Ctrl+Shift+V and Shift+Insert paste the clipboard instead of being keys.
+static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
+    bool shift = mod & SDL_KMOD_SHIFT, ctrl = mod & SDL_KMOD_CTRL;
+    return (key == SDLK_V && ctrl && shift) || (key == SDLK_INSERT && shift && !ctrl);
 }
 
 // The window's drawable changed size: work out the grid that fits and, if
@@ -386,10 +502,28 @@ static void draw(struct renderer *r) {
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         return false;
     case SDL_EVENT_TEXT_INPUT:
-        send_text(ev->text.text);
+        if (!r->demo)
+            send_text(ev->text.text);
         break;
     case SDL_EVENT_KEY_DOWN:
-        send_key(ev->key.key, ev->key.mod);
+        // In --demo, stdout is the terminal you started it from: send nothing.
+        if (r->demo)
+            break;
+        if (is_paste(ev->key.key, ev->key.mod)) {
+            char *text = SDL_GetClipboardText();
+            if (text != nullptr)
+                send_paste(text);
+            SDL_free(text);
+        } else {
+            send_key(ev->key.key, ev->key.mod);
+        }
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (!r->demo)
+            handle_mouse(r, ev);
         break;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         if (!on_pixel_size(r, ev->window.data1, ev->window.data2)) {
@@ -407,7 +541,14 @@ static void draw(struct renderer *r) {
 }
 
 int main(int argc, char *argv[]) {
-    struct renderer r = {.demo = argc > 1 && strcmp(argv[1], "--demo") == 0, .cursor_visible = true};
+    struct renderer r = {
+        .demo = argc > 1 && strcmp(argv[1], "--demo") == 0,
+        .cursor_visible = true,
+        .dirty_first = INT_MAX,
+        .dirty_last = -1,
+        .mouse_col = -1,
+        .mouse_row = -1,
+    };
     // If Elixir goes away, writes to stdout fail with EPIPE instead of
     // killing us with SIGPIPE.
     signal(SIGPIPE, SIG_IGN);

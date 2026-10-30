@@ -5,13 +5,18 @@ defmodule Guiltty.Session.Screen do
   Applies parser commands to a `Guiltty.Grid` (through `Guiltty.Terminal`)
   and sends what changed to subscribers (the `Window`) as
   `{:screen_update, id, update}`, where `update` is a map with `:size`
-  (`{cols, rows}`), `:rows` (`[{index, row}]`), `:cursor` (`{row, col}`) and
-  `:cursor_visible`. A new subscriber first gets every row.
+  (`{cols, rows}`), `:rows` (`[{index, row}]`), `:cursor` (`{row, col}`),
+  `:cursor_visible`, `:title` and `:input` (the modes that change what keys,
+  paste and the mouse send). A new subscriber first gets every row.
+
+  When a program asks the terminal something (its type, the cursor
+  position), the answer is written back to it through the `Pty`.
   """
 
   use GenServer
 
   alias Guiltty.{Grid, Session, Terminal}
+  alias Guiltty.Session.Pty
 
   def start_link(opts) do
     Session.start_named(opts[:id], :screen, &GenServer.start_link(__MODULE__, opts, name: &1))
@@ -30,7 +35,7 @@ defmodule Guiltty.Session.Screen do
   @impl true
   def init(opts) do
     grid = Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24))
-    {:ok, %{id: opts[:id], grid: grid, subscribers: MapSet.new(), sent_cursor: nil}}
+    {:ok, %{id: opts[:id], grid: grid, subscribers: MapSet.new(), sent_state: nil}}
   end
 
   @impl true
@@ -58,18 +63,21 @@ defmodule Guiltty.Session.Screen do
 
   defp update_grid(state, fun), do: %{state | grid: fun.(state.grid)}
 
-  # Send the dirty rows, or just the cursor if only it moved or changed
-  # visibility.
+  # Answer the program's queries, then send the dirty rows, or just the
+  # rest if only the cursor, the title or a mode changed.
   defp flush(state) do
-    {rows, grid} = Grid.take_dirty(state.grid)
-    cursor = {Grid.cursor(grid), grid.cursor_visible}
+    {responses, grid} = Grid.take_responses(state.grid)
+    if responses != [], do: Pty.write(state.id, IO.iodata_to_binary(responses))
 
-    if rows != [] or cursor != state.sent_cursor do
+    {rows, grid} = Grid.take_dirty(grid)
+    sent = {Grid.cursor(grid), grid.cursor_visible, grid.title, grid.input}
+
+    if rows != [] or sent != state.sent_state do
       update = update(grid, rows)
       Enum.each(state.subscribers, &send(&1, {:screen_update, state.id, update}))
     end
 
-    %{state | grid: grid, sent_cursor: cursor}
+    %{state | grid: grid, sent_state: sent}
   end
 
   defp update(grid, rows) do
@@ -77,7 +85,9 @@ defmodule Guiltty.Session.Screen do
       size: {grid.cols, grid.rows},
       rows: rows,
       cursor: Grid.cursor(grid),
-      cursor_visible: grid.cursor_visible
+      cursor_visible: grid.cursor_visible,
+      title: grid.title,
+      input: grid.input
     }
   end
 end

@@ -1,0 +1,220 @@
+
+    0[||       2.9%]   3[||       6.9%]   6[||        2.5%]  9[||        7.9%]
+    1[||       6.9%]   4[||       4.0%]   7[||        3.0%] 10[||        2.0%]
+    2[||       7.9%]   5[||       3.4%]   8[||        6.9%] 11[||        1.5%]
+  Mem[|||||||||||||||||||||11.1G/31.3G] Tasks: 230, 2012 thr, 248 kthr; 3 runn
+  Swp[||                   11.9M/2.00G] Load average: 1.28 1.34 1.27
+                                        Uptime: 09:56:56
+
+  [Main] [I/O]
+   PID USER       PRI  NI  VIRT   RES  PRIV S  CPU%-MEM%   TIME+  Command
+162789 hsalinas    20   0 7197M  503M  372M S   6.4  1.6  3:06.35 /usr/lib64/fir
+292830 hsalinas    20   0 12624 10160  5308 R   5.9  0.0  0:00.39 htop
+  3876 hsalinas    20   0 4407M 1142M     0 S   5.4  3.6  8:09.48 /usr/lib64/fir
+209372 hsalinas    20   0 1448G  375M  261M S   4.9  1.2  4:53.14 /usr/share/cod
+  1719 root        20   0 1376M  202M 70480 S   4.0  0.6  9:56.26 /usr/bin/Xorg.
+  3860 hsalinas    20   0 4407M 1142M     0 S   3.0  3.6  5:16.25 /usr/lib64/fir
+  2366 hsalinas    20   0 1215M  113M 35596 S   2.5  0.4  5:27.03 xfwm4
+208607 hsalinas    20   0 53.2G  173M 56348 S   2.0  0.5  1:22.23 /usr/share/cod
+  3803 hsalinas    20   0 4407M 1142M     0 R   1.5  3.6  2:56.33 /usr/lib64/fir
+208651 hsalinas    20   0 53.2G  173M     0 S   1.5  0.5  0:48.70 /usr/share/cod
+  3372 hsalinas    20   0 71.8G  402M     0 S   1.0  1.3  3:16.76 /home/hsalinas
+  3382 hsalinas    20   0 71.8G  402M     0 S   1.0  1.3  0:28.69 /home/hsalinas
+  3451 hsalinas    20   0 71.5G  992M  852M S   1.0  3.1  5:55.87 /usr/libexec/l
+F1Help  F2Setup F3SearchF4FilterF5Tree  F6SortByF7Nice -F8Nice +F9Kill  F10Quit
+--- cursor 23,79 hidden
+--- styles
+1 2-4 fg=6
+1 5-5 bold
+1 6-6 fg=2
+1 7-7 fg=1
+1 8-18 bold fg=8
+1 19-19 bold
+1 21-23 fg=6
+1 24-24 bold
+1 25-25 fg=2
+1 26-26 fg=1
+1 27-37 bold fg=8
+1 38-38 bold
+1 40-42 fg=6
+1 43-43 bold
+1 44-44 fg=2
+1 45-45 fg=1
+1 46-57 bold fg=8
+1 58-58 bold
+1 59-61 fg=6
+1 62-62 bold
+1 63-63 fg=2
+1 64-64 fg=1
+1 65-76 bold fg=8
+1 77-77 bold
+2 2-4 fg=6
+2 5-5 bold
+2 6-6 fg=2
+2 7-7 fg=1
+2 8-18 bold fg=8
+2 19-19 bold
+2 21-23 fg=6
+2 24-24 bold
+2 25-25 fg=2
+2 26-26 fg=1
+2 27-37 bold fg=8
+2 38-38 bold
+2 40-42 fg=6
+2 43-43 bold
+2 44-44 fg=2
+2 45-45 fg=1
+2 46-57 bold fg=8
+2 58-58 bold
+2 59-61 fg=6
+2 62-62 bold
+2 63-63 fg=2
+2 64-64 fg=1
+2 65-76 bold fg=8
+2 77-77 bold
+3 2-4 fg=6
+3 5-5 bold
+3 6-6 fg=2
+3 7-7 fg=1
+3 8-18 bold fg=8
+3 19-19 bold
+3 21-23 fg=6
+3 24-24 bold
+3 25-25 fg=2
+3 26-26 fg=1
+3 27-37 bold fg=8
+3 38-38 bold
+3 40-42 fg=6
+3 43-43 bold
+3 44-44 fg=2
+3 45-45 fg=1
+3 46-57 bold fg=8
+3 58-58 bold
+3 59-61 fg=6
+3 62-62 bold
+3 63-63 fg=2
+3 64-64 fg=1
+3 65-76 bold fg=8
+3 77-77 bold
+4 2-4 fg=6
+4 5-5 bold
+4 6-16 fg=2
+4 17-17 fg=5
+4 18-18 bold fg=4
+4 19-35 fg=3
+4 36-37 bold fg=8
+4 38-38 bold
+4 40-46 fg=6
+4 47-49 bold fg=6
+4 50-51 fg=6
+4 52-55 bold fg=2
+4 56-59 fg=6
+4 60-69 bold fg=8
+4 70-71 fg=6
+4 72-72 bold fg=2
+4 73-77 fg=6
+5 2-4 fg=6
+5 5-5 bold
+5 6-6 fg=1
+5 7-7 fg=3
+5 27-37 bold fg=8
+5 38-38 bold
+5 40-53 fg=6
+5 54-58 bold
+5 59-63 bold fg=6
+5 64-68 fg=6
+6 40-47 fg=6
+6 48-55 bold fg=6
+8 2-2 fg=2 bg=2
+8 3-6 fg=0 bg=2
+8 7-7 fg=2 bg=2
+8 9-9 fg=4 bg=4
+8 10-12 fg=0 bg=4
+8 13-13 fg=4 bg=4
+9 0-45 fg=0 bg=2
+9 46-51 fg=0 bg=6
+9 52-72 fg=0 bg=2
+9 73-79 bg=2
+10 22-25 bold fg=8
+10 26-26 fg=2
+10 27-43 fg=6
+10 44-45 bold fg=8
+11 22-25 bold fg=8
+11 26-27 fg=6
+11 32-33 fg=6
+11 38-39 fg=6
+11 44-45 fg=2
+11 52-56 bold fg=8
+12 0-79 fg=0 bg=6
+13 22-25 bold fg=8
+13 26-26 bold fg=1
+13 27-31 fg=2
+13 32-43 fg=6
+13 44-45 bold fg=8
+14 7-17 bold fg=8
+14 22-25 bold fg=8
+14 26-26 fg=2
+14 27-39 fg=6
+14 44-45 bold fg=8
+15 22-25 bold fg=8
+15 26-26 fg=2
+15 27-31 fg=6
+15 32-32 fg=2
+15 33-37 fg=6
+15 44-45 bold fg=8
+15 66-79 fg=2
+16 22-25 bold fg=8
+16 26-26 fg=2
+16 27-39 fg=6
+16 44-45 bold fg=8
+17 22-25 bold fg=8
+17 26-27 fg=2
+17 28-29 fg=6
+17 30-31 fg=2
+17 32-39 fg=6
+17 44-45 bold fg=8
+18 22-25 bold fg=8
+18 26-26 fg=2
+18 27-31 fg=6
+18 32-32 fg=2
+18 33-37 fg=6
+18 44-45 fg=2
+18 66-79 fg=2
+19 22-25 bold fg=8
+19 26-27 fg=2
+19 28-29 fg=6
+19 30-31 fg=2
+19 32-37 fg=6
+19 44-45 bold fg=8
+19 66-79 fg=2
+20 22-25 bold fg=8
+20 26-27 fg=2
+20 28-29 fg=6
+20 30-31 fg=2
+20 32-37 fg=6
+20 44-45 bold fg=8
+20 66-79 fg=2
+21 22-25 bold fg=8
+21 26-27 fg=2
+21 28-29 fg=6
+21 30-31 fg=2
+21 32-37 fg=6
+21 44-45 bold fg=8
+21 66-79 fg=2
+22 22-25 bold fg=8
+22 26-27 fg=2
+22 28-29 fg=6
+22 30-31 fg=2
+22 32-43 fg=6
+22 44-45 bold fg=8
+23 2-7 fg=0 bg=6
+23 10-15 fg=0 bg=6
+23 18-23 fg=0 bg=6
+23 26-31 fg=0 bg=6
+23 34-39 fg=0 bg=6
+23 42-47 fg=0 bg=6
+23 50-55 fg=0 bg=6
+23 58-63 fg=0 bg=6
+23 66-71 fg=0 bg=6
+23 75-78 fg=0 bg=6
+23 79-79 bg=6

@@ -7,7 +7,8 @@ defmodule Guiltty.Parser do
   Commands:
 
     * `{:print, binary}` - a run of printable ASCII
-    * `:cr`, `:lf`, `:bs`, `:ht` - C0 controls (VT and FF count as `:lf`)
+    * `:cr`, `:lf`, `:bs`, `:ht`, `:shift_out`, `:shift_in` - C0 controls
+      (VT and FF count as `:lf`)
     * `{:csi, private, params, intermediates, final}` - e.g. `ESC [ ? 25 l`
       is `{:csi, ??, [25], "", ?l}`. `params` holds integers, `nil` for an
       empty parameter, or a list when the parameter has `:` sub-parameters
@@ -50,6 +51,8 @@ defmodule Guiltty.Parser do
           | :lf
           | :bs
           | :ht
+          | :shift_out
+          | :shift_in
           | {:csi, byte() | nil, [param()], binary(), byte()}
           | {:esc, binary(), byte()}
           | {:osc, binary()}
@@ -221,7 +224,10 @@ defmodule Guiltty.Parser do
   defp execute(byte, acc) when byte in [?\n, 0x0B, 0x0C], do: [:lf | acc]
   defp execute(?\b, acc), do: [:bs | acc]
   defp execute(?\t, acc), do: [:ht | acc]
-  # BEL, SO, SI and the rest: nothing to do yet
+  # SO and SI pick the G1 or G0 character set (see Guiltty.Terminal)
+  defp execute(0x0E, acc), do: [:shift_out | acc]
+  defp execute(0x0F, acc), do: [:shift_in | acc]
+  # BEL and the rest: nothing to do
   defp execute(_byte, acc), do: acc
 
   ## Dispatch

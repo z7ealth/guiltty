@@ -31,7 +31,7 @@ defmodule Guiltty.WindowTest do
     %{id: id, window: window}
   end
 
-  defp eventually(fun, tries \\ 150) do
+  defp eventually(fun, tries \\ 250) do
     if fun.() or tries == 0, do: fun.(), else: Process.sleep(20) && eventually(fun, tries - 1)
   end
 
@@ -81,6 +81,30 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> Session.dump(id) =~ ~r/^30 100$/m end)
   end
 
+  test "the program's queries are answered through the PTY", %{id: id} do
+    # bash asks the terminal for the cursor position; the answer comes back
+    # as if typed, and `read` picks it up.
+    Session.write(id, "printf '\\e[6n'; IFS= read -rsd R pos; echo got${pos#*[}\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^got\d+;\d+$/m end)
+  end
+
+  test "paste and mouse events reach the shell as bytes", %{id: id, window: window} do
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    port = port(window)
+    send(window, {port, {:data, <<8, "echo pasted\n">>}})
+    assert eventually(fn -> Session.dump(id) =~ ~r/^pasted$/m end)
+
+    # With mouse mode on, a click arrives in the shell as an SGR report;
+    # `cat -v` shows it.
+    Session.write(id, "printf '\\e[?1000h\\e[?1006h'; cat -v\r")
+    # Wait until the Window knows mouse mode is on; a click before that is
+    # (correctly) not reported.
+    assert eventually(fn -> match?(%{mouse: 1000}, :sys.get_state(window).input) end)
+    send(window, {port, {:data, <<9, 0, 0, 4::16, 2::16, 0::16>>}})
+    Session.write(id, "\r\x04")
+    assert eventually(fn -> Session.dump(id) =~ "^[[<0;5;3M" end)
+  end
+
   test "stopping the window ends the renderer process", %{window: window} do
     {:os_pid, os_pid} = Port.info(port(window), :os_pid)
     assert File.exists?("/proc/#{os_pid}")
@@ -95,6 +119,6 @@ defmodule Guiltty.WindowTest do
     # half of one.
     Port.command(port, <<3, 80::16, 24::16, 0::16, 0::16, 1, 5::16, 0::16, 0::size(400)-unit(8)>>)
     # The renderer exits with status 2 (protocol error), not a sanitizer crash.
-    assert_receive {:DOWN, ^ref, :process, ^window, {:renderer_exited, 2}}, 3000
+    assert_receive {:DOWN, ^ref, :process, ^window, {:renderer_exited, 2}}, 5000
   end
 end

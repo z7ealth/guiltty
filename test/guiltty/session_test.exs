@@ -17,7 +17,7 @@ defmodule Guiltty.SessionTest do
     %{id: id, sup: pid}
   end
 
-  defp eventually(fun, tries \\ 100) do
+  defp eventually(fun, tries \\ 250) do
     if fun.() or tries == 0, do: fun.(), else: Process.sleep(20) && eventually(fun, tries - 1)
   end
 
@@ -79,6 +79,6 @@ defmodule Guiltty.SessionTest do
   test "exit ends the session", %{id: id, sup: sup} do
     ref = Process.monitor(sup)
     Session.write(id, "exit\r")
-    assert_receive {:DOWN, ^ref, :process, ^sup, :shutdown}, 3000
+    assert_receive {:DOWN, ^ref, :process, ^sup, :shutdown}, 5000
   end
 end

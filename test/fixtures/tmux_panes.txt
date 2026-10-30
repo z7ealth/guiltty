@@ -1,0 +1,53 @@
+$ echo left pane                        ?$ echo right pane
+left pane                               ?right pane
+$                                       ?$
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ????????????????????????????????????????
+                                        ?$ tput cols; tput lines
+                                        ?39
+                                        ?11
+                                        ?$
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+                                        ?
+[0] 0:bash*                                            "hs-suse" 18:37 29-Oct-26
+--- cursor 15,43 visible
+--- styles
+0 40-40 fg=#B3B3B3
+1 40-40 fg=#B3B3B3
+2 40-40 fg=#B3B3B3
+3 40-40 fg=#B3B3B3
+4 40-40 fg=#B3B3B3
+5 40-40 fg=#B3B3B3
+6 40-40 fg=#B3B3B3
+7 40-40 fg=#B3B3B3
+8 40-40 fg=#B3B3B3
+9 40-40 fg=#B3B3B3
+10 40-40 fg=#B3B3B3
+11 40-79 fg=#9ACD32
+12 40-40 fg=#9ACD32
+13 40-40 fg=#9ACD32
+14 40-40 fg=#9ACD32
+15 40-40 fg=#9ACD32
+16 40-40 fg=#9ACD32
+17 40-40 fg=#9ACD32
+18 40-40 fg=#9ACD32
+19 40-40 fg=#9ACD32
+20 40-40 fg=#9ACD32
+21 40-40 fg=#9ACD32
+22 40-40 fg=#9ACD32
+23 0-3 fg=#0D0D0D bg=#9ACD32
+23 4-10 underline fg=#0D0D0D bg=#9ACD32
+23 11-54 bg=#9ACD32
+23 55-79 fg=#0D0D0D bg=#9ACD32

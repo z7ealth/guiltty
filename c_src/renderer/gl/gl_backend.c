@@ -82,6 +82,7 @@ struct gl {
     struct gl_funcs f;
     GLuint program, vao, cell_buffer, atlas_texture;
     size_t capacity; // cells the buffer can hold
+    uint16_t cols, rows; // the grid the buffer holds
     int width, height; // drawable size in pixels
     int cell_w, cell_h, baseline, line_thickness;
     struct {
@@ -247,15 +248,23 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
                   1.0f);
     f->Clear(GL_COLOR_BUFFER_BIT);
 
-    // Every cell, every frame: 15 KB for 80x24. Damage tracking comes in
-    // MVP 3. Grow the buffer when the grid outgrows it.
+    // Damage tracking: the GPU keeps last frame's cells, so upload only the
+    // rows that changed. A new grid size changes every cell's position in
+    // the buffer, so then everything goes (growing the buffer if needed).
     f->BindBuffer(GL_ARRAY_BUFFER, gl->cell_buffer);
     if (ncells > gl->capacity) {
         f->BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)bytes, frame->cells, GL_DYNAMIC_DRAW);
         gl->capacity = ncells;
-    } else {
+    } else if (frame->cols != gl->cols || frame->rows != gl->rows) {
         f->BufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)bytes, frame->cells);
+    } else if (frame->dirty_first <= frame->dirty_last) {
+        size_t row_bytes = (size_t)frame->cols * sizeof(struct cell);
+        size_t first = (size_t)frame->dirty_first, count = (size_t)(frame->dirty_last - frame->dirty_first + 1);
+        f->BufferSubData(GL_ARRAY_BUFFER, (GLintptr)(first * row_bytes), (GLsizeiptr)(count * row_bytes),
+                         frame->cells + first * frame->cols);
     }
+    gl->cols = frame->cols;
+    gl->rows = frame->rows;
 
     int cursor = frame->cursor_visible ? frame->cursor_row * frame->cols + frame->cursor_col : -1;
     f->UseProgram(gl->program);

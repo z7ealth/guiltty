@@ -1,3 +1,4 @@
+=== alternate screen, before the program left it
 # Service names are assigned on a first-come, first-served process, as
 # documented in [RFC6335].
 #
@@ -23,4 +24,31 @@
 # * ENDORSEMENT OF AN APPLICATION OR PRODUCT, AND THE FACT THAT NETWORK  *
 
 --- cursor 23,0 visible
+--- styles
+=== main screen, at the end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 0,0 visible
 --- styles

@@ -40,14 +40,14 @@ SDL reports keyboard input twice, on purpose:
 The renderer forwards both and lets [[file:../lib/guiltty/keymap.ex][Guiltty.Keymap]] decide. Plain letter
 keys map to =nil=, so a letter is never sent twice.
 
-* Input v0
+* The simple keys
 
 | Key              | SDL keycode   | Bytes sent          |
 |------------------+---------------+---------------------|
 | any printable    | (text event)  | the UTF-8 text      |
 | Enter, keypad Enter | =0x0D=, =0x40000058= | =\r=       |
 | Backspace        | =0x08=        | =0x7F= (DEL)        |
-| Tab              | =0x09=        | =\t=                |
+| Tab, Shift+Tab   | =0x09=        | =\t=, =CSI Z=        |
 | Escape           | =0x1B=        | =0x1B=              |
 | Ctrl+A .. Ctrl+Z | =a= .. =z= + Ctrl | =0x01= .. =0x1A=  |
 
@@ -61,6 +61,70 @@ Why these bytes:
 - *Ctrl+letter clears the top bits*: =c= is =0x63=, Ctrl+C is =0x03=. That's
   why it's written =^C=, and why Ctrl+I is the same byte as Tab and Ctrl+M
   the same as Enter.
+
+* Keys that send sequences (MVP 3)
+
+Arrows, Home/End, PgUp/PgDn, Insert/Delete and F1-F12 have no byte of
+their own, so they send escape sequences. These follow xterm, the
+=xterm-256color= entry in terminfo (=infocmp -1 | grep '^\s*k'=):
+
+| Key              | Normal       | Application mode |
+|------------------+--------------+------------------|
+| Up Down Right Left | =CSI A= .. =CSI D= | =ESC O A= .. =ESC O D= |
+| Home End         | =CSI H=, =CSI F= | =ESC O H=, =ESC O F= |
+| Insert Delete    | =CSI 2 ~=, =CSI 3 ~= | same         |
+| PgUp PgDn        | =CSI 5 ~=, =CSI 6 ~= | same         |
+| F1 .. F4         | =ESC O P= .. =ESC O S= | same       |
+| F5 .. F12        | =CSI 15 ~= .. =CSI 24 ~= | same     |
+| keypad Enter     | =\r=         | =ESC O M=        |
+
+*Application mode* is something programs switch on (=CSI ? 1 h= for the
+cursor keys, =ESC == for the keypad); it's terminfo's =smkx=. =vim= and
+=less= do it on start. Why two encodings? Historical: the VT100 sent
+different codes when its keypad was in application mode, and programs
+still ask for it so they can tell an arrow key from someone typing
+=ESC [ A=.
+
+With a modifier held, the key gets a parameter m = 1 + Shift(1) + Alt(2) +
+Ctrl(4): Ctrl+Right is =CSI 1 ; 5 C=, Shift+PgUp =CSI 5 ; 2 ~=. That's how
+=vim= and the shell tell Ctrl+Right (next word) from Right.
+
+* Paste
+
+Ctrl+Shift+V and Shift+Insert paste. The renderer reads SDL's clipboard
+and sends the text to Elixir, which turns line breaks into =\r= (like
+pressing Enter) and writes it to the shell.
+
+#+begin_example
+  without bracketed paste:     l s \r r m   - r f   x \r
+                               the shell runs "ls", then "rm -rf x" as it arrives
+
+  with bracketed paste (2004): ESC[200~ l s \r r m - r f x \r ESC[201~
+                               the shell knows it's one paste: it shows it,
+                               and waits for you to press Enter
+#+end_example
+
+Programs turn on bracketed paste with =CSI ? 2004 h=. zsh does by default;
+bash does when readline's =enable-bracketed-paste= is on (it's off on this
+openSUSE: =bind -v | grep bracketed=). Any =ESC[201~= inside the pasted text
+is removed first: otherwise a crafted clipboard could end the paste early
+and have the rest run as typed commands.
+
+* The mouse
+
+Programs that want clicks ask for them: =CSI ? 1000 h= for clicks and the
+wheel, =1002= to also get drags, =1003= for all motion. =CSI ? 1006 h= picks
+the SGR encoding:
+
+#+begin_example
+  left click at column 5, row 3:   ESC [ < 0 ; 5 ; 3 M      (m on release)
+  wheel down there:                ESC [ < 65 ; 5 ; 3 M
+#+end_example
+
+The renderer sends every press, release, wheel turn, and motion into a new
+cell; =Guiltty.Keymap.mouse/2= decides, from the modes, what (if anything)
+the program gets. Without 1006, the old X10 encoding is used, which can't
+go past column 222.
 
 * Ctrl+C is not a signal (yet)
 

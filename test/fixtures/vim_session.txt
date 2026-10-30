@@ -1,0 +1,54 @@
+=== alternate screen, before the program left it
+  `38:2::r:g:b` (with an optional color-space id between the colons).
+  """
+
+  import Bitwise
+
+  alias Guiltty.Grid
+
+  @spec apply(Grid.t(), [Guiltty.Parser.param()]) :: Grid.t()
+  def apply(grid, []), do: reset(grid)
+
+  def apply(grid, params) do
+    {attrs, fg, bg} = sgr(params, {grid.attrs, grid.fg, grid.bg})
+    Grid.set_pen(grid, attrs, fg, bg)
+  end
+
+  defp reset(grid), do: Grid.set_pen(grid, 0, 0, 0)
+
+  defp sgr([], pen), do: pen
+
+  # 38;5;n  38;2;r;g;b  (and 48 for the background)
+  defp sgr([which, 5, n | rest], pen) when which in [38, 48],
+    do: sgr(rest, color(pen, which, Grid.indexed(byte(n))))
+
+
+--- cursor 23,0 hidden
+--- styles
+=== main screen, at the end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 0,0 visible
+--- styles

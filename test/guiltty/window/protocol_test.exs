@@ -24,12 +24,25 @@ defmodule Guiltty.Window.ProtocolTest do
   end
 
   test "decodes renderer events" do
-    assert Protocol.decode(<<1, 0, 2, 2, "gl">>) == {:ok, {:hello, 2, "gl"}}
+    assert Protocol.decode(<<1, 0, 3, 2, "gl">>) == {:ok, {:hello, 3, "gl"}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
     assert Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0x40>>) == {:ok, {:key, ?c, 0x40}}
     assert Protocol.decode(<<6, 100::16, 30::16>>) == {:ok, {:resize, 100, 30}}
     assert {:error, {:bad_message, _}} = Protocol.decode(<<6, 0::16, 30::16>>)
     assert {:error, {:bad_message, _}} = Protocol.decode(<<99>>)
+    assert Protocol.decode(<<8, "a\nb">>) == {:ok, {:paste, "a\nb"}}
+
+    assert Protocol.decode(<<9, 0, 2, 4::16, 7::16, 0x40::16>>) ==
+             {:ok, {:mouse, :press, 2, 4, 7, 0x40}}
+
+    assert Protocol.decode(<<9, 3, 1, 0::16, 0::16, 0::16>>) ==
+             {:ok, {:mouse, :wheel, 1, 0, 0, 0}}
+
+    assert {:error, {:bad_message, _}} = Protocol.decode(<<9, 7, 0, 0::16, 0::16, 0::16>>)
+  end
+
+  test "encodes the title" do
+    assert Protocol.title("vim") == <<7, "vim">>
   end
 
   test "the palette is xterm's layout" do

@@ -1,0 +1,155 @@
+#+TITLE: Full-screen programs: what vim needs from a terminal
+#+STARTUP: overview
+
+* Two kinds of programs
+
+A shell prints a line, then another, and the screen scrolls. =vim=, =less=,
+=htop= and =tmux= are different: they treat the terminal as a canvas of
+rows and columns, move the cursor anywhere, and redraw only what changed.
+They lean on a handful of features MVP 3 adds. How do they know the
+terminal has them? From terminfo: =TERM=xterm-256color= points at an entry
+that lists each capability and the bytes for it.
+
+#+begin_src sh
+infocmp -1 xterm-256color | grep -E 'smcup|rmcup|csr|ich|il1|rep|smir|acsc'
+#+end_src
+
+| terminfo     | Sequence           | What guiltty does                            |
+|--------------+--------------------+----------------------------------------------|
+| =smcup=/=rmcup= | =CSI ? 1049 h=/=l= | alternate screen, saving the cursor        |
+| =sc=/=rc=    | =ESC 7=, =ESC 8=   | save / restore the cursor and pen            |
+| =csr=        | =CSI t ; b r=      | set the scroll region                        |
+| =il1=/=dl1=  | =CSI L=, =CSI M=   | insert / delete lines                        |
+| =ich=/=dch=  | =CSI @=, =CSI P=   | insert / delete characters                   |
+| =indn=/=rin= | =CSI S=, =CSI T=   | scroll the region up / down                  |
+| =ri=         | =ESC M=            | reverse index                                |
+| =smir=       | =CSI 4 h=          | insert mode                                  |
+| =rep=        | =CSI n b=          | repeat the last character n times            |
+| =smacs=, =acsc= | =ESC ( 0=       | line-drawing characters                      |
+| =smkx=       | =CSI ? 1 h=, =ESC ==| application cursor keys and keypad          |
+
+All live in [[file:../lib/guiltty/terminal.ex][Guiltty.Terminal]] and [[file:../lib/guiltty/grid.ex][Guiltty.Grid]].
+
+* The alternate screen
+
+#+begin_example
+   main screen                 alternate screen               main screen
+  +-----------------+  1049h  +-----------------+   1049l   +-----------------+
+  | $ ls            | ------> | vim's canvas    | --------> | $ ls            |
+  | a b c           |  save   |                 |  restore  | a b c           |
+  | $ vim file_     |  cursor |                 |  cursor   | $ vim file      |
+  +-----------------+         +-----------------+           | $ _             |
+     kept in other_lines         lines                      +-----------------+
+#+end_example
+
+The grid holds two screens: =lines= is the active one, =other_lines= waits.
+Mode 1049 saves the cursor, switches, and clears the alternate screen;
+leaving switches back and restores the cursor, so your shell reappears
+exactly as it was. The cursor doesn't move on the way in: programs always
+position it before drawing. (=47= only switches; =1047= also clears.)
+
+The alternate screen has no scrollback, which is why =vim='s contents don't
+end up in your history.
+
+* Scroll regions
+
+=vim= with a split, or =less= with its status line, wants only *part* of the
+screen to scroll:
+
+#+begin_example
+  row 0  +---------------------------+
+         | top window                |  <- CSI 1;11 r : region rows 1-11
+         | ...                       |     LF at row 11 scrolls rows 1-11 only
+  row 10 | ...                       |
+  row 11 | sample.ex  [+]   14,18    |  <- status line: outside, stays put
+  row 12 | bottom window             |
+         +---------------------------+
+#+end_example
+
+Inside the region:
+
+- *LF* on the region's bottom row scrolls the region up; *RI* (=ESC M=) on
+  its top row scrolls it down.
+- *IL* and *DL* insert or delete lines at the cursor, pushing the rest of
+  the region down or pulling it up. Outside the region they do nothing.
+- *SU*/*SD* scroll the whole region.
+- In *origin mode* (=CSI ? 6 h=) cursor positions count from the region's top.
+
+Rows that move are all marked dirty, so the whole region is redrawn.
+
+* Editing a line in place
+
+To insert a character in the middle of a line, =vim= doesn't redraw the
+line. It sends ICH (=CSI 1 @=), and the terminal shifts the rest of the line
+right. DCH does the opposite. Insert mode (=CSI 4 h=) does the same for every
+character printed. And ncurses sends REP (=CSI n b=) to print a run of the
+same character in a few bytes.
+
+* Line drawing
+
+Before Unicode, terminals drew boxes with a second character set, the DEC
+Special Graphics: after =ESC ( 0=, =q= draws a horizontal line, =x= a vertical
+one, =l k m j= the corners. =ESC ( B= switches back to ASCII. A terminal can
+hold two sets, G0 and G1, and SO/SI (=0x0E=/=0x0F=) pick between them.
+
+Until guiltty draws Unicode (MVP 5), each line-drawing character becomes
+the closest ASCII one, so boxes still look like boxes:
+
+#+begin_example
+  bytes:   ESC ( 0  l q q k  ESC ( B
+  draws:            + - - +
+#+end_example
+
+* Answering questions
+
+Some programs *ask* the terminal things, by writing a sequence and reading
+the answer from their input, as if you had typed it:
+
+| Question      | Sequence       | guiltty answers  | Meaning                       |
+|---------------+----------------+------------------+-------------------------------|
+| what are you? | =CSI c= (DA1)  | =CSI ? 62 ; 22 c=  | a VT220 with ANSI color       |
+| which version | =CSI > c= (DA2)| =CSI > 1 ; 10 ; 0 c= | VT220, version 10           |
+| are you OK?   | =CSI 5 n=      | =CSI 0 n=          | yes                           |
+| where's the cursor? | =CSI 6 n= | =CSI row ; col R=  | 1-based                       |
+
+The answers collect in the grid's =responses=, and the Screen writes them
+back through the =Pty=. The version 10 answer is deliberately old: =vim=
+looks at it to decide which newer xterm features to ask for, and guiltty
+doesn't have those yet.
+
+* The window title
+
+=OSC 0 ; text BEL= and =OSC 2 ; text BEL= set the title. Your prompt does it
+on every command, =vim= can too. The title comes from a program, so it's
+cut to 256 bytes and stripped of control characters before it reaches the
+renderer, which sets it with =SDL_SetWindowTitle=.
+
+* Loot
+
+- =terminfo(5)=, and =infocmp -1 xterm-256color=.
+- XTerm control sequences: "Functions using CSI", "Mode Control".
+- The vt100.net manuals: DECSTBM, DECOM, DECSC, SCS.
+- =ncurses(3X)=: how curses decides what to send.
+
+* Questions
+
+1. Why does your shell screen come back after =vim= quits?
+2. What does a scroll region change about LF?
+3. Why does =vim= send ICH instead of redrawing the line?
+4. How does a program learn where the cursor is?
+5. Why answer DA2 with an old version number?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. =vim= drew on the alternate screen (mode 1049). Leaving it switches back
+   to the main screen, which was never touched, and restores the cursor.
+2. LF on the region's bottom row scrolls only the region's rows; the rows
+   outside (a status line) stay.
+3. Fewer bytes: one short sequence instead of the rest of the line. That's
+   what ncurses-style screen updating is about.
+4. It writes =CSI 6 n= and reads the answer =CSI row;col R= from its input.
+5. Programs use it to guess which xterm features exist. A low number keeps
+   them from enabling features guiltty doesn't support yet.

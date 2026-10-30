@@ -1,3 +1,4 @@
+=== alternate screen, before the program left it
 
        -b, --escape
               print C-style escapes for nongraphic characters
@@ -34,3 +35,30 @@
 15 7-8 bold
 17 7-20 bold
 20 7-21 bold
+=== main screen, at the end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 0,0 visible
+--- styles

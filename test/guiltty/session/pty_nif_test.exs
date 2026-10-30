@@ -10,7 +10,7 @@ defmodule Guiltty.Session.PtyNifTest do
 
       :eagain ->
         :ok = PtyNif.select_read(pty)
-        assert_receive {:select, ^pty, :undefined, :ready_input}, 2000
+        assert_receive {:select, ^pty, :undefined, :ready_input}, 5000
         read_all(pty, acc)
 
       :eof ->

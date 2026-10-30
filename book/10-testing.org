@@ -73,6 +73,50 @@ representation only (pyte names =31= "red" but writes =38;5;1= as a hex
 value; guiltty stores both as palette 1), and UTF-8 (pyte decodes it,
 guiltty shows =?= until MVP 5).
 
+* Full-screen programs (MVP 3)
+
+=vim= and =less= draw on the alternate screen and switch back when they
+quit, so the final screen alone says little. For those fixtures the
+snapshot first records the alternate screen just before the program left
+it, then the main screen it returned to.
+
+pyte has no alternate screen, so the comparison feeds it the bytes up to
+that moment. Comparing against =vim= turned up more gaps in pyte than in
+guiltty, each checked against the spec and xterm:
+
+- pyte ignores =ESC ( 0= (line drawing) in UTF-8 mode, and has no =CSI s= /
+  =CSI u= or REP. Those three fixtures are expected to differ.
+- pyte crashes on =CSI > 4 ; 2 m=, prints the contents of DCS strings, and
+  prints the final byte of CSI sequences with intermediates (=CSI 0 % m=).
+  vim sends all three while probing the terminal; they're stripped before
+  feeding pyte.
+- pyte gives *different results depending on whether you read its screen*:
+  it stores lines sparsely, and some line operations behave differently on
+  a sparse line. Reading the screen after every byte keeps it consistent.
+
+Lesson: a reference implementation is evidence, not truth. When two
+emulators disagree, find the byte where they diverge and check the spec.
+
+* tmux as the reference
+
+tmux is itself a complete terminal emulator: it parses everything its
+programs send and keeps a screen per pane. That makes it a better
+reference than pyte for full-screen programs:
+
+#+begin_example
+  tmux -L reference new-session -d -x 80 -y 24 'htop'   a hidden 80x24 pane
+  tmux pipe-pane -o 'cat > htop.bytes'                  every byte htop writes
+  tmux send-keys Down Down F5                           drive it
+  tmux capture-pane -p                                  what tmux shows: the reference
+#+end_example
+
+Then guiltty renders =htop.bytes= and the two screens are compared row by
+row, plus the cursor. guiltty's =?= (no UTF-8 until MVP 5) counts as
+matching any non-ASCII character, and its ASCII line-drawing lookalikes
+as matching the box characters tmux shows. htop, vim, less, and tmux
+itself (one tmux running inside another) all match exactly. The htop and
+tmux recordings are fixtures now.
+
 * Property tests
 
 [[https://hexdocs.pm/stream_data][StreamData]] generates inputs instead of us writing them:

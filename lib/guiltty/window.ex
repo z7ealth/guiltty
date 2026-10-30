@@ -51,7 +51,10 @@ defmodule Guiltty.Window do
       session: session,
       cols: opts[:cols] || 80,
       rows: opts[:rows] || 24,
-      ready: false
+      ready: false,
+      # the latest input modes and title from the Screen
+      input: nil,
+      title: nil
     }
 
     {:ok, state, @hello_timeout}
@@ -76,7 +79,11 @@ defmodule Guiltty.Window do
 
   def handle_info({:screen_update, _id, update}, state) do
     Port.command(state.port, Protocol.rows(update))
-    {:noreply, state}
+
+    if update.title != state.title,
+      do: Port.command(state.port, Protocol.title(window_title(update.title)))
+
+    {:noreply, %{state | input: update.input, title: update.title}}
   end
 
   def handle_info(:timeout, state), do: {:stop, :no_hello_from_renderer, state}
@@ -102,14 +109,34 @@ defmodule Guiltty.Window do
     {:noreply, %{state | cols: cols, rows: rows}}
   end
 
-  defp handle_event(event, state) do
-    case Keymap.to_bytes(event) do
+  defp handle_event({:paste, text}, %{input: input} = state) when input != nil do
+    Pty.write(state.session, Keymap.paste(text, input))
+    {:noreply, state}
+  end
+
+  defp handle_event({:mouse, _, _, _, _, _} = event, %{input: input} = state) when input != nil do
+    case Keymap.mouse(event, input) do
       nil -> :ok
       bytes -> Pty.write(state.session, bytes)
     end
 
     {:noreply, state}
   end
+
+  defp handle_event(event, %{input: input} = state) when input != nil do
+    case Keymap.to_bytes(event, input) do
+      nil -> :ok
+      bytes -> Pty.write(state.session, bytes)
+    end
+
+    {:noreply, state}
+  end
+
+  # Input before the Screen's first update (it has no modes yet): drop it.
+  defp handle_event(_event, state), do: {:noreply, state}
+
+  defp window_title(""), do: "guiltty"
+  defp window_title(title), do: title
 
   # Subscribe to the session's Screen and monitor it. The Screen answers with
   # every row, then sends changes as they happen. If it isn't running right

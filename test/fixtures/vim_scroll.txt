@@ -1,0 +1,55 @@
+=== alternate screen, before the program left it
+defmodule Guiltty.SGR do
+  @moduledoc """
+  SGR, Select Graphic Rendition (`CSI ... m`): sets the pen that new text
+  is written with.
+
+  | Parameter       | Effect                                  |
+  |-----------------|-----------------------------------------|
+  | none, `0`       | reset everything                        |
+  | `1` `2` `3` `4` | bold, dim, italic, underline            |
+  | `5` `7` `8` `9` | blink, inverse, hidden, strikethrough   |
+  | `21`            | double underline (drawn as underline)   |
+  | `22`..`29`      | turn those off (22 = bold and dim)      |
+  | `30`..`37`      | foreground palette 0-7                  |
+  | `90`..`97`      | foreground palette 8-15 (bright)        |
+  | `40`..`47`, `100`..`107` | the same for the background    |
+  | `38;5;n`, `48;5;n` | palette color n (0-255)              |
+  | `38;2;r;g;b`, `48;2;r;g;b` | 24-bit color                 |
+  | `39`, `49`      | default foreground, background          |
+
+  The extended colors also come in the colon form, `38:5:n` and
+  `38:2::r:g:b` (with an optional color-space id between the colons).
+  """
+/tmp/claude-1000/sample.ex                                    1,1            Top
+
+--- cursor 23,0 hidden
+--- styles
+22 0-79 bold inverse
+=== main screen, at the end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 0,0 visible
+--- styles

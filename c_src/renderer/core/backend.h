@@ -34,10 +34,13 @@ struct cell {
 static_assert(sizeof(struct cell) == 8, "uploaded as-is, 8 bytes per cell");
 
 // Everything needed to draw one frame. cells holds cols * rows entries,
-// row-major.
+// row-major. Only rows dirty_first..dirty_last changed since the previous
+// frame (none if dirty_first > dirty_last); the backend may upload just
+// those, unless the grid's size changed.
 struct frame {
     uint16_t cols, rows;
     const struct cell *cells;
+    int dirty_first, dirty_last;
     uint16_t cursor_row, cursor_col;
     bool cursor_visible;
     uint8_t cursor_rgb[3];

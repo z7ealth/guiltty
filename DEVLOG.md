@@ -195,3 +195,57 @@ and collides; and every program can read the cookie.
 cookie opens every node, so it must never reach a shell. Left alone on
 purpose: asdf's `ASDF_INSTALL_*`, `MIX_HOME` and `MIX_ARCHIVES`, which come
 from the tool setup, not from guiltty.
+
+## 2026-10-29 — MVP 3: The vim fight
+
+_Draft: agent, awaiting user_
+
+**Tried.** The alternate screen (47, 1047, 1049), DECSC/DECRC and CSI s/u,
+scroll regions with IL/DL/SU/SD and a region-aware IND/RI, ICH/DCH, insert
+mode, autowrap off, origin mode, REP, DEC line drawing (as ASCII
+lookalikes until MVP 5), DECSTR, DECALN, and answers to DA1, DA2, DSR and
+CPR. Keys: arrows, Home/End, Insert/Delete, PgUp/PgDn, F1-F12 and Shift+Tab
+in normal and application modes, with modifiers. Paste (Ctrl+Shift+V,
+Shift+Insert) with bracketed paste. Mouse reporting (1000/1002/1003, SGR
+1006 and X10). Window titles from OSC 0/2. The renderer uploads only the
+rows that changed. Protocol version 3.
+
+**Broke.**
+- My own test assumed 1049 homes the cursor; it doesn't, in xterm or here.
+- In `--demo` mode the renderer was writing key events to stdout, which is
+  the terminal you started it from (a bug since MVP 1).
+- Comparing vim's output with pyte took a while: pyte has several gaps
+  (no REP, no CSI s/u, ignores line drawing in UTF-8 mode, chokes on vim's
+  probes), and its result changes depending on whether you read its screen
+  in between. Bisecting byte by byte found each one.
+
+**Clicked.** 19 fixtures, including two real vim sessions (split, insert,
+Ctrl+D/E/Y scrolling); all match pyte where pyte implements the feature.
+Live: vim with a split, scrolling one window, then `:qa!` brings the shell
+screen back intact; same for less.
+
+**Bosses.** With tmux, htop and btop installed: htop (meters, colors,
+arrow keys in application mode, F5 tree view), tmux with three panes
+(re-laid out on window resize, `[exited]` and the shell screen back), btop
+(layout and truecolor; its graphs are braille, so `?` until MVP 5), and
+extop (tabs, quit) all work live. A multi-line paste into zsh stays one
+pasted block until Enter. bash needs readline's
+`enable-bracketed-paste on`, which this openSUSE has off.
+
+**Clicked, again.** tmux is the better reference: run a program in a
+hidden 80x24 tmux pane, record its bytes with `pipe-pane`, and compare
+guiltty's screen with `tmux capture-pane`. htop, vim, less, and tmux
+itself running inside tmux all match, row for row and cursor included.
+
+Flaky tests: the mouse test slept 300 ms for bash to turn mouse mode on;
+it now waits until the Window has seen the mode. Waits for real shells and
+renderers went from 2-3 s to 5 s. Even so, one unidentified failure showed
+up about once in 100 full runs, and 151 runs of
+`mix test --repeat-until-failure 150` passed. Next time it happens, the
+first lines of its output say which test it was.
+
+### Later
+
+- Cursor shapes (DECSCUSR), focus events (1004), OSC 10/11 color queries.
+- Tab stops (HTS/TBC) are fixed at 8.
+- Alt+key isn't sent as ESC + key yet.

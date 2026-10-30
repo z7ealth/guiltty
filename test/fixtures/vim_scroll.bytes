@@ -1,0 +1,32 @@
+[?1049h[22;0;0t[>4;2m[?1h=[?2004h[?1004h[1;24r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[?25l[24;1H"/tmp/claude-1000/sample.ex" 99L, 4228B[2;1H½[6n[2;1H  [3;1HPzz\[0%m[6n[3;1H           [1;1H[>c]10;?]11;?[14t[16t[1;1Hdefmodule Guiltty.SGR do
+  @moduledoc """[2;17H[K[3;1H  SGR, Select Graphic Rendition (`CSI ... m`): sets the pen that new text[3;74H[K[4;3His written with.
+
+  | Parameter[7C| Effect[34C|
+  |-----------------|-----------------------------------------|
+  | none, `0`[7C| reset everything[24C|
+  | `1` `2` `3` `4` | bold, dim, italic, underline[12C|
+  | `5` `7` `8` `9` | blink, inverse, hidden, strikethrough   |
+  | `21`[12C| double underline (drawn as underline)   |
+  | `22`..`29`      | turn those off (22 = bold and dim)      |
+  | `30`..`37`      | foreground palette 0-7[18C|
+  | `90`..`97`      | foreground palette 8-15 (bright)[8C|
+  | `40`..`47`, `100`..`107` | the same for the background    |
+  | `38;5;n`, `48;5;n` | palette color n (0-255)[14C|
+  | `38;2;r;g;b`, `48;2;r;g;b` | 24-bit color[17C|
+  | `39`, `49`      | default foreground, background[10C|
+
+  The extended colors also come in the colon form, `38:5:n` and
+  `38:2::r:g:b` (with an optional color-space id between the colons).
+  """
+[1m[7m/tmp/claude-1000/sample.ex                                    1,1            Top[?25h[1;1H[?4m[?25l[m[24;70H^E[1;1H[24;70H  [6;1H[1;22r[22;1H
+[1;24r[24;1H[K[?25h[?25l[23;63H[1m[7m7,[13C 1%[6;1H[?25h[?25l[m[24;70H^E[6;1H[24;70H  [6;1H[1;22r[22;1H
+[1;24r[22;3Himport Bitwise[?25h[?25l[23;63H[1m[7m8,[14C2%[6;1H[?25h[?25l[m[24;70H^E[6;1H[24;70H  [6;1H[1;22r[22;1H
+[1;24r[?25h[?25l[23;63H[1m[7m9,[14C3%[6;1H[?25h[?25l[m[24;70H^Y[6;1H[24;70H  [7;1H[1;22r[1;1H[L[1;24r[1;3HSGR, Select Graphic Rendition (`CSI ... m`): sets the pen that new text[?25h[?25l[23;79H[1m[7m2%[7;1H[?25h[?25l[1;22r[m[1;1H[2L[1;24r[1;1Hdefmodule Guiltty.SGR do
+  @moduledoc """[?25h[?25l[23;63H[1m[7m1,[13CTop[1;1H[?25h[?25l[m[24;70Hdd[1;1H[24;70H  [1;3H[1;22r[22;1H
+[1;24r[23;28H[1m[7m[+][34C3 [?25h[1;3H[?25l[m[24;70Hu[1;3H[24;1H1 more line; before #1  1 second ago[24;70H[K[1;1Hdefmodule Guiltty.SGR do
+  @moduledoc """[2;17H[K[3;3HSGR, Select Graphic Rendition (`CSI ... m`): sets the pen that new text
+  is written with.[5;3H[K[6;4H Parameter       | Effect                                  
+  |-----------------|-----------------------------------------
+  | none, `0`       | reset everything            [9;6H1` `2` `3` `4` | bold, dim, italic, underline         [10;6H5` `7` `8` `9` | blink, inverse, hidden, strikethrough[11;7H1`      [8Cdouble underline (drawn as underline)[12;6H22`..`29[9Cturn those off (22 = bold and dim)[13;6H30`..`3[29C0-7          [14;6H90`..`97`      | foreground palette 8-15 (bright)    [15;6H40`..`47`, `100`..`107` | the same for the background[16;9H5;n`, `48;5;n` | palette color n (0-255)[17;7H8;2;r;g;b`, `48;2;r;g;b` | 24-bit color       
+  | `39`, `49`      | default foreground, background[10C|[19;3H[K[20;3HThe extended colors also come in the colon form, `38:5:n` and[20;64H[K[21;3H`38:2::r:g:b` (with an optional color-space id between the colons).
+  """[23;28H[1m[7m    [33C1 [?25h[?25l[1;1H[?25h[?25l[m[24;1H[K[24;1H:q![?25h[?25l[?2004l[>4;m[23;2t[23;1t[24;1H[K[24;1H[?1004l[?2004l[?1l>[?1049l[23;0;0t[?25h[>4;m

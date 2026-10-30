@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 2
+  @version 3
 
   @hello 1
   @setup 2
@@ -17,12 +17,18 @@ defmodule Guiltty.Window.Protocol do
   @text 4
   @key 5
   @resize 6
+  @title 7
+  @paste 8
+  @mouse 9
 
   @type event ::
           {:hello, version :: non_neg_integer(), backend :: binary()}
           | {:text, binary()}
           | {:key, keycode :: non_neg_integer(), mods :: non_neg_integer()}
           | {:resize, cols :: pos_integer(), rows :: pos_integer()}
+          | {:paste, binary()}
+          | {:mouse, :press | :release | :motion | :wheel, 0..3, non_neg_integer(),
+             non_neg_integer(), non_neg_integer()}
 
   @doc "The protocol version this side speaks."
   def version, do: @version
@@ -45,6 +51,12 @@ defmodule Guiltty.Window.Protocol do
     [header | Enum.map(lines, fn {index, row} -> [<<index::16>>, row] end)]
   end
 
+  @doc "The window title (UTF-8)."
+  @spec title(binary()) :: binary()
+  def title(text), do: <<@title, text::binary>>
+
+  @mouse_kinds %{0 => :press, 1 => :release, 2 => :motion, 3 => :wheel}
+
   @spec decode(binary()) :: {:ok, event()} | {:error, {:bad_message, binary()}}
   def decode(<<@hello, version::16, len, name::binary-size(len)>>),
     do: {:ok, {:hello, version, name}}
@@ -54,6 +66,12 @@ defmodule Guiltty.Window.Protocol do
 
   def decode(<<@resize, cols::16, rows::16>>) when cols > 0 and rows > 0,
     do: {:ok, {:resize, cols, rows}}
+
+  def decode(<<@paste, text::binary>>), do: {:ok, {:paste, text}}
+
+  def decode(<<@mouse, kind, button, col::16, row::16, mods::16>>)
+      when is_map_key(@mouse_kinds, kind) and button <= 3,
+      do: {:ok, {:mouse, @mouse_kinds[kind], button, col, row, mods}}
 
   def decode(other), do: {:error, {:bad_message, other}}
 

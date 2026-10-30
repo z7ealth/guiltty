@@ -1,0 +1,26 @@
+ab  cdefgh
+12678
+
+line3
+line5
+
+abcXYZ
+xxxxxx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- cursor 8,0 visible
+--- styles
