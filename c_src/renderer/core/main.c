@@ -252,15 +252,52 @@ static void find_slot(struct renderer *r, size_t idx) {
         c->attrs |= CELL_COLOR_GLYPH;
 }
 
+// Nerd Font icons (powerline prompts are full of them) live in the
+// Private Use Area. wcwidth says they're one column, but most are drawn
+// wider. Like Ghostty, an icon followed by a plain space gets both cells;
+// otherwise it's shrunk into one (fonts.c).
+static void widen_icons(struct renderer *r, size_t first) {
+    for (size_t c = 0; c + 1 < r->cols; c++) {
+        size_t i = first + c;
+        struct cell *icon = &r->cells[i], *next = &r->cells[i + 1];
+        constexpr uint16_t paired = ATTR_WIDE | ATTR_SPACER | ATTR_HIDDEN;
+        if (!private_use(r->glyphs[i]) || r->glyphs[i + 1] != ' ' || (icon->attrs & paired) ||
+            (next->attrs & paired))
+            continue;
+        char text[max_cluster_bytes];
+        size_t len = glyph_text(r, r->glyphs[i], text);
+        uint16_t slot;
+        bool color;
+        if (!atlas_lookup(&r->atlas, &r->fonts, text, len, 2, &slot, &color)) {
+            r->atlas_full = true;
+            return;
+        }
+        // The space shows the icon's right half, in the icon's color.
+        icon->slot = slot;
+        next->slot = (uint16_t)(slot + 1);
+        memcpy(next->fg, icon->fg, 3);
+        uint16_t flag = color ? CELL_COLOR_GLYPH : 0;
+        icon->attrs = (uint16_t)((icon->attrs & ~CELL_COLOR_GLYPH) | flag);
+        next->attrs = (uint16_t)((next->attrs & ~CELL_COLOR_GLYPH) | flag);
+        c++;
+    }
+}
+
+// Every cell of one row to its atlas slot.
+static void row_slots(struct renderer *r, size_t first) {
+    for (size_t c = 0; c < r->cols; c++)
+        find_slot(r, first + c);
+    widen_icons(r, first);
+}
+
 // The atlas filled up: start it over with just what's on screen now.
 static void refill_atlas(struct renderer *r) {
     if (!r->atlas_full)
         return;
     atlas_reset(&r->atlas);
     r->atlas_full = false;
-    size_t n = (size_t)r->cols * ((size_t)r->rows + 1);
-    for (size_t i = 0; i < n; i++)
-        find_slot(r, i);
+    for (size_t row = 0; row <= r->rows; row++)
+        row_slots(r, row * r->cols);
     // Still full: more different glyphs on screen than slots. The rest
     // stay blank until the next refill.
     r->atlas_full = false;
@@ -660,6 +697,7 @@ static void update_text_area(struct renderer *r) {
         size_t first = grid_index(r, row, 0);
         for (uint16_t c = 0; c < cols; c++)
             decode_cell(r, wire + (size_t)c * wire_cell_size, first + c);
+        widen_icons(r, first);
         mark_row(r, row + 1);
     }
     bool moved = r->cursor_row != crow || r->cursor_col != ccol;

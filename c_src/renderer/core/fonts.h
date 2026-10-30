@@ -39,6 +39,9 @@ void fonts_close(struct fonts *f);
 bool fonts_render(struct fonts *f, const char *utf8, size_t len, int width, uint8_t *rgba,
                   size_t stride);
 
+// The Private Use Area, where Nerd Font icons live.
+bool private_use(uint32_t cp);
+
 // Decodes one UTF-8 character at s[*i], advancing *i. Invalid bytes give
 // U+FFFD.
 uint32_t utf8_next(const uint8_t *s, size_t len, size_t *i);

@@ -26,6 +26,10 @@ struct font {
     bool scalable;
 };
 
+bool private_use(uint32_t cp) {
+    return (cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0x10FFFD);
+}
+
 // --- UTF-8 ---
 
 uint32_t utf8_next(const uint8_t *s, size_t len, size_t *i) {
@@ -328,13 +332,20 @@ static int draw_shaped(struct font *font, const char *utf8, size_t len, struct c
 
 // Copy (or shrink) the canvas's content box into the cell area, as
 // straight-alpha RGBA. Shrinking averages each block of source pixels.
-static void place(const struct canvas *c, int src_x, int src_w, int dst_x, int dst_y, int dst_w,
-                  int dst_h, int area_w, int area_h, uint8_t *rgba, size_t stride) {
+// The source box is src_x, src_y, src_w x src_h on the canvas; it lands at
+// dst_x, dst_y as dst_w x dst_h in the area.
+struct box {
+    int x, y, w, h;
+};
+
+static void place(const struct canvas *c, struct box src, struct box dst, int area_w, int area_h,
+                  uint8_t *rgba, size_t stride) {
+    int src_x = src.x, src_w = src.w, dst_x = dst.x, dst_y = dst.y, dst_w = dst.w, dst_h = dst.h;
     for (int y = 0; y < dst_h; y++) {
         int ay = dst_y + y;
         if (ay < 0 || ay >= area_h)
             continue;
-        int sy0 = y * c->h / dst_h, sy1 = (y + 1) * c->h / dst_h;
+        int sy0 = src.y + y * src.h / dst_h, sy1 = src.y + (y + 1) * src.h / dst_h;
         if (sy1 <= sy0)
             sy1 = sy0 + 1;
         for (int x = 0; x < dst_w; x++) {
@@ -363,6 +374,48 @@ static void place(const struct canvas *c, int src_x, int src_w, int dst_x, int d
             d[3] = (uint8_t)(sum[3] / count);
         }
     }
+}
+
+// The smallest box around every pixel with some ink, or false if none.
+static bool ink_box(const struct canvas *c, struct box *out) {
+    int x0 = c->w, y0 = c->h, x1 = -1, y1 = -1;
+    for (int y = 0; y < c->h; y++)
+        for (int x = 0; x < c->w; x++)
+            if (c->px[((size_t)y * (size_t)c->w + (size_t)x) * 4 + 3] != 0) {
+                x0 = x < x0 ? x : x0;
+                x1 = x > x1 ? x : x1;
+                y0 = y < y0 ? y : y0;
+                y1 = y > y1 ? y : y1;
+            }
+    *out = (struct box){x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+    return x1 >= 0;
+}
+
+// Shrink a box of ink to fit the area (never grow it: scaling a bitmap
+// up blurs it), centered.
+static void fit(const struct canvas *c, struct box ink, int area_w, int area_h, uint8_t *rgba,
+                size_t stride) {
+    double scale = fmin(1.0, fmin((double)area_w / ink.w, (double)area_h / ink.h));
+    int dw = (int)lround(ink.w * scale), dh = (int)lround(ink.h * scale);
+    if (dw < 1 || dh < 1)
+        return;
+    place(c, ink, (struct box){(area_w - dw) / 2, (area_h - dh) / 2, dw, dh}, area_w, area_h, rgba,
+          stride);
+}
+
+// A Nerd Font icon given the cell after it as room (main.c): centered on
+// its own cell and in the middle of the cell's height, spilling into the
+// second cell only as far as it needs, shrunk only if it's wider than both.
+// That keeps the gap after it that the program meant, as Ghostty does.
+static void place_icon(const struct canvas *c, struct box ink, int cell_w, int area_w, int area_h,
+                       uint8_t *rgba, size_t stride) {
+    double scale = fmin(1.0, fmin((double)area_w / ink.w, (double)area_h / ink.h));
+    int dw = (int)lround(ink.w * scale), dh = (int)lround(ink.h * scale);
+    if (dw < 1 || dh < 1)
+        return;
+    int x = cell_w / 2 - dw / 2;
+    x = x < 0 ? 0 : x + dw > area_w ? area_w - dw : x;
+    place(c, ink, (struct box){x, (area_h - dh) / 2, dw, dh}, area_w, area_h, rgba, stride);
 }
 
 // No font has it: a hollow box, so you can see something is there.
@@ -409,24 +462,38 @@ bool fonts_render(struct fonts *f, const char *utf8, size_t len, int width, uint
     if (advance <= 0)
         advance = area_w;
 
-    if (font->scalable && advance <= area_w + area_w / 10) {
+    int dx = (area_w - advance) / 2 - c.origin_x;
+    int dy = f->baseline - c.baseline;
+    struct box ink;
+    bool has_ink = ink_box(&c, &ink);
+    // Would the ink land outside the cells? Glyphs from other fonts often
+    // do: Nerd Font icons are wider than their one-column advance.
+    bool spills = has_ink && (ink.x + dx < 0 || ink.x + ink.w + dx > area_w || ink.y + dy < 0 ||
+                              ink.y + ink.h + dy > area_h);
+
+    if (has_ink && width == 2 && n == 1 && private_use(cps[0])) {
+        place_icon(&c, ink, f->cell_w, area_w, area_h, rgba, stride);
+    } else if (font->scalable && advance <= area_w + area_w / 10 &&
+               (font == f->list[0] || !spills)) {
         // The usual case: same size as the cell's font. Center it in the
         // area (for the primary font's own glyphs that's no shift at all)
-        // and line up the baselines.
-        int dx = (area_w - advance) / 2 - c.origin_x;
-        int dy = f->baseline - c.baseline;
-        place(&c, 0, c.w, dx, dy, c.w, c.h, area_w, area_h, rgba, stride);
-    } else {
-        // Too big for the cell (an emoji bitmap, a very wide glyph): shrink
-        // the advance box to fit, keeping its shape, centered.
+        // and line up the baselines. The primary font's small overhangs
+        // (an italic, a j) are cut, like in other terminals.
+        place(&c, (struct box){0, 0, c.w, c.h}, (struct box){dx, dy, c.w, c.h}, area_w, area_h,
+              rgba, stride);
+    } else if (has_ink && (!font->scalable || font == f->list[0])) {
+        // An emoji bitmap, or a very wide glyph of the primary font: shrink
+        // the advance box to fit, keeping its shape and spacing, centered.
         double scale = fmin((double)area_w / advance, (double)area_h / c.h);
         int dw = (int)lround(advance * scale), dh = (int)lround(c.h * scale);
-        if (dw < 1 || dh < 1) {
-            free(c.px);
-            return color;
-        }
-        place(&c, c.origin_x, advance, (area_w - dw) / 2, (area_h - dh) / 2, dw, dh, area_w, area_h,
-              rgba, stride);
+        if (dw >= 1 && dh >= 1)
+            place(&c, (struct box){c.origin_x, 0, advance, c.h},
+                  (struct box){(area_w - dw) / 2, (area_h - dh) / 2, dw, dh}, area_w, area_h, rgba,
+                  stride);
+    } else if (has_ink) {
+        // A fallback font's glyph that doesn't fit: shrink its ink to the
+        // cells instead of cutting it.
+        fit(&c, ink, area_w, area_h, rgba, stride);
     }
     free(c.px);
     return color;

@@ -114,7 +114,8 @@ guiltty/
 │   ├── pty_nif.c            # openpty, spawn, enif_select
 │   └── renderer/
 │       ├── core/            # port protocol, SDL3 window and input, glyph atlas,
-│       │                    # fonts (fontconfig fallback, HarfBuzz, FreeType)
+│       │                    # fonts (fontconfig fallback, HarfBuzz, FreeType),
+│       │                    # sprites (box drawing and blocks drawn by guiltty)
 │       ├── gl/              # OpenGL 3.3 core backend (MVP 1)
 │       └── vk/              # Vulkan backend (side quest)
 ├── priv/                    # built binaries: guiltty_gl, later guiltty_vk

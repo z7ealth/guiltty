@@ -351,4 +351,35 @@ yours.
   (the MVP's stretch goal).
 - Real bold and italic faces instead of the one-pixel smear.
 - Box-drawing characters drawn by guiltty instead of the font, so lines
-  meet without gaps.
+  meet without gaps. (Done on 2026-10-30.)
+
+## 2026-10-30 — powerlevel10k, side by side with Ghostty
+
+_Draft: agent, awaiting user_
+
+**Tried.** Your prompt looked cut in guiltty and whole in Ghostty.
+Recording what zsh prints showed why: `░▒▓` at the ends of each segment,
+which the font draws as dot patterns, and three Nerd Font icons (openSUSE,
+folder, clock) from the Private Use Area. wcwidth says those icons are
+one column wide, but they're drawn wider, so guiltty cut them to one cell.
+Now guiltty draws block elements, shades and the light and heavy box
+lines itself (`sprites.c`), as Ghostty does. An icon followed by a space
+can spill into that space. Any glyph from a fallback font that still
+doesn't fit is shrunk instead of cut.
+
+**Broke.**
+- The first icon fix centered the icon across both cells, which closed
+  the gap p10k leaves after the branch icon. Ghostty centers it on its own
+  cell and only spills, so guiltty does too.
+- Anti-aliased straight lines: a 2-pixel heavy line came out as one solid
+  row between two half-transparent ones, and looked double. Straight lines
+  are whole pixels now; only the rounded corners are anti-aliased.
+
+**Clicked.** On a private X server, your real zsh with p10k in guiltty
+looks like your Ghostty screenshot. A test page of boxes (light, heavy,
+rounded), shades, quadrants and eighths joins with no gaps.
+
+### Later
+
+- Double box lines (═ ║ ╔) and dashed ones still come from the font;
+  powerline separators (U+E0B0 to U+E0BF) too.

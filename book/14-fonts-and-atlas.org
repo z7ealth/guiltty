@@ -101,6 +101,68 @@ in alpha (the shader tints them with the cell's color), emoji with their
 own colors. A cell gets the =CELL_COLOR_GLYPH= bit so the shader knows
 which.
 
+* Drawn, not taken from a font
+
+Some characters are really geometry: block elements (█ ▀ ▌ ▖), shades
+(░ ▒ ▓) and box-drawing lines (─ │ ┌ ┼ ━ ╭). A font's versions rarely
+fill the cell exactly, so lines of neighboring cells leave gaps, and most
+fonts draw shades as dot patterns. powerlevel10k puts =░▒▓= at the ends of
+its prompt segments, and they showed up as dotted blocks. Ghostty, kitty
+and Alacritty draw these themselves, and so does guiltty now
+([[file:../c_src/renderer/core/sprites.c][sprites.c]]). The atlas asks =sprite_render= first; the fonts only get what
+it doesn't know.
+
+- *Blocks and shades* fill eighths of the cell. ░ ▒ ▓ are the whole cell
+  at a quarter, half and three quarters alpha.
+- *Lines*: each light or heavy box character is four *arms* from the
+  center (up, right, down, left), each none, light or heavy. A table of
+  76 entries covers =─= to =╋=, plus the half lines =╴= to =╿=. Arms are
+  whole-pixel rectangles through the center pixel, the same pixel in every
+  cell, so they meet the next cell exactly. Each arm reaches across the
+  crossing stroke, so corners are square. Light is 1 pixel at 18 px, heavy
+  2. (Double lines and dashes still come from the font.)
+- *Rounded corners* (=╭ ╮ ╯ ╰=) are a quarter circle, anti-aliased by
+  distance from the curve, ending on the same row and column as the lines.
+
+=╭= at 11x23 pixels, alpha per pixel, rows 11 to 18 (=─= runs on row 11,
+=│= on column 5):
+
+#+begin_example
+  11:   .   .   .   .   .   .   .  43 156 229 255
+  12:   .   .   .   .   .   .  87 255 120  31   .
+  13:   .   .   .   .   .  43 255  61   .   .   .
+  14:   .   .   .   .   . 156 120   .   .   .   .
+  15:   .   .   .   .   . 229  31   .   .   .   .
+  16:   .   .   .   .   . 255   .   .   .   .   .
+#+end_example
+
+A first version anti-aliased the straight lines too. A 2-pixel heavy line
+centered on a pixel's middle came out as one solid row between two
+half-transparent ones, and looked like two thin lines. Straight lines
+don't need anti-aliasing: they're axis-aligned.
+
+* Nerd Font icons
+
+Nerd Fonts put their icons in Unicode's Private Use Area (U+E000 to
+U+F8FF and beyond), which has no official width, so =wcwidth= says 1.
+Most icons are drawn wider than a cell. Your prompt prints three of them:
+U+F314 (openSUSE), U+F115 (folder), U+F017 (clock). Cut to one cell, they
+lost their edges.
+
+guiltty does what Ghostty does:
+
+- An icon followed by a plain space gets that space as room
+  (=widen_icons= in [[file:../c_src/renderer/core/main.c][main.c]]): it's drawn into a two-cell area, and the
+  space shows its right half. It stays centered on its own cell and only
+  spills as far as it needs, so the gap the program meant after it is
+  still there.
+- Otherwise, or if it's wider than both cells, it's shrunk to fit
+  instead of being cut. The same rule applies to any glyph from a fallback
+  font whose ink would land outside its cells.
+
+This happens only in the renderer. Elixir still sees an icon and a space,
+so selection, search and the cursor work on the real cells.
+
 * The atlas, filled as you go
 
 The atlas ([[file:../c_src/renderer/core/atlas.c][atlas.c]]) is a 2048-pixel-wide RGBA bitmap cut into
@@ -175,6 +237,9 @@ usual resize chain runs (chapter 9).
 3. What happens when the atlas fills up?
 4. Why is 😀 shrunk, but a letter from the primary font isn't?
 5. On a HiDPI screen with scale 2, what pixel size is a font of size 16?
+6. Why does guiltty draw =─= itself instead of taking it from the font?
+7. Where does the right half of a Nerd Font icon go when the next cell is
+   a space?
 
 ** Answers
 :PROPERTIES:
@@ -192,3 +257,8 @@ usual resize chain runs (chapter 9).
    bigger than two cells. The primary font is opened at our pixel size, so its glyphs
    already fit.
 5. 32 pixels.
+6. A font's line rarely reaches exactly to the cell's edges and center,
+   so neighbors leave gaps; drawn as whole pixels through the same center
+   pixel in every cell, lines always meet.
+7. Into that space's cell: the icon is drawn two cells wide and the space
+   shows the second half (it still is a space for Elixir).

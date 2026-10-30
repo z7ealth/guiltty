@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "protocol.h"
+#include "sprites.h"
 
 struct atlas_entry {
     uint32_t hash;
@@ -112,7 +113,13 @@ bool atlas_lookup(struct atlas *a, struct fonts *fonts, const char *utf8, size_t
     uint8_t *area = a->pixels + (size_t)y * stride + (size_t)x * 4;
     for (int row = 0; row < a->cell_h; row++)
         memset(area + (size_t)row * stride, 0, (size_t)(width * a->cell_w) * 4);
-    bool is_color = fonts_render(fonts, utf8, len, width, area, stride);
+    // Block elements and box lines are drawn, not taken from a font.
+    size_t at = 0;
+    uint32_t cp = utf8_next((const uint8_t *)utf8, len, &at);
+    bool is_color = false;
+    if (at != len || width != 1 ||
+        !sprite_render(cp, a->cell_w, a->cell_h, a->line_thickness, area, stride))
+        is_color = fonts_render(fonts, utf8, len, width, area, stride);
     mark_dirty(a, y, y + a->cell_h - 1);
 
     struct atlas_entry *e = &a->entries[i];
