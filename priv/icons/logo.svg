@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="guiltty">
+  <!-- The app icon: guiltty-mark on guiltty-lockup-card's dark rounded
+       square, in the card's lavender. A faint edge keeps it visible on
+       dark panels. `make icons` turns this into every size. -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#0d1117"/>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="12.5" fill="none" stroke="#ffffff" stroke-opacity="0.12"/>
+  <g transform="translate(32 32) scale(0.8) translate(-32 -32)" fill="none" stroke="#9184d9"
+     stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 18L8 46"/>
+    <path d="M17 18L31 32L17 46"/>
+    <path d="M42 46L56 46"/>
+  </g>
+</svg>

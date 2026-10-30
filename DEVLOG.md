@@ -504,3 +504,41 @@ drops the selection when the text under it changes, the way Alacritty and
 Ghostty do. Comparing the text rather than the rows keeps a selection
 that only scrolled. A test selects a line, scrolls it away with `seq`
 (still selected), then runs `clear` (gone); it fails without the fix.
+
+## 2026-10-30 — v0.7.0 begins: an installer
+
+_Draft: agent, awaiting user_
+
+v0.7.0 is "let's install and test". First piece: `./install.sh`, which
+builds a release into `~/.local/lib/guiltty` (built next to the old one
+and swapped in only if the build worked), adds a `guiltty` command, a
+menu entry and the icon in every size, and `--uninstall` takes it all
+away again. The renderer now names its window's class (`SDL_SetAppMetadata`)
+so taskbars match it with the menu entry, and sets its own window icon,
+from a BMP because SDL3 reads nothing else. A placeholder logo (`>_`)
+waits for the real one; `make icons` makes every size from it. Tried in a
+scratch prefix: installed in 3.5 s, the installed copy opened a window on
+a private X server with class `guiltty` and a 128x128 icon, and
+uninstalling left no files.
+
+Later: your logo arrived as four SVGs (the mark, a favicon, the lockup,
+the lockup on a card). The app icon is made from your pieces: the card's
+dark rounded square with the mark in its lavender (`logo.svg`). At 16
+pixels the cursor bar and the chevron merged into something like "D_", so
+16 and 24 come from `logo-small.svg`, just `>_`, a bit bolder. ImageMagick
+here refuses SVG (security policy) and rsvg-convert isn't installed, so
+`make icons` renders with headless Chromium unless rsvg-convert is there.
+
+## 2026-10-30 — Closing the window quits, unless you ask it not to
+
+_Draft: agent, awaiting user_
+
+You noticed guiltty "started where you left it". It wasn't starting at
+all: closing the window had left the shells running (detach, since MVP 4),
+and the next window showed the same shells. That's now opt-in:
+`on_close: :quit` (default) closes every tab when you close the window,
+so the last tab ending stops guiltty, as after the last `exit`;
+`on_close: :detach` keeps the old behavior. A renderer crash still just
+reopens the window. Checked with an installed copy on a private X server:
+asked its window to close the way a window manager does, and the whole
+node was gone a moment later.

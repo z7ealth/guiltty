@@ -1,0 +1,135 @@
+#+TITLE: Installing: the release, the menu entry, the icon
+#+STARTUP: overview
+
+* What "installed" means
+
+Running guiltty from the source tree needs Elixir. An installed guiltty
+doesn't: it's a Mix *release*, a directory with guiltty's compiled code,
+the renderer, the PTY NIF, and a copy of the Erlang runtime (ERTS) itself.
+[[file:../install.sh][install.sh]] builds one and puts it, and what a desktop needs to find it,
+in your home directory. No root.
+
+#+begin_example
+  ~/.local/
+  ├── lib/guiltty/                     the release
+  │   ├── bin/guiltty                  its start script (and rel/env.sh.eex, chapter 12)
+  │   ├── erts-17.1.1/                 its own Erlang
+  │   └── lib/guiltty-0.7.0/priv/      guiltty_gl, pty_nif.so, guiltty.bmp
+  ├── bin/guiltty                      a two-line script: exec the release's
+  └── share/
+      ├── applications/guiltty.desktop the menu entry
+      └── icons/hicolor/
+          ├── 16x16/apps/guiltty.png
+          ├── ...
+          └── 256x256/apps/guiltty.png
+#+end_example
+
+The release is built next to the old one (=lib/guiltty.new=) and swapped
+in only when the build worked, so a failed update leaves the installed
+guiltty alone. A running installed guiltty is stopped first (after
+asking: its tabs close); the one in =_build/prod= is never touched, only
+pointed out, because both would use the node name =guiltty=.
+
+* The menu entry
+
+A =.desktop= file is how every Linux desktop (Xfce, KDE, GNOME) learns an
+application exists: a small INI file in =applications/=, under one of the
+XDG data directories (=~/.local/share= is yours). The installed one:
+
+#+begin_example
+  [Desktop Entry]
+  Type=Application
+  Name=guiltty
+  GenericName=Terminal
+  Comment=A GPU terminal emulator in Elixir
+  Exec=/home/you/.local/bin/guiltty
+  Icon=guiltty
+  Terminal=false
+  Categories=System;TerminalEmulator;
+  StartupWMClass=guiltty
+  StartupNotify=false
+#+end_example
+
+- =Icon=guiltty= is a name, not a path: the desktop looks it up in the
+  icon theme, in the size it needs (16 for a menu, 48 for a launcher).
+  That's why there's one PNG per size under =hicolor/=, the fallback
+  theme every theme inherits from.
+- =Categories= puts it under System, and =TerminalEmulator= tells the
+  desktop it's a terminal.
+- =StartupNotify=false=: the command returns at once (it asks the running
+  guiltty for a window), so a "starting..." cursor would spin for nothing.
+- =update-desktop-database= and =gtk-update-icon-cache= refresh the caches
+  menus read; =desktop-file-validate= checks the file.
+
+* Which window is whose
+
+When a window appears, how does the taskbar know it belongs to
+guiltty.desktop? On X11, by the window's *class*, =WM_CLASS=, matched
+against =StartupWMClass=. The renderer calls =SDL_SetAppMetadata= before
+=SDL_Init=, and SDL sets the class from it (on Wayland, the =app_id=). From
+=xprop= on the installed guiltty's window:
+
+#+begin_example
+  WM_CLASS(STRING) = "guiltty_gl", "guiltty"
+                      instance      class: matches StartupWMClass
+  _NET_WM_ICON(CARDINAL) = Icon (128 x 128): ...
+#+end_example
+
+Some taskbars (Xfce's among them) take the icon from the window itself,
+=_NET_WM_ICON=, not from the .desktop file. So the renderer sets one too,
+with =SDL_SetWindowIcon=. SDL3 reads only BMP images, so the logo also
+lives as =priv/guiltty.bmp=, which the renderer finds next to itself
+(=SDL_GetBasePath=).
+
+* The icons, from the logo
+
+The logo is an SVG: the guiltty mark (a cursor bar, =>= and =_=) on a dark
+rounded card, =priv/icons/logo.svg=. =make icons= ([[file:../c_src/tools/icons.sh][icons.sh]]) renders it
+into every size, and ImageMagick makes the BMP.
+
+Small sizes are their own design problem. At 16 pixels the gap between
+the cursor bar and the chevron is under a pixel, and they melt into one
+shape that reads like =D_=. So, as icon sets usually do, the two smallest
+sizes come from a simpler drawing, =logo-small.svg=: just =>_=, with
+slightly bolder strokes.
+
+#+begin_example
+  logo.svg        ->  32, 48, 64, 128, 256 px, and guiltty.bmp (128)
+  logo-small.svg  ->  16, 24 px
+#+end_example
+
+ImageMagick on openSUSE won't read SVG (its security policy forbids it),
+so the script renders with =rsvg-convert= when it's installed and with
+headless Chromium otherwise.
+
+* Loot
+
+- The freedesktop.org Desktop Entry Specification (keys like =Exec=,
+  =Categories=, =StartupWMClass=) and the Icon Theme Specification
+  (=hicolor=, the sizes, the lookup).
+- XDG Base Directory Specification: =~/.local/share=, =~/.config=.
+- ICCCM, =WM_CLASS=; EWMH, =_NET_WM_ICON=. =xprop(1)= shows both.
+- Mix releases: =mix release --path=, =include_erts=.
+- =desktop-file-validate(1)=, =update-desktop-database(1)=.
+
+* Questions
+
+1. Why does the installed guiltty run on a machine without Elixir?
+2. Why is =Icon= a name and not a path, and why one PNG per size?
+3. How does the taskbar know a window belongs to guiltty.desktop?
+4. Why does guiltty need a BMP copy of its logo?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The release carries its own Erlang runtime (ERTS) and guiltty's
+   compiled code; nothing else from Elixir is needed to run it.
+2. The desktop looks the name up in the icon theme and picks the size it
+   needs; a theme can also replace it. Scaling one big PNG down on the fly
+   looks worse.
+3. By the window's class, =WM_CLASS= (=app_id= on Wayland), which the
+   renderer sets to =guiltty= and the entry's =StartupWMClass= names.
+4. Some taskbars take the icon from the window (=_NET_WM_ICON=), and SDL3
+   can only load BMP files to set it.

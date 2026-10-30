@@ -36,6 +36,12 @@ defmodule Guiltty.Tabs do
   @doc "Closes a tab: its shell gets SIGHUP."
   def close(id), do: GenServer.call(__MODULE__, {:close, id})
 
+  @doc """
+  Closes every tab (each shell gets SIGHUP). When the last one has ended,
+  Tabs stops, and guiltty with it.
+  """
+  def close_all, do: GenServer.call(__MODULE__, :close_all)
+
   @doc "Switches to `:next`, `:prev`, or the tab at a 0-based index."
   def switch(to), do: GenServer.call(__MODULE__, {:switch, to})
 
@@ -111,6 +117,15 @@ defmodule Guiltty.Tabs do
       {:ok, id, state} -> {:reply, {:ok, id}, broadcast(state)}
       {:error, _} = error -> {:reply, error, state}
     end
+  end
+
+  def handle_call(:close_all, _from, state) do
+    for id <- state.tabs,
+        pid = GenServer.whereis(Session.via(id, :supervisor)),
+        pid != nil,
+        do: DynamicSupervisor.terminate_child(@sessions, pid)
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:close, id}, _from, state) do

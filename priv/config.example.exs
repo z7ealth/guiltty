@@ -8,17 +8,23 @@
 [
   font: [family: "monospace", size: 18],
 
-  # A built-in theme by name: "tomorrow-night" (the default), "dracula",
-  # "gruvbox-dark", "solarized-dark" or "catppuccin-mocha". Or colors, which
-  # can start from a named one: theme: [name: "dracula", bg: "#000000"].
-  theme: [
-    fg: "#c5c8c6",
-    bg: "#1d1f21",
-    cursor: "#c5c8c6",
-    # black, red, green, yellow, blue, magenta, cyan, white, then bright
-    ansi: ~w(#1d1f21 #cc6666 #b5bd68 #f0c674 #81a2be #b294bb #8abeb7 #c5c8c6
-             #969896 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea)
-  ],
+  # A built-in theme by name: "catppuccin-mocha", "tomorrow-night" (what
+  # guiltty uses without a config), "dracula", "gruvbox-dark" or
+  # "solarized-dark".
+  theme: "catppuccin-mocha",
+
+  # Or your own colors. Any you leave out come from `name:` (or from
+  # tomorrow-night without one):
+  #
+  # theme: [
+  #   name: "catppuccin-mocha",
+  #   fg: "#c5c8c6",
+  #   bg: "#1d1f21",
+  #   cursor: "#c5c8c6",
+  #   # black, red, green, yellow, blue, magenta, cyan, white, then bright
+  #   ansi: ~w(#1d1f21 #cc6666 #b5bd68 #f0c674 #81a2be #b294bb #8abeb7 #c5c8c6
+  #            #969896 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea)
+  # ],
 
   # :block, :bar or :underline. Programs can change it while they run (vim
   # shows a bar in insert mode); it comes back when they're done.
@@ -53,6 +59,10 @@
   # Bold text in the 8 basic colors uses their bright versions, as xterm
   # does.
   bold_is_bright: true,
+
+  # Closing the window :quit's guiltty (its tabs end). With :detach the tabs
+  # keep running, and the next guiltty opens them where you left them.
+  on_close: :quit,
 
   # Where the tabs go: :top or :bottom.
   tab_bar: :top,

@@ -222,6 +222,8 @@ _build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
+make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
+./install.sh                # install for the user into ~/.local (--uninstall to remove)
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir
 ```
 

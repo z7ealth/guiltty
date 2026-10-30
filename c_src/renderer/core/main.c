@@ -676,6 +676,21 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     return true;
 }
 
+// The window's own icon, for taskbars that ask the window rather than the
+// .desktop file (Xfce's does). SDL3 reads only BMP, so `make icons` keeps a
+// BMP copy of the logo next to this binary, in priv/. No icon, no problem.
+static void set_window_icon(SDL_Window *window) {
+    const char *dir = SDL_GetBasePath();
+    char path[4096];
+    if (dir == nullptr || snprintf(path, sizeof path, "%sguiltty.bmp", dir) >= (int)sizeof path)
+        return;
+    SDL_Surface *icon = SDL_LoadBMP(path);
+    if (icon == nullptr)
+        return;
+    SDL_SetWindowIcon(window, icon);
+    SDL_DestroySurface(icon);
+}
+
 // The smallest window that still fits min_cols x min_rows, in window
 // coordinates (SDL sizes windows in those, not pixels).
 static void set_minimum_size(struct renderer *r) {
@@ -1346,6 +1361,10 @@ int main(int argc, char *argv[]) {
     }
 
     int status = 1;
+    // The window's class (WM_CLASS on X11, app_id on Wayland) is what
+    // desktops use to match it with guiltty.desktop: its name and icon in
+    // the taskbar and the window switcher.
+    (void)SDL_SetAppMetadata("guiltty", nullptr, "guiltty");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "renderer: SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -1383,6 +1402,7 @@ int main(int argc, char *argv[]) {
     if (density > 1.0f)
         SDL_SetWindowSize(r.window, (int)((float)width / density), (int)((float)height / density));
     set_minimum_size(&r);
+    set_window_icon(r.window);
     r.backend = renderer_backend.init(r.window);
     if (r.backend == nullptr || !renderer_backend.upload_atlas(r.backend, &r.atlas))
         goto out_window;

@@ -194,6 +194,30 @@ defmodule Guiltty.WindowTest do
     end
   end
 
+  test "closing the window quits: every tab ends, then Tabs (and guiltty)", %{window: window} do
+    {:ok, _second} = Tabs.new_tab()
+    tabs = Process.whereis(Tabs)
+    ref = Process.monitor(tabs)
+
+    # What the renderer sends when you close the window: exit status 0.
+    send(window, {port(window), {:exit_status, 0}})
+    assert_receive {:DOWN, ^ref, :process, ^tabs, {:shutdown, :last_tab_closed}}, 5000
+  end
+
+  test "with on_close: :detach, closing the window leaves the tabs running", %{
+    id: id,
+    window: window
+  } do
+    send(window, {:config, %{Config.defaults() | on_close: :detach}})
+    assert eventually(fn -> :sys.get_state(window).config.on_close == :detach end)
+    ref = Process.monitor(window)
+
+    send(window, {port(window), {:exit_status, 0}})
+    assert_receive {:DOWN, ^ref, :process, ^window, {:shutdown, :window_closed}}, 5000
+    Process.sleep(300)
+    assert Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)) == [id]
+  end
+
   test "stopping the window ends the renderer process", %{window: window} do
     {:os_pid, os_pid} = Port.info(port(window), :os_pid)
     assert File.exists?("/proc/#{os_pid}")

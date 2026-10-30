@@ -23,7 +23,9 @@ become the long-lived part, and the window becomes a view on them:
   DynamicSupervisor. A tab ends when its shell exits. When the last one
   ends, =Tabs= stops; it's /significant/, so guiltty stops.
 - *The window is not significant.* Closing it stops the Window and its
-  renderer, and nothing else.
+  renderer. By default (=on_close: :quit=) the Window first closes every
+  tab, so the last tab ending is what stops guiltty; with
+  =on_close: :detach=, nothing else stops.
 
 * Crash-proof, part by part
 
@@ -62,6 +64,11 @@ If =Tabs= itself crashes, the sessions keep running (they're under
 session supervisors exist (={id, :supervisor}= keys) and adopts them.
 
 * Detach and reattach
+
+This is opt-in: =on_close: :detach= in the config. (It was the only
+behavior until v0.7.0, and surprised the user: a new window opened in
+whatever directory the old shells had been left in, because they were the
+same shells.)
 
 #+begin_example
   $ guiltty                 bin/guiltty, no command -> rel/env.sh.eex:

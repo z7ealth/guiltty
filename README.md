@@ -1,7 +1,22 @@
+<p align="center">
+  <img src="priv/icons/guiltty-lockup-card.svg" alt="guiltty" width="320">
+</p>
+
 # guiltty
 
 A GPU terminal emulator in Elixir, with a little C: a PTY NIF and an
 OpenGL renderer that runs as its own process.
+
+## Install it
+
+```sh
+./install.sh               # builds and installs into ~/.local (no root)
+guiltty                    # or find guiltty in your applications menu
+./install.sh --uninstall   # removes it; your config stays
+```
+
+Run `./install.sh` again to update. It needs Elixir, GCC and the
+development files below.
 
 ## Run it
 
@@ -16,15 +31,16 @@ mix guiltty        # development: a window; closing it ends everything
 mix test
 ```
 
-As a release, with tabs that survive closing the window:
+As a release (what `./install.sh` installs):
 
 ```sh
 MIX_ENV=prod mix release
 _build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
 ```
 
-Run `guiltty` again after closing the window and your tabs are still
-there.
+Closing the window ends guiltty and its tabs. With `on_close: :detach`
+in the config they keep running instead, and the next `guiltty` opens
+them where you left them.
 
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|

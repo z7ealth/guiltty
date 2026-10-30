@@ -35,6 +35,8 @@ defmodule Guiltty.Config do
     * `:wheel_lines` - rows the mouse wheel scrolls per step
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
     * `:tab_bar` - `:top` or `:bottom`
+    * `:on_close` - closing the window `:quit`s guiltty (its tabs end), or
+      `:detach`es (the tabs keep running; the next `guiltty` opens them)
   """
 
   use GenServer
@@ -86,7 +88,8 @@ defmodule Guiltty.Config do
       copy_on_select: true,
       wheel_lines: 3,
       bold_is_bright: true,
-      tab_bar: :top
+      tab_bar: :top,
+      on_close: :quit
     }
   end
 
@@ -308,7 +311,8 @@ defmodule Guiltty.Config do
            one_of(:copy_on_select, get.(:copy_on_select, true), [true, false, :clipboard]),
          {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
          {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]),
-         {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]) do
+         {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
+         {:ok, on_close} <- one_of(:on_close, get.(:on_close, d.on_close), [:quit, :detach]) do
       {:ok,
        %{
          theme: theme,
@@ -322,7 +326,8 @@ defmodule Guiltty.Config do
          copy_on_select: copy,
          wheel_lines: wheel,
          bold_is_bright: bright,
-         tab_bar: tab_bar
+         tab_bar: tab_bar,
+         on_close: on_close
        }}
     end
   end

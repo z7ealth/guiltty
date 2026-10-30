@@ -6,8 +6,10 @@ defmodule Guiltty.Window do
   The renderer is a separate OS process, so if it crashes only this process
   notices; the supervisor starts a new Window, which starts a new renderer
   and redraws from the Screen. When the user closes the window the renderer
-  exits with status 0 and this process stops normally: the tabs keep
-  running, and the next window shows them again (detach and reattach).
+  exits with status 0 and this process stops normally. By default
+  (`on_close: :quit`) every tab is closed too, and guiltty ends; with
+  `on_close: :detach` the tabs keep running, and the next window shows
+  them again (detach and reattach).
 
   ## Frames
 
@@ -150,7 +152,12 @@ defmodule Guiltty.Window do
   end
 
   # The renderer exits 0 when the user closes the window.
+  #
+  # Then, by default (on_close: :quit), the tabs end too, and when the last
+  # one has, so does guiltty. With on_close: :detach they keep running, and
+  # the next window shows them again.
   def handle_info({port, {:exit_status, 0}}, %{port: port} = state) do
+    if state.config.on_close == :quit, do: catch_exit(fn -> Tabs.close_all() end)
     {:stop, {:shutdown, :window_closed}, %{state | port: nil}}
   end
 

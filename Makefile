@@ -5,6 +5,7 @@
 #   make debug       only the renderer with AddressSanitizer and UBSan,
 #                    priv/guiltty_gl-dbg
 #   make width-table regenerate the Unicode width table from glibc
+#   make icons       regenerate the icons from priv/icons/logo.svg
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]), halt().')
 
@@ -51,7 +52,14 @@ width-table:
 	rm -f $(PRIV)/gen_width
 	mix format $(WIDTH_TABLE)
 
+# The icons, made from the logo (priv/icons/logo.svg, and logo-small.svg
+# for 16 and 24 pixels): PNGs in the sizes desktops look for, and a BMP
+# the renderer loads as its window icon. They're checked in; run this
+# after changing the logo.
+icons:
+	sh c_src/tools/icons.sh
+
 clean:
 	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg
 
-.PHONY: all debug clean width-table
+.PHONY: all debug clean width-table icons

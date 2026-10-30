@@ -21,3 +21,4 @@ the loot (what to read next) and a few questions to check yourself.
 15. [[file:14-fonts-and-atlas.org][Fonts and the atlas: every glyph, from any font]]
 16. [[file:15-scrollback-and-selection.org][Scrollback, search and the clipboard]]
 17. [[file:16-config.org][Configuration: every setting, from file to pixels]]
+18. [[file:17-installing.org][Installing: the release, the menu entry, the icon]]
