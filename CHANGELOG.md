@@ -16,6 +16,11 @@ the tab bar instead of ignoring them.
   what each dependency is for, and the commands for openSUSE, Fedora,
   Ubuntu and Arch.
 
+### Changed
+- The tabs look cleaner: each shows only its title, with more room
+  around it, and no numbers or separators between them. The active tab is
+  no longer bold. Ctrl+Shift+1 to 9 still go to tabs 1 to 9.
+
 ### Fixed
 - `./install.sh` on a fresh Elixir install: it now installs Hex and
   rebar3 itself. Before, `mix deps.get` stopped to ask for them, with its

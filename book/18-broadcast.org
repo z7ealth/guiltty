@@ -49,11 +49,12 @@ your commands probably assume all the servers get them. The lost tab shows
 =⚠= in the tab bar, and the status says which:
 
 #+begin_example
-   1 📡 hsalinas@hs-suse:~/P…   2 ⚠ h…   ⚠ broadcast paused: tab 2 disconnected
+  📡 hsalinas@hs-suse:~/P…    ⚠ h…    ⚠ broadcast paused: tab 2 disconnected
 #+end_example
 
-That's the real tab bar from a test with two tabs, after the second one's
-"ssh" ended. While broadcasting, the status reads =📡 broadcast: 2 tabs=.
+That's the tab bar from a test with two tabs, after the second one's
+"ssh" ended (redrawn in the current tab style, without tab numbers).
+While broadcasting, the status reads =📡 broadcast: 2 tabs=.
 
 To go on: Ctrl+Shift+B on the lost tab takes it out of the group (or close
 it), and the rest broadcast again. If you =ssh= again in that tab, take it

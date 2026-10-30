@@ -464,11 +464,11 @@ static int bar_text_cut(struct renderer *r, int col, const char *text, struct ce
     return bar_text(r, end, "…", look, limit);
 }
 
-// Draw the tab bar into cells row 0. Flat tabs, " 1 title ", with thin
-// separators between them, on a bar a little lighter than the background.
-// The active tab is lighter still, in the full text color, with an accent
-// line along its bottom in the theme's blue; the others are muted. The
-// status (search, scrollback) sits at the right end.
+// Draw the tab bar into cells row 0. Flat tabs, "  title  ", side by side
+// on a bar a little lighter than the background: the padding alone keeps
+// them apart. The active tab is lighter still, in the full text color,
+// with an accent line along its bottom in the theme's blue; the others are
+// muted. The status (search, scrollback) sits at the right end.
 static void build_tab_bar(struct renderer *r) {
     struct cell bar = {};
     mix(r->theme.bg, r->theme.fg, 8, bar.bg);
@@ -504,25 +504,20 @@ static void build_tab_bar(struct renderer *r) {
         limit = start - 1;
     }
 
-    struct cell separator = bar;
-    mix(r->theme.bg, r->theme.fg, 25, separator.fg);
     int col = 0;
     for (int i = 0; i < r->tab_count && col < limit; i++) {
         struct cell look = bar;
         if (i == r->active_tab) {
             mix(r->theme.bg, r->theme.fg, 16, look.bg);
             memcpy(look.fg, r->theme.fg, 3);
-            look.attrs = ATTR_BOLD | CELL_ACCENT;
+            look.attrs = CELL_ACCENT;
         }
-        char number[16];
-        snprintf(number, sizeof number, " %d ", i + 1);
         r->tabs[i].start = col;
-        col = bar_text(r, col, number, look, limit);
+        col = bar_text(r, col, "  ", look, limit);
         int title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
         col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
-        col = bar_text(r, col, " ", look, limit);
+        col = bar_text(r, col, "  ", look, limit);
         r->tabs[i].end = col;
-        col = bar_text(r, col, "│", separator, limit);
     }
     mark_row(r, 0);
     r->dirty = true;

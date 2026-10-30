@@ -653,3 +653,23 @@ the renderer.
 
 Not tried: a full install on a clean machine, or Elixir 1.20 on an
 older Erlang/OTP than 29.
+
+## 2026-10-30 — Tabs like the website mockup
+
+_Draft: agent, awaiting user_
+
+A mockup for the website drew guiltty's tabs nicer than guiltty draws
+them: just the title, lots of air, no numbers, no `│` between tabs. You
+asked for that look as pure style, without touching sizes. So
+`build_tab_bar` now pads each title with two cells on each side and
+drops the number, the separator and the bold on the active tab. The bar
+is still one cell row, so the grid math and mouse clicks are untouched.
+
+What we gave up: the numbers were the only hint for Ctrl+Shift+1..9 (I
+first told you no such keys existed; they do). The mockup's other trick,
+a taller bar with the text centered and a gap under it, needs the bar to
+stop being a grid row, and stays for later.
+
+### Later
+- A taller tab bar with centered text and a gap under it, like the
+  mockup (its own pixel height instead of cells row 0).
