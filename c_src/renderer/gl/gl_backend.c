@@ -1,6 +1,6 @@
 // OpenGL 3.3 core backend. The whole grid is two instanced draw calls: a
 // quad per cell, first for the backgrounds, then for the glyphs. Each
-// instance reads its cell (struct cell, 8 bytes) as vertex attributes.
+// instance reads its cell (struct cell, 12 bytes) as vertex attributes.
 // Read: LearnOpenGL "Hello Triangle", "Shaders", "Textures", "Instancing"
 // and "Blending".
 
@@ -65,6 +65,7 @@ static const char cell_frag_src[] = {
     X(PFNGLBINDTEXTUREPROC, BindTexture)                                                  \
     X(PFNGLACTIVETEXTUREPROC, ActiveTexture)                                              \
     X(PFNGLTEXIMAGE2DPROC, TexImage2D)                                                    \
+    X(PFNGLTEXSUBIMAGE2DPROC, TexSubImage2D)                                              \
     X(PFNGLTEXPARAMETERIPROC, TexParameteri)                                              \
     X(PFNGLPIXELSTOREIPROC, PixelStorei)                                                  \
     X(PFNGLDELETETEXTURESPROC, DeleteTextures)                                            \
@@ -84,9 +85,11 @@ struct gl {
     size_t capacity; // cells the buffer can hold
     uint16_t cols, rows; // the grid the buffer holds
     int width, height; // drawable size in pixels
-    int cell_w, cell_h, baseline, line_thickness;
+    int cell_w, cell_h, baseline, line_thickness, atlas_cols;
+    uint32_t atlas_generation; // of the atlas in the texture
+    int atlas_w, atlas_h;
     struct {
-        GLint viewport, origin, cell, cols, atlas_cols, first_char, cursor, pass, atlas,
+        GLint viewport, origin, cell, cols, atlas_cols, cursor, cursor2, pass, atlas,
             cursor_color, underline_y, strike_y, line_thickness;
     } u; // uniform locations
 };
@@ -148,8 +151,8 @@ struct gl {
     LOC(cell, "u_cell");
     LOC(cols, "u_cols");
     LOC(atlas_cols, "u_atlas_cols");
-    LOC(first_char, "u_first_char");
     LOC(cursor, "u_cursor");
+    LOC(cursor2, "u_cursor2");
     LOC(pass, "u_pass");
     LOC(atlas, "u_atlas");
     LOC(cursor_color, "u_cursor_color");
@@ -197,8 +200,8 @@ static void *gl_init(SDL_Window *window) {
     f->GenBuffers(1, &gl->cell_buffer);
     f->BindBuffer(GL_ARRAY_BUFFER, gl->cell_buffer);
     constexpr GLsizei stride = sizeof(struct cell);
-    f->VertexAttribIPointer(0, 1, GL_UNSIGNED_BYTE, stride, (void *)offsetof(struct cell, ch));
-    f->VertexAttribIPointer(1, 1, GL_UNSIGNED_BYTE, stride, (void *)offsetof(struct cell, attrs));
+    f->VertexAttribIPointer(0, 1, GL_UNSIGNED_SHORT, stride, (void *)offsetof(struct cell, slot));
+    f->VertexAttribIPointer(1, 1, GL_UNSIGNED_SHORT, stride, (void *)offsetof(struct cell, attrs));
     // Normalized: the bytes 0..255 arrive in the shader as 0.0..1.0.
     f->VertexAttribPointer(2, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride, (void *)offsetof(struct cell, fg));
     f->VertexAttribPointer(3, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride, (void *)offsetof(struct cell, bg));
@@ -215,18 +218,36 @@ static bool gl_upload_atlas(void *state, const struct atlas *atlas) {
     gl->cell_h = atlas->cell_h;
     gl->baseline = atlas->baseline;
     gl->line_thickness = atlas->line_thickness;
-    // A new font replaces the old atlas.
+    gl->atlas_cols = atlas->slots_per_row;
+    gl->f.ActiveTexture(GL_TEXTURE0);
+
+    bool same = gl->atlas_texture != 0 && atlas->generation == gl->atlas_generation &&
+                atlas->width == gl->atlas_w && atlas->height == gl->atlas_h;
+    if (same) {
+        // New glyphs since the last frame: upload just the band of rows
+        // they're in.
+        if (atlas->dirty_top > atlas->dirty_bottom)
+            return true;
+        gl->f.BindTexture(GL_TEXTURE_2D, gl->atlas_texture);
+        size_t offset = (size_t)atlas->dirty_top * (size_t)atlas->width * 4;
+        gl->f.TexSubImage2D(GL_TEXTURE_2D, 0, 0, atlas->dirty_top, atlas->width,
+                            atlas->dirty_bottom - atlas->dirty_top + 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                            atlas->pixels + offset);
+        return gl->f.GetError() == GL_NO_ERROR;
+    }
+
+    // A new font, or the atlas was reset: replace the whole texture.
     if (gl->atlas_texture != 0)
         gl->f.DeleteTextures(1, &gl->atlas_texture);
     gl->f.GenTextures(1, &gl->atlas_texture);
-    gl->f.ActiveTexture(GL_TEXTURE0);
     gl->f.BindTexture(GL_TEXTURE_2D, gl->atlas_texture);
-    // Rows of an 8-bit bitmap aren't 4-byte aligned; tell GL not to assume so.
-    gl->f.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    gl->f.TexImage2D(GL_TEXTURE_2D, 0, GL_R8, atlas->width, atlas->height, 0, GL_RED,
+    gl->f.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, atlas->width, atlas->height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, atlas->pixels);
     gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    gl->atlas_generation = atlas->generation;
+    gl->atlas_w = atlas->width;
+    gl->atlas_h = atlas->height;
     return gl->f.GetError() == GL_NO_ERROR;
 }
 
@@ -270,14 +291,15 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     gl->rows = frame->rows;
 
     int cursor = frame->cursor_visible ? frame->cursor_row * frame->cols + frame->cursor_col : -1;
+    int cursor2 = cursor >= 0 && frame->cursor_wide ? cursor + 1 : -1;
     f->UseProgram(gl->program);
     f->Uniform2f(gl->u.viewport, (float)gl->width, (float)gl->height);
     f->Uniform2f(gl->u.origin, (float)frame->origin_x, (float)frame->origin_y);
     f->Uniform2f(gl->u.cell, (float)gl->cell_w, (float)gl->cell_h);
     f->Uniform1i(gl->u.cols, frame->cols);
-    f->Uniform1i(gl->u.atlas_cols, atlas_grid_cols);
-    f->Uniform1i(gl->u.first_char, atlas_first_char);
+    f->Uniform1i(gl->u.atlas_cols, gl->atlas_cols);
     f->Uniform1i(gl->u.cursor, cursor);
+    f->Uniform1i(gl->u.cursor2, cursor2);
     f->Uniform1i(gl->u.atlas, 0);
     f->Uniform3f(gl->u.cursor_color, unit(frame->cursor_rgb[0]), unit(frame->cursor_rgb[1]),
                  unit(frame->cursor_rgb[2]));

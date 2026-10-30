@@ -32,9 +32,10 @@ type_keys() {
     sleep 1
 }
 
-# The C locale keeps output ASCII until guiltty learns UTF-8 (MVP 5).
+# UTF-8, like a real session. (Fixtures from before MVP 5 were recorded
+# with LC_ALL=C, which kept them ASCII.)
 type_keys "$@" |
-    SHELL=/bin/bash TERM=xterm-256color LC_ALL=C COLORTERM=truecolor \
+    SHELL=/bin/bash TERM=xterm-256color LC_ALL=C.UTF-8 COLORTERM=truecolor \
         script --quiet --log-out "$raw" --command "stty cols 80 rows 24; $command" >/dev/null ||
     true # the program's exit status doesn't matter, only its output
 

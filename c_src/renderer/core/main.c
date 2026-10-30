@@ -3,6 +3,10 @@
 // backend, and reports keys, mouse, paste and window resizes. If it
 // crashes, only the window goes away.
 //
+// Text arrives as codepoints and cluster ids (see protocol.h). Each one is
+// looked up in the glyph atlas (atlas.c), which draws it with the right
+// font the first time (fonts.c).
+//
 //   guiltty_gl           port mode: talks the protocol on stdin/stdout
 //   guiltty_gl --demo    standalone: draws a fixed screen, no port
 //
@@ -12,15 +16,19 @@
 
 #include <SDL3/SDL.h>
 #include <limits.h>
+#include <locale.h>
+#include <math.h>
 #include <signal.h>
 #include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #include "atlas.h"
 #include "backend.h"
+#include "fonts.h"
 #include "protocol.h"
 
 constexpr int default_font_size = 18;
@@ -31,7 +39,8 @@ constexpr uint16_t max_grid = 4096; // cols or rows; far beyond any screen
 constexpr int min_cols = 10;
 constexpr int min_rows = 3;
 constexpr int max_tabs = 64;
-constexpr int max_tab_label = 24;
+constexpr int max_tab_label = 24; // columns
+constexpr size_t max_short_text = 256; // tab titles, status, preedit (bytes, with the NUL)
 
 struct theme {
     uint8_t palette[palette_size][3];
@@ -39,27 +48,42 @@ struct theme {
 };
 
 struct tab {
-    char title[max_tab_label + 1]; // printable ASCII only (UTF-8 in MVP 5)
+    char title[max_short_text]; // UTF-8
     int start, end; // columns it occupies in the tab bar, for clicks
+};
+
+// The text of a cluster id (protocol.h), as Elixir defined it.
+struct cluster {
+    uint8_t len;
+    char text[max_cluster_bytes];
 };
 
 struct renderer {
     SDL_Window *window;
     void *backend;
+    struct fonts fonts;
     struct atlas atlas;
+    bool atlas_full; // a lookup failed: reset the atlas and look everything up again
     char font_family[256];
-    int font_size;
+    int font_size; // in points: the pixel size is font_size * scale
+    float scale; // the display's content scale (2.0 on a HiDPI screen)
+    int padding; // pixels around the grid
     int cell_w, cell_h;
     // The terminal grid is cols x rows. The cell mirror has one more row on
     // top, the tab bar, so grid row i is cells row i + 1.
     uint16_t cols, rows;
     struct cell *cells; // cols * (rows + 1)
+    uint32_t *glyphs; // what each cell shows (codepoint or cluster id), to look it up again
+    struct cluster *clusters; // indexed by id - first_cluster
+    uint32_t cluster_cap;
     int dirty_first, dirty_last; // cell rows changed since the last draw
     uint16_t cursor_row, cursor_col; // in grid rows
     bool cursor_visible;
     struct theme theme;
     struct tab tabs[max_tabs];
     int tab_count, active_tab;
+    char status[max_short_text]; // shown at the right of the tab bar
+    char preedit[max_short_text]; // text being composed in an input method
     uint8_t halo_rgb[3];
     Uint64 halo_until; // SDL ticks (ms); 0 = no halo
     int mouse_col, mouse_row; // the cell the pointer was last reported in
@@ -138,11 +162,12 @@ static void send_paste(const char *text) {
     free(msg);
 }
 
-static void send_mouse(enum mouse_kind kind, uint8_t button, int col, int row) {
+static void send_mouse(enum mouse_kind kind, uint8_t button, int col, int row, uint8_t clicks) {
     uint8_t msg[mouse_message_size] = {MSG_MOUSE, kind, button};
     put_u16(msg + 3, (uint16_t)col);
     put_u16(msg + 5, (uint16_t)row);
     put_u16(msg + 7, SDL_GetModState());
+    msg[9] = clicks;
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
 }
 
@@ -163,6 +188,85 @@ static void send_frame(uint32_t micros) {
 static void send_tab_click(int index) {
     uint8_t msg[2] = {MSG_TAB_CLICK, (uint8_t)index};
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
+}
+
+// --- Glyphs ---
+
+// The UTF-8 text a glyph stands for.
+static size_t glyph_text(const struct renderer *r, uint32_t glyph, char out[max_cluster_bytes]) {
+    if (glyph < first_cluster)
+        return utf8_put(glyph <= 0x10FFFF ? glyph : 0xFFFD, out);
+    uint32_t i = glyph - first_cluster;
+    if (i < r->cluster_cap && r->clusters[i].len > 0) {
+        memcpy(out, r->clusters[i].text, r->clusters[i].len);
+        return r->clusters[i].len;
+    }
+    return utf8_put(0xFFFD, out); // never defined: shouldn't happen
+}
+
+[[nodiscard]] static bool define_cluster(struct renderer *r, uint32_t id, const uint8_t *text, uint8_t len) {
+    if (id < first_cluster || id - first_cluster >= max_clusters || len == 0 || len > max_cluster_bytes)
+        return false;
+    uint32_t i = id - first_cluster;
+    if (i >= r->cluster_cap) {
+        uint32_t cap = r->cluster_cap == 0 ? 256 : r->cluster_cap;
+        while (cap <= i)
+            cap *= 2;
+        struct cluster *grown = realloc(r->clusters, cap * sizeof *grown);
+        if (grown == nullptr)
+            return false;
+        memset(grown + r->cluster_cap, 0, (cap - r->cluster_cap) * sizeof *grown);
+        r->clusters = grown;
+        r->cluster_cap = cap;
+    }
+    r->clusters[i].len = len;
+    memcpy(r->clusters[i].text, text, len);
+    return true;
+}
+
+// Point cell idx at its glyph's atlas slot. The right half of a wide
+// character uses the slot after its left half's.
+static void find_slot(struct renderer *r, size_t idx) {
+    struct cell *c = &r->cells[idx];
+    uint32_t glyph = r->glyphs[idx];
+    c->slot = 0;
+    c->attrs &= (uint16_t)~CELL_COLOR_GLYPH;
+    if (c->attrs & ATTR_SPACER) {
+        const struct cell *left = idx % r->cols > 0 ? &r->cells[idx - 1] : nullptr;
+        if (left != nullptr && (left->attrs & ATTR_WIDE) && left->slot != 0) {
+            c->slot = (uint16_t)(left->slot + 1);
+            c->attrs |= left->attrs & CELL_COLOR_GLYPH;
+        }
+        return;
+    }
+    if (glyph == 0 || glyph == ' ' || (c->attrs & ATTR_HIDDEN) || r->fonts.count == 0)
+        return;
+    char text[max_cluster_bytes];
+    size_t len = glyph_text(r, glyph, text);
+    bool color;
+    if (!atlas_lookup(&r->atlas, &r->fonts, text, len, (c->attrs & ATTR_WIDE) ? 2 : 1, &c->slot, &color)) {
+        r->atlas_full = true;
+        return;
+    }
+    if (color)
+        c->attrs |= CELL_COLOR_GLYPH;
+}
+
+// The atlas filled up: start it over with just what's on screen now.
+static void refill_atlas(struct renderer *r) {
+    if (!r->atlas_full)
+        return;
+    atlas_reset(&r->atlas);
+    r->atlas_full = false;
+    size_t n = (size_t)r->cols * ((size_t)r->rows + 1);
+    for (size_t i = 0; i < n; i++)
+        find_slot(r, i);
+    // Still full: more different glyphs on screen than slots. The rest
+    // stay blank until the next refill.
+    r->atlas_full = false;
+    r->dirty_first = 0;
+    r->dirty_last = r->rows;
+    r->dirty = true;
 }
 
 // --- Cells ---
@@ -190,17 +294,25 @@ static void resolve(const struct theme *t, uint32_t color, const uint8_t def[3],
     memcpy(out, def, 3);
 }
 
-// One wire cell (char, attrs, fg, bg) into a ready-to-draw cell: the theme,
-// inverse, dim and hidden are applied here so backends only see final colors.
-static void decode_cell(const struct theme *t, const uint8_t *wire, struct cell *out) {
-    struct reader rd = {wire, wire_cell_size};
-    uint8_t ch, attrs;
-    uint32_t fg, bg;
-    // Can't fail: the caller checked there are wire_cell_size bytes.
-    (void)(rd_u8(&rd, &ch) && rd_u8(&rd, &attrs) && rd_u32(&rd, &fg) && rd_u32(&rd, &bg));
+static void mix(const uint8_t a[3], const uint8_t b[3], int percent_b, uint8_t out[3]) {
+    for (int i = 0; i < 3; i++)
+        out[i] = (uint8_t)((a[i] * (100 - percent_b) + b[i] * percent_b) / 100);
+}
 
-    out->ch = (ch >= atlas_first_char && ch <= atlas_last_char) ? ch : ' ';
-    out->attrs = attrs;
+// One wire cell (glyph, attrs, fg, bg) into cell idx of the mirror: the
+// theme, inverse, dim, hidden and search marks are applied here so
+// backends only see final colors.
+static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
+    const struct theme *t = &r->theme;
+    struct reader rd = {wire, wire_cell_size};
+    uint32_t glyph, fg, bg;
+    uint16_t attrs;
+    // Can't fail: the caller checked there are wire_cell_size bytes.
+    (void)(rd_u32(&rd, &glyph) && rd_u16(&rd, &attrs) && rd_u32(&rd, &fg) && rd_u32(&rd, &bg));
+
+    struct cell *out = &r->cells[idx];
+    *out = (struct cell){.attrs = attrs};
+    r->glyphs[idx] = glyph;
     resolve(t, fg, t->fg, attrs & ATTR_BOLD, out->fg);
     resolve(t, bg, t->bg, false, out->bg);
 
@@ -213,21 +325,28 @@ static void decode_cell(const struct theme *t, const uint8_t *wire, struct cell 
     if (attrs & ATTR_DIM)
         for (int i = 0; i < 3; i++)
             out->fg[i] = (uint8_t)((out->fg[i] + out->bg[i]) / 2);
-    if (attrs & ATTR_HIDDEN) {
-        out->ch = ' ';
-        out->attrs &= (uint8_t)~(ATTR_UNDERLINE | ATTR_STRIKE);
+    // Search matches: yellow, the current one brighter.
+    if (attrs & ATTR_CURRENT_MATCH) {
+        memcpy(out->bg, t->palette[11], 3);
+        memcpy(out->fg, t->bg, 3);
+    } else if (attrs & ATTR_MATCH) {
+        mix(t->bg, t->palette[3], 55, out->bg);
+        memcpy(out->fg, t->fg, 3);
     }
+    if (attrs & ATTR_HIDDEN)
+        out->attrs &= (uint16_t)~(ATTR_UNDERLINE | ATTR_STRIKE);
+    find_slot(r, idx);
 }
 
 static struct cell blank_cell(const struct theme *t) {
-    struct cell c = {.ch = ' '};
+    struct cell c = {};
     memcpy(c.fg, t->fg, 3);
     memcpy(c.bg, t->bg, 3);
     return c;
 }
 
-static struct cell *grid_row(struct renderer *r, int row) {
-    return r->cells + (size_t)(row + 1) * r->cols;
+static size_t grid_index(const struct renderer *r, int row, int col) {
+    return (size_t)(row + 1) * r->cols + (size_t)col;
 }
 
 static void mark_row(struct renderer *r, int cells_row) {
@@ -237,36 +356,86 @@ static void mark_row(struct renderer *r, int cells_row) {
 
 // --- The tab bar ---
 
-static void mix(const uint8_t a[3], const uint8_t b[3], int percent_b, uint8_t out[3]) {
-    for (int i = 0; i < 3; i++)
-        out[i] = (uint8_t)((a[i] * (100 - percent_b) + b[i] * percent_b) / 100);
+// Puts UTF-8 text in cells row 0 from col, styled like `look`, stopping
+// before `limit`. Returns the column after it. Widths come from wcwidth(3),
+// like a program would measure them.
+static int bar_text(struct renderer *r, int col, const char *text, struct cell look, int limit) {
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len && col < limit;) {
+        uint32_t cp = utf8_next((const uint8_t *)text, len, &i);
+        int w = wcwidth((wchar_t)cp);
+        if (w <= 0)
+            continue; // combining marks and controls: skip in the tab bar
+        if (col + w > limit)
+            break;
+        r->cells[col] = look;
+        r->glyphs[col] = cp;
+        if (w == 2) {
+            r->cells[col].attrs |= ATTR_WIDE;
+            r->cells[col + 1] = look;
+            r->cells[col + 1].attrs |= ATTR_SPACER;
+            r->glyphs[col + 1] = 0;
+        }
+        find_slot(r, (size_t)col);
+        if (w == 2)
+            find_slot(r, (size_t)col + 1);
+        col += w;
+    }
+    return col;
+}
+
+static int text_columns(const char *text) {
+    size_t len = strlen(text);
+    int cols = 0;
+    for (size_t i = 0; i < len;) {
+        int w = wcwidth((wchar_t)utf8_next((const uint8_t *)text, len, &i));
+        cols += w > 0 ? w : 0;
+    }
+    return cols;
 }
 
 // Draw the tab bar into cells row 0: " 1 title " per tab, the active one
 // in the theme's blue, the rest dimmer on a bar slightly lighter than the
-// background.
+// background. The status (search, scrollback) sits at the right end.
 static void build_tab_bar(struct renderer *r) {
-    struct cell bar = {.ch = ' '};
+    struct cell bar = {};
     mix(r->theme.bg, r->theme.fg, 12, bar.bg);
     memcpy(bar.fg, r->theme.palette[7], 3);
-    for (int c = 0; c < r->cols; c++)
+    for (int c = 0; c < r->cols; c++) {
         r->cells[c] = bar;
+        r->glyphs[c] = ' ';
+    }
+
+    int limit = r->cols;
+    int status_w = text_columns(r->status);
+    if (status_w > 0) {
+        struct cell look = bar;
+        mix(r->theme.bg, r->theme.fg, 30, look.bg);
+        memcpy(look.fg, r->theme.fg, 3);
+        int start = r->cols - status_w - 2;
+        if (start < 0)
+            start = 0;
+        int end = bar_text(r, start, " ", look, r->cols);
+        end = bar_text(r, end, r->status, look, r->cols);
+        bar_text(r, end, " ", look, r->cols);
+        limit = start - 1;
+    }
 
     int col = 0;
-    for (int i = 0; i < r->tab_count && col < r->cols; i++) {
-        char label[max_tab_label + 16];
-        snprintf(label, sizeof label, " %d %s ", i + 1, r->tabs[i].title);
+    for (int i = 0; i < r->tab_count && col < limit; i++) {
         struct cell look = bar;
         if (i == r->active_tab) {
             memcpy(look.fg, r->theme.bg, 3);
             memcpy(look.bg, r->theme.palette[4], 3);
             look.attrs = ATTR_BOLD;
         }
+        char number[16];
+        snprintf(number, sizeof number, " %d ", i + 1);
         r->tabs[i].start = col;
-        for (const char *p = label; *p != '\0' && col < r->cols; p++, col++) {
-            look.ch = (uint8_t)*p;
-            r->cells[col] = look;
-        }
+        col = bar_text(r, col, number, look, limit);
+        int title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
+        col = bar_text(r, col, r->tabs[i].title, look, title_end);
+        col = bar_text(r, col, " ", look, limit);
         r->tabs[i].end = col;
         col++; // a gap between tabs
     }
@@ -274,17 +443,15 @@ static void build_tab_bar(struct renderer *r) {
     r->dirty = true;
 }
 
-// Keep printable ASCII, turn each UTF-8 character into one '?' (MVP 5), cut
-// to max_tab_label characters.
-static void clean_title(const uint8_t *src, size_t len, char *dst) {
+// Keep a title's text, minus control characters.
+static void clean_text(const uint8_t *src, size_t len, char *dst, size_t size) {
     size_t n = 0;
-    for (size_t i = 0; i < len && n < (size_t)max_tab_label; i++) {
-        uint8_t c = src[i];
-        if (c >= 0x20 && c < 0x7f)
-            dst[n++] = (char)c;
-        else if (c >= 0xC0)
-            dst[n++] = '?';
-    }
+    for (size_t i = 0; i < len && n + 1 < size; i++)
+        if (src[i] >= 0x20 && src[i] != 0x7f)
+            dst[n++] = (char)src[i];
+    // Don't end in the middle of a UTF-8 character.
+    while (n > 0 && ((uint8_t)dst[n - 1] & 0xC0) == 0x80 && n + 1 >= size)
+        n--;
     dst[n] = '\0';
 }
 
@@ -299,7 +466,7 @@ static void clean_title(const uint8_t *src, size_t len, char *dst) {
         if (!rd_u8(rd, &len) || !rd_bytes(rd, len, &title))
             return false;
         if (n < max_tabs)
-            clean_title(title, len, r->tabs[n++].title);
+            clean_text(title, len, r->tabs[n++].title, sizeof r->tabs[0].title);
     }
     r->tab_count = n;
     r->active_tab = active < n ? active : 0;
@@ -315,13 +482,19 @@ static void clean_title(const uint8_t *src, size_t len, char *dst) {
     if (ckd_mul(&n, (size_t)cols, (size_t)rows + 1))
         return false;
     struct cell *cells = malloc(n * sizeof *cells);
-    if (cells == nullptr)
+    uint32_t *glyphs = calloc(n, sizeof *glyphs);
+    if (cells == nullptr || glyphs == nullptr) {
+        free(cells);
+        free(glyphs);
         return false;
+    }
     struct cell blank = blank_cell(&r->theme);
     for (size_t i = 0; i < n; i++)
         cells[i] = blank;
     free(r->cells);
+    free(r->glyphs);
     r->cells = cells;
+    r->glyphs = glyphs;
     r->cols = cols;
     r->rows = rows;
     r->cursor_row = r->cursor_row < rows ? r->cursor_row : rows - 1;
@@ -334,8 +507,8 @@ static void clean_title(const uint8_t *src, size_t len, char *dst) {
 
 // How many cells fit in a drawable of w x h pixels, below the tab bar.
 static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *cols, uint16_t *rows) {
-    int c = (w - 2 * padding_px) / r->cell_w;
-    int n = (h - 2 * padding_px) / r->cell_h - 1;
+    int c = (w - 2 * r->padding) / r->cell_w;
+    int n = (h - 2 * r->padding) / r->cell_h - 1;
     *cols = (uint16_t)SDL_clamp(c, 1, max_grid);
     *rows = (uint16_t)SDL_clamp(n, 1, max_grid);
 }
@@ -389,28 +562,47 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     return ok ? READ_OK : READ_ERROR;
 }
 
+// Opens the font at the current size and scale, with a fresh atlas for
+// it. On failure the old font and atlas stay.
 [[nodiscard]] static bool load_font(struct renderer *r) {
-    char *path = font_find(r->font_family);
+    int px = (int)lroundf((float)r->font_size * r->scale);
+    struct fonts fonts;
     struct atlas atlas;
-    bool ok = path != nullptr && atlas_build(&atlas, path, r->font_size);
-    free(path);
-    if (!ok) {
-        fprintf(stderr, "renderer: no usable font for \"%s\"\n", r->font_family);
+    if (!fonts_open(&fonts, r->font_family, px))
+        return false;
+    if (!atlas_init(&atlas, &fonts)) {
+        fonts_close(&fonts);
         return false;
     }
-    atlas_free(&r->atlas);
+    if (r->fonts.count > 0) {
+        atlas_free(&r->atlas);
+        fonts_close(&r->fonts);
+    }
+    r->fonts = fonts;
     r->atlas = atlas;
-    r->cell_w = atlas.cell_w;
-    r->cell_h = atlas.cell_h;
+    r->cell_w = fonts.cell_w;
+    r->cell_h = fonts.cell_h;
+    r->padding = (int)lroundf((float)padding_px * r->scale);
     return true;
 }
 
-// A new font: new atlas, new cell size, so a new grid for the same window.
+// The smallest window that still fits min_cols x min_rows, in window
+// coordinates (SDL sizes windows in those, not pixels).
+static void set_minimum_size(struct renderer *r) {
+    float density = SDL_GetWindowPixelDensity(r->window);
+    if (density <= 0)
+        density = 1;
+    int w = min_cols * r->cell_w + 2 * r->padding, h = (min_rows + 1) * r->cell_h + 2 * r->padding;
+    SDL_SetWindowMinimumSize(r->window, (int)((float)w / density), (int)((float)h / density));
+}
+
+// A new font (or zoom, or display scale): new atlas, new cell size, so a
+// new grid for the same window.
 [[nodiscard]] static bool change_font(struct renderer *r) {
     if (!load_font(r) || !renderer_backend.upload_atlas(r->backend, &r->atlas))
         return true; // keep the old font; not worth dying over
-    SDL_SetWindowMinimumSize(r->window, min_cols * r->cell_w + 2 * padding_px,
-                             (min_rows + 1) * r->cell_h + 2 * padding_px);
+    atlas_mark_clean(&r->atlas);
+    set_minimum_size(r);
     int w, h;
     SDL_GetWindowSizeInPixels(r->window, &w, &h);
     // Force a new grid even if cols and rows happen to stay the same.
@@ -418,14 +610,42 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     return on_pixel_size(r, w, h);
 }
 
+// Where the input method should show its candidates: at the cursor, in
+// window coordinates.
+static void update_text_area(struct renderer *r) {
+    if (r->window == nullptr || r->demo)
+        return;
+    float density = SDL_GetWindowPixelDensity(r->window);
+    if (density <= 0)
+        density = 1;
+    SDL_Rect area = {
+        .x = (int)((float)(r->padding + r->cursor_col * r->cell_w) / density),
+        .y = (int)((float)(r->padding + (r->cursor_row + 1) * r->cell_h) / density),
+        .w = (int)((float)r->cell_w / density),
+        .h = (int)((float)r->cell_h / density),
+    };
+    SDL_SetTextInputArea(r->window, &area, 0);
+}
+
 [[nodiscard]] static bool apply_rows(struct renderer *r, struct reader *rd) {
-    uint16_t cols, rows, crow, ccol, count;
+    uint16_t cols, rows, crow, ccol, nclusters, count;
     uint8_t visible;
     if (!rd_u16(rd, &cols) || !rd_u16(rd, &rows) || !rd_u16(rd, &crow) || !rd_u16(rd, &ccol) ||
-        !rd_u8(rd, &visible) || !rd_u16(rd, &count))
+        !rd_u8(rd, &visible) || !rd_u16(rd, &nclusters))
         return false;
     // Elixir waits for a frame report before sending the next update.
     r->frame_owed = true;
+    // Cluster definitions apply whatever the size: Elixir won't send them again.
+    for (uint16_t i = 0; i < nclusters; i++) {
+        uint32_t id;
+        uint8_t len;
+        const uint8_t *text;
+        if (!rd_u32(rd, &id) || !rd_u8(rd, &len) || !rd_bytes(rd, len, &text) ||
+            !define_cluster(r, id, text, len))
+            return false;
+    }
+    if (!rd_u16(rd, &count))
+        return false;
     // Sent for a grid size we no longer have: the window was resized since.
     // A full update at the new size follows, so dropping it is safe.
     if (cols != r->cols || rows != r->rows)
@@ -437,16 +657,36 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
         const uint8_t *wire;
         if (!rd_u16(rd, &row) || row >= rows || !rd_bytes(rd, row_bytes, &wire))
             return false;
-        struct cell *dst = grid_row(r, row);
+        size_t first = grid_index(r, row, 0);
         for (uint16_t c = 0; c < cols; c++)
-            decode_cell(&r->theme, wire + (size_t)c * wire_cell_size, &dst[c]);
+            decode_cell(r, wire + (size_t)c * wire_cell_size, first + c);
         mark_row(r, row + 1);
     }
+    bool moved = r->cursor_row != crow || r->cursor_col != ccol;
     r->cursor_row = crow < rows ? crow : rows - 1;
     r->cursor_col = ccol < cols ? ccol : cols - 1;
     r->cursor_visible = visible != 0;
+    if (moved)
+        update_text_area(r);
     r->dirty = true;
     return true;
+}
+
+// Text to put on the clipboard: SDL wants a C string.
+static void set_clipboard(struct reader *rd) {
+    uint8_t target;
+    if (!rd_u8(rd, &target))
+        return;
+    char *text = malloc(rd->left + 1);
+    if (text == nullptr)
+        return;
+    memcpy(text, rd->p, rd->left);
+    text[rd->left] = '\0';
+    if (target == 1)
+        SDL_SetPrimarySelectionText(text);
+    else
+        SDL_SetClipboardText(text);
+    free(text);
 }
 
 [[nodiscard]] static bool apply_message(struct renderer *r, const uint8_t *msg, uint32_t len) {
@@ -472,6 +712,20 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
             return false;
         build_tab_bar(r);
         return true;
+    case MSG_STATUS:
+        clean_text(rd.p, rd.left, r->status, sizeof r->status);
+        build_tab_bar(r);
+        return true;
+    case MSG_CLIPBOARD:
+        set_clipboard(&rd);
+        return true;
+    case MSG_PASTE_PRIMARY: {
+        char *text = SDL_GetPrimarySelectionText();
+        if (text != nullptr)
+            send_paste(text);
+        SDL_free(text);
+        return true;
+    }
     case MSG_FONT:
         return read_font(&rd, r) && change_font(r);
     case MSG_TABS:
@@ -528,13 +782,29 @@ static void demo_theme(struct theme *t) {
     memcpy(t->cursor, t->fg, 3);
 }
 
+static void demo_cell(struct renderer *r, uint16_t row, uint16_t col, uint32_t glyph, uint32_t fg,
+                      uint32_t bg, uint16_t attrs) {
+    uint8_t wire[wire_cell_size];
+    put_u32(wire, glyph);
+    put_u16(wire + 4, attrs);
+    put_u32(wire + 6, fg);
+    put_u32(wire + 10, bg);
+    decode_cell(r, wire, grid_index(r, row, col));
+}
+
+// UTF-8, one codepoint per cell (two when wcwidth says it's wide).
 static void demo_text(struct renderer *r, uint16_t row, uint16_t col, const char *text, uint32_t fg,
-                      uint32_t bg, uint8_t attrs) {
-    for (; *text != '\0' && col < r->cols && row < r->rows; text++, col++) {
-        uint8_t wire[wire_cell_size] = {(uint8_t)*text, attrs};
-        put_u32(wire + 2, fg);
-        put_u32(wire + 6, bg);
-        decode_cell(&r->theme, wire, &grid_row(r, row)[col]);
+                      uint32_t bg, uint16_t attrs) {
+    size_t len = strlen(text);
+    for (size_t i = 0; i < len && row < r->rows;) {
+        uint32_t cp = utf8_next((const uint8_t *)text, len, &i);
+        int w = wcwidth((wchar_t)cp) == 2 ? 2 : 1;
+        if (col + w > r->cols)
+            return;
+        demo_cell(r, row, col, cp, fg, bg, w == 2 ? attrs | ATTR_WIDE : attrs);
+        if (w == 2)
+            demo_cell(r, row, col + 1, 0, fg, bg, attrs | ATTR_SPACER);
+        col = (uint16_t)(col + w);
     }
 }
 
@@ -545,7 +815,7 @@ static void fill_demo(struct renderer *r) {
     r->tab_count = 2;
     r->active_tab = 0;
     snprintf(r->tabs[0].title, sizeof r->tabs[0].title, "demo");
-    snprintf(r->tabs[1].title, sizeof r->tabs[1].title, "another tab");
+    snprintf(r->tabs[1].title, sizeof r->tabs[1].title, "日本語 tab");
     build_tab_bar(r);
     demo_text(r, 0, 0, "guiltty renderer --demo", def, def, ATTR_BOLD);
     demo_text(r, 2, 0, "The quick brown fox jumps over the lazy dog.", def, def, 0);
@@ -564,8 +834,26 @@ static void fill_demo(struct renderer *r) {
     }
     for (uint16_t i = 0; i < 24; i++)
         demo_text(r, 9, (uint16_t)(i * 3), "   ", def, idx | (232u + i), 0);
-    demo_text(r, 11, 0, "Resize the window; close it to quit.", def, def, 0);
-    r->cursor_row = 11;
+    demo_text(r, 11, 0, "héllo wörld · 日本語のテキスト · 😀 ⚡ ❤ ★ │ ┌─┐ ▒", def, def, 0);
+    // Clusters, defined the way Elixir would: e + combining acute, a flag,
+    // a thumbs up with a skin tone.
+    static const char *clusters[] = {"e\xcc\x81", "\xf0\x9f\x87\xaf\xf0\x9f\x87\xb5",
+                                     "\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd"};
+    for (uint32_t i = 0; i < 3; i++)
+        (void)define_cluster(r, first_cluster + i, (const uint8_t *)clusters[i], (uint8_t)strlen(clusters[i]));
+    demo_text(r, 12, 0, "clusters:", def, def, 0);
+    demo_cell(r, 12, 10, first_cluster, def, def, 0);
+    demo_cell(r, 12, 12, first_cluster + 1, def, def, ATTR_WIDE);
+    demo_cell(r, 12, 13, 0, def, def, ATTR_SPACER);
+    demo_cell(r, 12, 15, first_cluster + 2, def, def, ATTR_WIDE);
+    demo_cell(r, 12, 16, 0, def, def, ATTR_SPACER);
+    demo_text(r, 13, 0, "search match", def, def, ATTR_MATCH);
+    demo_text(r, 13, 13, "current match", def, def, ATTR_MATCH | ATTR_CURRENT_MATCH);
+    demo_text(r, 15, 0, "Resize the window; close it to quit.", def, def, 0);
+    snprintf(r->status, sizeof r->status, "find: demo");
+    build_tab_bar(r);
+    refill_atlas(r);
+    r->cursor_row = 15;
     r->cursor_col = 37;
     r->cursor_visible = true;
     r->dirty = true;
@@ -577,7 +865,40 @@ static bool halo_on(const struct renderer *r) {
     return r->halo_until != 0 && SDL_GetTicks() < r->halo_until;
 }
 
+// Text being composed in an input method (a dead key's accent, Japanese
+// before it's converted) shows at the cursor, underlined, until it's done.
+// It's drawn over the cells for one frame; the row is put back after.
+static int overlay_preedit(struct renderer *r, struct cell *saved, uint32_t *saved_glyphs) {
+    if (r->preedit[0] == '\0' || !r->cursor_visible)
+        return -1;
+    int row = r->cursor_row + 1;
+    size_t first = (size_t)row * r->cols;
+    memcpy(saved, r->cells + first, r->cols * sizeof *saved);
+    memcpy(saved_glyphs, r->glyphs + first, r->cols * sizeof *saved_glyphs);
+    struct cell look = r->cells[first + r->cursor_col];
+    look.attrs = ATTR_UNDERLINE;
+    // bar_text writes row 0; shift the row pointers so it writes this one.
+    struct cell *cells = r->cells;
+    uint32_t *glyphs = r->glyphs;
+    r->cells += first;
+    r->glyphs += first;
+    bar_text(r, r->cursor_col, r->preedit, look, r->cols);
+    r->cells = cells;
+    r->glyphs = glyphs;
+    mark_row(r, row);
+    return row;
+}
+
 static void draw(struct renderer *r) {
+    struct cell saved[max_grid];
+    uint32_t saved_glyphs[max_grid];
+    int preedit_row = overlay_preedit(r, saved, saved_glyphs);
+    refill_atlas(r);
+    if (!renderer_backend.upload_atlas(r->backend, &r->atlas))
+        fprintf(stderr, "renderer: atlas upload failed\n");
+    atlas_mark_clean(&r->atlas);
+
+    size_t cursor = grid_index(r, r->cursor_row, r->cursor_col);
     struct frame frame = {
         .cols = r->cols,
         .rows = (uint16_t)(r->rows + 1),
@@ -586,9 +907,10 @@ static void draw(struct renderer *r) {
         .dirty_last = r->dirty_last,
         .cursor_row = (uint16_t)(r->cursor_row + 1),
         .cursor_col = r->cursor_col,
-        .cursor_visible = r->cursor_visible,
-        .origin_x = padding_px,
-        .origin_y = padding_px,
+        .cursor_visible = r->cursor_visible && preedit_row < 0,
+        .cursor_wide = (r->cells[cursor].attrs & ATTR_WIDE) != 0 && r->cursor_col + 1 < r->cols,
+        .origin_x = r->padding,
+        .origin_y = r->padding,
     };
     memcpy(frame.cursor_rgb, r->theme.cursor, 3);
     // The halo is the padding around the grid, lit up for a moment.
@@ -603,6 +925,13 @@ static void draw(struct renderer *r) {
     r->dirty = false;
     r->dirty_first = INT_MAX;
     r->dirty_last = -1;
+
+    if (preedit_row >= 0) {
+        size_t first = (size_t)preedit_row * r->cols;
+        memcpy(r->cells + first, saved, r->cols * sizeof *saved);
+        memcpy(r->glyphs + first, saved_glyphs, r->cols * sizeof *saved_glyphs);
+        mark_row(r, preedit_row);
+    }
 }
 
 [[nodiscard]] static bool on_pixel_size(struct renderer *r, int w, int h) {
@@ -621,10 +950,16 @@ static void draw(struct renderer *r) {
     return true;
 }
 
-// The cell under a point in the window: cells row 0 is the tab bar.
+// The cell under a point in the window: cells row 0 is the tab bar. SDL
+// gives mouse positions in window coordinates; on a HiDPI screen a window
+// coordinate is several pixels.
 static void cell_at(const struct renderer *r, float x, float y, int *col, int *cells_row) {
-    *col = SDL_clamp(((int)x - padding_px) / r->cell_w, 0, r->cols - 1);
-    *cells_row = SDL_clamp(((int)y - padding_px) / r->cell_h, 0, r->rows);
+    float density = SDL_GetWindowPixelDensity(r->window);
+    if (density <= 0)
+        density = 1;
+    int px = (int)(x * density), py = (int)(y * density);
+    *col = SDL_clamp((px - r->padding) / r->cell_w, 0, r->cols - 1);
+    *cells_row = SDL_clamp((py - r->padding) / r->cell_h, 0, r->rows);
 }
 
 // SDL numbers buttons 1 left, 2 middle, 3 right; the protocol 0, 1, 2.
@@ -643,34 +978,42 @@ static void click_tab_bar(const struct renderer *r, int col) {
         }
 }
 
-// Mouse events go to Elixir, which reports them to the program only if it
-// asked (and as it asked). Motion is sent only when the pointer enters a
-// new cell, so moving within one cell costs nothing. A click on the tab
-// bar switches tabs instead.
+// Mouse events go to Elixir, which reports them to the program if it
+// asked, or uses them to select and scroll. Motion is sent only when the
+// pointer enters a new cell, so moving within one cell costs nothing. A
+// click on the tab bar switches tabs instead; a drag that started below
+// it and wanders up there counts as the top row (so a selection can reach
+// it).
 static void handle_mouse(struct renderer *r, const SDL_Event *ev) {
     int col, cells_row;
     uint8_t button;
     switch (ev->type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
         if (!protocol_button(ev->button.button, &button))
             return;
         cell_at(r, ev->button.x, ev->button.y, &col, &cells_row);
-        if (cells_row == 0) {
-            if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && button == 0)
+        bool down = ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        if (cells_row == 0 && down) {
+            if (button == 0)
                 click_tab_bar(r, col);
             return;
         }
-        if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+        if (cells_row == 0 && !(r->buttons_held & (1u << button)))
+            return;
+        if (down)
             r->buttons_held |= (uint8_t)(1u << button);
         else
             r->buttons_held &= (uint8_t)~(1u << button);
-        send_mouse(ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN ? MOUSE_PRESS : MOUSE_RELEASE, button,
-                   col, cells_row - 1);
+        uint8_t clicks = ev->button.clicks > 0 ? ev->button.clicks : 1;
+        send_mouse(down ? MOUSE_PRESS : MOUSE_RELEASE, button, col, cells_row > 0 ? cells_row - 1 : 0,
+                   clicks);
         break;
+    }
     case SDL_EVENT_MOUSE_MOTION:
         cell_at(r, ev->motion.x, ev->motion.y, &col, &cells_row);
-        if (cells_row == 0 || (col == r->mouse_col && cells_row == r->mouse_row))
+        if ((cells_row == 0 && r->buttons_held == 0) ||
+            (col == r->mouse_col && cells_row == r->mouse_row))
             return;
         // Report the lowest button held, or 3 for none.
         button = 3;
@@ -679,7 +1022,7 @@ static void handle_mouse(struct renderer *r, const SDL_Event *ev) {
                 button = b;
                 break;
             }
-        send_mouse(MOUSE_MOTION, button, col, cells_row - 1);
+        send_mouse(MOUSE_MOTION, button, col, cells_row > 0 ? cells_row - 1 : 0, 1);
         break;
     case SDL_EVENT_MOUSE_WHEEL:
         if (ev->wheel.y == 0)
@@ -687,7 +1030,7 @@ static void handle_mouse(struct renderer *r, const SDL_Event *ev) {
         cell_at(r, ev->wheel.mouse_x, ev->wheel.mouse_y, &col, &cells_row);
         if (cells_row == 0)
             return;
-        send_mouse(MOUSE_WHEEL, ev->wheel.y > 0 ? 0 : 1, col, cells_row - 1);
+        send_mouse(MOUSE_WHEEL, ev->wheel.y > 0 ? 0 : 1, col, cells_row - 1, 1);
         break;
     default:
         return;
@@ -700,6 +1043,16 @@ static void handle_mouse(struct renderer *r, const SDL_Event *ev) {
 static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
     bool shift = mod & SDL_KMOD_SHIFT, ctrl = mod & SDL_KMOD_CTRL;
     return (key == SDLK_V && ctrl && shift) || (key == SDLK_INSERT && shift && !ctrl);
+}
+
+// The window moved to a screen with another scale: same font size in
+// points, more (or fewer) pixels.
+[[nodiscard]] static bool on_scale(struct renderer *r) {
+    float scale = SDL_GetWindowDisplayScale(r->window);
+    if (scale <= 0 || scale == r->scale)
+        return true;
+    r->scale = scale;
+    return change_font(r);
 }
 
 // Returns false when it's time to quit.
@@ -721,8 +1074,17 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         return false;
     case SDL_EVENT_TEXT_INPUT:
+        // A finished composition (é after a dead key) arrives here.
+        r->preedit[0] = '\0';
+        r->dirty = true;
         if (!r->demo)
             send_text(ev->text.text);
+        break;
+    case SDL_EVENT_TEXT_EDITING:
+        // An input method is composing: show what it has so far.
+        snprintf(r->preedit, sizeof r->preedit, "%s", ev->edit.text != nullptr ? ev->edit.text : "");
+        mark_row(r, r->cursor_row + 1);
+        r->dirty = true;
         break;
     case SDL_EVENT_KEY_DOWN:
         // In --demo, stdout is the terminal you started it from: send nothing.
@@ -746,6 +1108,12 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
         break;
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         if (!on_pixel_size(r, ev->window.data1, ev->window.data2)) {
+            *status = 1;
+            return false;
+        }
+        break;
+    case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        if (!on_scale(r)) {
             *status = 1;
             return false;
         }
@@ -777,6 +1145,7 @@ int main(int argc, char *argv[]) {
         .demo = argc > 1 && strcmp(argv[1], "--demo") == 0,
         .font_family = "monospace",
         .font_size = default_font_size,
+        .scale = 1.0f,
         .cursor_visible = true,
         .dirty_first = INT_MAX,
         .dirty_last = -1,
@@ -786,6 +1155,8 @@ int main(int argc, char *argv[]) {
     // If Elixir goes away, writes to stdout fail with EPIPE instead of
     // killing us with SIGPIPE.
     signal(SIGPIPE, SIG_IGN);
+    // wcwidth(3) needs a UTF-8 locale to know how wide characters are.
+    setlocale(LC_CTYPE, "C.UTF-8");
 
     if (r.demo) {
         r.cols = default_cols;
@@ -802,36 +1173,45 @@ int main(int argc, char *argv[]) {
             return 2;
         }
     }
-    if (!set_grid_size(&r, r.cols, r.rows))
-        return 1;
-    if (!load_font(&r)) {
-        free(r.cells);
-        return 1;
-    }
 
     int status = 1;
-    int width, height;
-    if (ckd_mul(&width, (int)r.cols, r.cell_w) || ckd_add(&width, width, 2 * padding_px) ||
-        ckd_mul(&height, (int)r.rows + 1, r.cell_h) || ckd_add(&height, height, 2 * padding_px))
-        goto out_atlas;
-
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "renderer: SDL_Init: %s\n", SDL_GetError());
-        goto out_atlas;
+        return 1;
     }
-    if (!renderer_backend.configure())
+    // The font's pixel size depends on the screen's scale, so the font
+    // loads now, before the window exists (its size depends on the font).
+    float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    r.scale = scale > 0 ? scale : 1.0f;
+    if (!load_font(&r))
         goto out_sdl;
+    if (!set_grid_size(&r, r.cols, r.rows))
+        goto out_font;
+
+    int width, height;
+    if (ckd_mul(&width, (int)r.cols, r.cell_w) || ckd_add(&width, width, 2 * r.padding) ||
+        ckd_mul(&height, (int)r.rows + 1, r.cell_h) || ckd_add(&height, height, 2 * r.padding))
+        goto out_font;
+    if (!renderer_backend.configure())
+        goto out_font;
+    // HIGH_PIXEL_DENSITY: on a HiDPI screen, draw at full resolution instead
+    // of being scaled up blurry.
     r.window = SDL_CreateWindow("guiltty", width, height,
-                                renderer_backend.window_flags | SDL_WINDOW_RESIZABLE);
+                                renderer_backend.window_flags | SDL_WINDOW_RESIZABLE |
+                                    SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (r.window == nullptr) {
         fprintf(stderr, "renderer: SDL_CreateWindow: %s\n", SDL_GetError());
-        goto out_sdl;
+        goto out_font;
     }
-    SDL_SetWindowMinimumSize(r.window, min_cols * r.cell_w + 2 * padding_px,
-                             (min_rows + 1) * r.cell_h + 2 * padding_px);
+    // We asked for pixels, but SDL sizes windows in window coordinates.
+    float density = SDL_GetWindowPixelDensity(r.window);
+    if (density > 1.0f)
+        SDL_SetWindowSize(r.window, (int)((float)width / density), (int)((float)height / density));
+    set_minimum_size(&r);
     r.backend = renderer_backend.init(r.window);
     if (r.backend == nullptr || !renderer_backend.upload_atlas(r.backend, &r.atlas))
         goto out_window;
+    atlas_mark_clean(&r.atlas);
 
     if (r.demo) {
         fill_demo(&r);
@@ -845,12 +1225,14 @@ int main(int argc, char *argv[]) {
     }
 
     // The window manager may not have given us the size we asked for (a
-    // tiling one never does): start from what we actually got.
+    // tiling one never does): start from what we actually got. And the
+    // window may be on another screen than the primary one.
     int pw, ph;
     SDL_GetWindowSizeInPixels(r.window, &pw, &ph);
-    if (!on_pixel_size(&r, pw, ph))
+    if (!on_pixel_size(&r, pw, ph) || !on_scale(&r))
         goto out_backend;
     SDL_StartTextInput(r.window);
+    update_text_area(&r);
 
     status = 0;
     bool running = true;
@@ -876,10 +1258,13 @@ out_backend:
     renderer_backend.shutdown(r.backend);
 out_window:
     SDL_DestroyWindow(r.window);
+out_font:
+    atlas_free(&r.atlas);
+    fonts_close(&r.fonts);
 out_sdl:
     SDL_Quit();
-out_atlas:
-    atlas_free(&r.atlas);
     free(r.cells);
+    free(r.glyphs);
+    free(r.clusters);
     return status;
 }

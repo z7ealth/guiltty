@@ -6,7 +6,7 @@ defmodule Guiltty.Parser do
 
   Commands:
 
-    * `{:print, binary}` - a run of printable ASCII
+    * `{:print, binary}` - a run of printable text, valid UTF-8
     * `:cr`, `:lf`, `:bs`, `:ht`, `:shift_out`, `:shift_in` - C0 controls
       (VT and FF count as `:lf`)
     * `{:csi, private, params, intermediates, final}` - e.g. `ESC [ ? 25 l`
@@ -16,11 +16,14 @@ defmodule Guiltty.Parser do
     * `{:esc, intermediates, final}` - e.g. `ESC M` is `{:esc, "", ?M}`
     * `{:osc, data}` - an operating system command, e.g. `"0;title"`
 
-  DCS, SOS, PM and APC strings are consumed and dropped. Each non-ASCII
-  character still prints as a single `?` until MVP 5 brings UTF-8.
+  DCS, SOS, PM and APC strings are consumed and dropped.
+
+  Text is UTF-8. A byte sequence that isn't valid UTF-8 prints as U+FFFD
+  (the replacement character, �), the way xterm does.
 
   The parser is a value: state carries over between `feed/2` calls, so a
-  sequence split across two reads still works.
+  sequence split across two reads still works. That includes a UTF-8
+  character cut in half by the read: its first bytes wait in `pending`.
 
       iex> {_p, cmds} = Guiltty.Parser.feed(Guiltty.Parser.new(), "hi\\e[1;31mX\\r\\n")
       iex> cmds
@@ -41,7 +44,9 @@ defmodule Guiltty.Parser do
             seen_param: false,
             # OSC data being collected, as reversed iodata
             string: [],
-            string_size: 0
+            string_size: 0,
+            # the start of a UTF-8 character that the last read cut off
+            pending: ""
 
   @type t :: %__MODULE__{}
   @type param :: non_neg_integer() | nil | [non_neg_integer() | nil]
@@ -61,13 +66,14 @@ defmodule Guiltty.Parser do
   @can 0x18
   @sub 0x1A
   @bel 0x07
-  @del 0x7F
+  @replacement "\uFFFD"
 
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
   @spec feed(t(), binary()) :: {t(), [command()]}
   def feed(%__MODULE__{} = p, bytes) do
+    {bytes, p} = {p.pending <> bytes, %{p | pending: ""}}
     {p, acc} = step(p.state, bytes, p, [])
     {p, Enum.reverse(acc)}
   end
@@ -78,14 +84,14 @@ defmodule Guiltty.Parser do
   ## Ground: text and C0 controls
 
   defp step(:ground, bytes, p, acc) do
-    case printable_run(bytes, 0) do
+    case text_run(bytes, 0) do
       0 ->
         <<byte, rest::binary>> = bytes
         ground_byte(byte, rest, p, acc)
 
       n ->
         <<run::binary-size(^n), rest::binary>> = bytes
-        step(:ground, rest, p, [{:print, run} | acc])
+        text(run, rest, p, acc)
     end
   end
 
@@ -196,15 +202,40 @@ defmodule Guiltty.Parser do
   defp step(:ignored_esc, <<?\\, rest::binary>>, p, acc), do: step(:ground, rest, clear(p), acc)
   defp step(:ignored_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
 
-  ## Ground bytes that aren't printable ASCII
+  ## Text
+
+  # A run of bytes that may be text. Valid UTF-8 prints; an invalid byte
+  # prints as U+FFFD and decoding goes on after it. An incomplete character
+  # at the very end of the input waits for the next read; anywhere else
+  # (a control byte cut it short) it's invalid too.
+  defp text(run, rest, p, acc) do
+    case :unicode.characters_to_binary(run) do
+      valid when is_binary(valid) ->
+        step(:ground, rest, p, [{:print, valid} | acc])
+
+      {:incomplete, valid, partial} when rest == "" ->
+        {%{p | state: :ground, pending: partial}, print(valid, acc)}
+
+      {:incomplete, valid, _partial} ->
+        step(:ground, rest, p, [{:print, @replacement} | print(valid, acc)])
+
+      {:error, valid, <<_bad, after_bad::binary>>} ->
+        text_after(after_bad, rest, p, [{:print, @replacement} | print(valid, acc)])
+    end
+  end
+
+  defp text_after("", rest, p, acc), do: step(:ground, rest, p, acc)
+  defp text_after(run, rest, p, acc), do: text(run, rest, p, acc)
+
+  defp print("", acc), do: acc
+  defp print(text, acc), do: [{:print, text} | acc]
+
+  ## Ground bytes that aren't text
 
   defp ground_byte(byte, rest, p, acc) do
     cond do
       c0?(byte) -> anywhere(byte, rest, :ground, p, acc)
-      byte == @del -> step(:ground, rest, p, acc)
-      # UTF-8 lead byte: one ? per character until MVP 5
-      byte >= 0xC0 -> step(:ground, rest, p, [{:print, "?"} | acc])
-      # UTF-8 continuation bytes (and 8-bit C1, which UTF-8 terminals ignore)
+      # DEL
       true -> step(:ground, rest, p, acc)
     end
   end
@@ -300,10 +331,11 @@ defmodule Guiltty.Parser do
 
   ## Runs
 
-  defp printable_run(<<byte, rest::binary>>, n) when byte in 0x20..0x7E,
-    do: printable_run(rest, n + 1)
+  # Printable ASCII and every byte of a UTF-8 character (all >= 0x80).
+  defp text_run(<<byte, rest::binary>>, n) when byte in 0x20..0x7E or byte >= 0x80,
+    do: text_run(rest, n + 1)
 
-  defp printable_run(_, n), do: n
+  defp text_run(_, n), do: n
 
   # Bytes that are simply part of an OSC string.
   defp string_run(<<byte, rest::binary>>, n) when byte >= 0x20, do: string_run(rest, n + 1)

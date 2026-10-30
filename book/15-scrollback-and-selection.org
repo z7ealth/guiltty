@@ -1,0 +1,223 @@
+#+TITLE: Scrollback, search and the clipboard
+#+STARTUP: overview
+
+* The scrollback
+
+When a line feed at the bottom of the screen scrolls everything up, the
+top row used to vanish. Now, on the main screen, it goes into the
+scrollback. (Not on the alternate screen: vim's redraws aren't history.
+Not when a scroll region is set: that's a program scrolling part of its
+own screen.)
+
+** Numbering
+
+Every row that ever scrolled off gets a number, from 0 up. The screen's
+rows continue the count:
+
+#+begin_example
+   row number
+        0   line 1      <- scrollback_first (oldest kept)
+        1   line 2
+      ...
+     9999   line 10000
+                        <- history = 10000 (rows that ever scrolled off)
+    10000   screen row 0
+    10001   screen row 1
+      ...
+#+end_example
+
+The numbers never change as more output arrives, which is the point: a
+selection, a search match, or the view while you're scrolled back all hold
+row numbers, so they stay on their text while the shell keeps printing.
+Past =scrollback_max= rows (10,000 by default, =scrollback:= in the config),
+the oldest go and =scrollback_first= moves up.
+
+** Storage: blocks of 256 rows
+
+A naive version kept a map from row number to row. It halved guiltty's
+speed on a flood of short lines: one map update and one memory allocation
+per line. The scrollback now has two parts:
+
+#+begin_example
+  recent:  [row 9999, row 9998, ..., row 9984]     a list, newest first
+                                                   (a row costs one prepend)
+  blocks:  %{38 => {starts, rows}, 37 => ..., 0 => ...}
+             block b holds rows b*256 .. b*256+255:
+             rows   = one binary, the 256 rows end to end, each without
+                      its trailing blank cells
+             starts = a tuple of where each row begins in it
+#+end_example
+
+Every 256 rows, =recent= is sealed into a block: one binary, one
+allocation. Finding row =n= is =div(n, 256)= for the block, then
+=binary_part= at =elem(starts, rem(n, 256))=: O(1). Most rows are short, so
+trimming their blank cells saves a lot: 10,000 rows of =seq= output take
+0.56 MB instead of 11.2 MB at full width (80 cells of 14 bytes).
+
+Measured (feeding the parser and grid directly, 400,000 short lines):
+6.6 MB/s with scrollback; MVP 4's grid did 7.0 MB/s without any.
+
+Code: =save_lines/2=, =seal/1= and =line/2= in [[file:../lib/guiltty/grid.ex][Guiltty.Grid]].
+
+* The view
+
+What the window shows is the Screen's business, not the grid's: the grid
+is the terminal's state, and scrolling back doesn't change it. The Screen
+keeps =scroll= (how many rows back), =selection= and =search=, and
+[[file:../lib/guiltty/view.ex][Guiltty.View]] builds the rows to send:
+
+#+begin_example
+   scroll = 0                    scroll = 2
+   +----------------+            +----------------+
+   | screen row 0   |            | scrollback -2  |
+   | screen row 1   |            | scrollback -1  |
+   | screen row 2   |            | screen row 0   |
+   +----------------+            +----------------+
+   cursor shown                  cursor (row 2) scrolled out: hidden
+#+end_example
+
+Marks go on copies of the rows, never into the grid: the selection flips
+=inverse=, search matches get the =match= bit (0x400) and the current one
+=current_match= too (0x800). The renderer colors those yellow.
+
+While the view is decorated (scrolled, a selection, a search), each update
+sends every visible row; when it stops being decorated, one more full
+update puts the plain rows back.
+
+** Staying on the same text
+
+You scroll back to read something and the build you started keeps
+printing. Each new row entering the scrollback would move the text up
+under you, so =keep_view/2= adds the number of new rows to =scroll=: the
+view stays on the same row numbers. Typing anything brings it back to
+the bottom.
+
+* Scrolling
+
+| Input                   | Scrolls                                         |
+|-------------------------+-------------------------------------------------|
+| mouse wheel             | 3 rows (unless the program wants the mouse)     |
+| Shift+PgUp / Shift+PgDn | a page (rows - 1)                               |
+| Shift+Home / Shift+End  | to the top / back to the live screen            |
+| typing                  | back to the live screen                         |
+
+On the alternate screen there's no scrollback, so the wheel sends arrow
+keys instead (xterm calls it =alternateScroll=): =less=, =man= and =git log=
+scroll with the wheel.
+
+* Search
+
+Ctrl+Shift+F starts a search; what you type goes into the query, shown at
+the right of the tab bar (a STATUS message), not to the program. Each
+keystroke searches again from the newest output; Enter goes to the next
+older match, Shift+Enter to the next newer one, Escape ends it.
+
+[[file:../lib/guiltty/search.ex][Guiltty.Search]] works row by row and cell by cell:
+
+1. Turn the row into text and check =String.contains?=: most rows don't
+   match, and that test is cheap.
+2. Only for rows that do: compare the query's graphemes with the cells'
+   text, so a match is in columns (=日本語 ok=: "ok" is at columns 7-8,
+   though it's at byte 10).
+
+It's case-insensitive unless the query has a capital letter (smart case,
+like vim and less). Searching all 10,000 rows for something that isn't
+there takes about 45 ms.
+
+* Selection
+
+Who owns the selection was a design decision: Elixir. The renderer only
+has the visible cells; Elixir has the scrollback and knows clusters and
+wide characters. So the renderer just reports mouse events, and the
+Window decides:
+
+#+begin_example
+  mouse event
+     |
+     +-- the program asked for the mouse (1000/1002/1003) and no Shift?
+     |      yes -> encode it for the program (chapter 7)
+     |
+     +-- no -> guiltty's own:
+            left press    Screen.select {:start, pos, clicks}
+            left drag     Screen.select {:extend, pos}
+            left release  Screen.select :finish  -> text -> PRIMARY
+            middle press  ask the renderer to paste PRIMARY
+            wheel         scroll (or arrow keys on the alternate screen)
+#+end_example
+
+Shift held forces a selection even in vim or htop, as in xterm.
+
+A selection is an anchor and a head (row numbers and columns) and a mode
+from the click count SDL reports: one click selects by character, a
+double click by word, a triple click whole rows. A press and release on
+the same cell is just a click: it clears the selection. Selected text has
+trailing spaces removed per row, rows joined by newlines, and never half
+a wide character ([[file:../lib/guiltty/selection.ex][Guiltty.Selection]]).
+
+* Two clipboards (on X11)
+
+X11 has several *selections*; two matter:
+
+- *PRIMARY*: whatever you last selected. Middle-click pastes it. No copy
+  command: selecting is copying.
+- *CLIPBOARD*: what an explicit "copy" put there. Ctrl+V pastes it in
+  most programs; in a terminal, Ctrl+Shift+V (Ctrl+V is a control
+  character for the shell).
+
+Neither holds data. A selection has an *owner*, the program that claimed
+it; pasting asks the owner to send the text over. So if the owner
+quits, the clipboard is empty. (Clipboard managers exist to work around
+that.) Wayland keeps the same idea, with the data-device protocol for
+CLIPBOARD and the primary-selection protocol for PRIMARY. SDL3 hides both:
+=SDL_SetClipboardText=, =SDL_SetPrimarySelectionText= and their getters.
+
+The renderer owns guiltty's selections, since it's the X11 client, so
+Elixir tells it what to own:
+
+| Action                  | Messages                                                |
+|-------------------------+---------------------------------------------------------|
+| select with the mouse   | Elixir -> renderer CLIPBOARD (target 1, primary)        |
+| Ctrl+Shift+C            | Elixir -> renderer CLIPBOARD (target 0, clipboard)      |
+| Ctrl+Shift+V            | renderer reads CLIPBOARD, sends PASTE                   |
+| middle click            | Elixir -> renderer PASTE_PRIMARY; renderer sends PASTE  |
+
+A paste goes through =Keymap.paste/2= as before: line endings become CR,
+and in bracketed paste mode the text is wrapped (and cleaned of fake
+end markers).
+
+* Loot
+
+- ICCCM, section 2: "Peer-to-Peer Communication by Means of Selections".
+- Wayland: =wl_data_device= and the =primary-selection-unstable-v1= protocol.
+- SDL3 wiki: =SDL_SetClipboardText=, =SDL_SetPrimarySelectionText=.
+- xterm ctlseqs: =CSI 3 J= (erase the scrollback), mouse tracking modes,
+  =alternateScroll=.
+- Erlang: =binary_part/3= and sub-binaries, =:binary.longest_common_suffix/1=.
+
+* Questions
+
+1. Why give scrollback rows numbers that never change?
+2. Why doesn't the alternate screen add to the scrollback?
+3. You're scrolled back 100 rows and 5 new rows scroll off. What's
+   =scroll= now, and why?
+4. What's the difference between PRIMARY and CLIPBOARD?
+5. Why does Elixir own the selection, not the renderer?
+6. Why does sealing 256 rows at a time make guiltty faster?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. So anything that points into the text (a selection, a match, the
+   view) stays on the same text while new output arrives.
+2. Full-screen programs redraw the alternate screen constantly; that's not
+   history, and saving it would bury the real output.
+3. 105: the view moves back by the 5 new rows, so it keeps showing the
+   same text.
+4. PRIMARY is the last selection (middle-click pastes it); CLIPBOARD is
+   what an explicit copy put there (Ctrl+Shift+V pastes it).
+5. Only Elixir has the scrollback and the cluster table; the renderer
+   only mirrors visible cells.
+6. A list prepend per row is nearly free; the map update and the memory
+   allocation happen once per 256 rows instead of once per row.

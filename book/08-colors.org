@@ -60,17 +60,21 @@ background, and the cursor color. Window sends all 259 in the setup message.
 
 * Cells
 
-Each cell in the grid is 10 bytes, and each row is one binary of them:
+Each cell in the grid is 14 bytes, and each row is one binary of them:
 
 #+begin_example
-  +------+-------+--------------+--------------+
-  | char | attrs |   fg (u32)   |   bg (u32)   |
-  +------+-------+--------------+--------------+
-     1      1           4              4         = 10 bytes
+  +--------------+-------+--------------+--------------+
+  | glyph (u32)  | attrs |   fg (u32)   |   bg (u32)   |
+  +--------------+-------+--------------+--------------+
+         4          2           4              4         = 14 bytes
 
   attrs bits: 0x01 bold  0x02 dim  0x04 italic  0x08 underline
               0x10 blink 0x20 inverse 0x40 hidden 0x80 strikethrough
+              0x100 wide 0x200 spacer (chapter 13)
+              0x400 match 0x800 current match (only in what the window shows, chapter 15)
 #+end_example
+
+(Until MVP 5 a cell was 10 bytes: one byte of ASCII and one of attrs.)
 
 The renderer understands the same layout, so a changed row goes into the
 port message *as is*: no conversion in Elixir at all.
@@ -84,7 +88,7 @@ status bar is often drawn by setting a background and erasing the line.
 
 * From cell to pixels
 
-The renderer turns each 10-byte cell into a ready-to-draw 8-byte one
+The renderer turns each 14-byte cell into a ready-to-draw 12-byte one
 ([[file:../c_src/renderer/core/main.c::decode_cell][decode_cell]]):
 
 #+begin_example
@@ -94,6 +98,7 @@ The renderer turns each 10-byte cell into a ready-to-draw 8-byte one
   inverse  ->  swap fg and bg
   dim      ->  fg halfway to bg
   hidden   ->  no glyph
+  match    ->  a dim yellow background; the current match bright yellow
 #+end_example
 
 Bold making colors 0-7 bright is xterm's old default, and still what many

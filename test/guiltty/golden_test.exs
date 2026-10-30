@@ -112,7 +112,8 @@ defmodule Guiltty.GoldenTest do
   defp runs(grid, row) do
     grid.lines
     |> elem(row)
-    |> then(&for(<<_c, attrs, fg::32, bg::32 <- &1>>, do: {attrs, fg, bg}))
+    # Style bits only: whether a cell is half of a wide character shows in the text.
+    |> then(&for(<<_glyph::32, attrs::16, fg::32, bg::32 <- &1>>, do: {attrs &&& 0xFF, fg, bg}))
     |> Enum.with_index()
     |> Enum.chunk_by(fn {style, _col} -> style end)
     |> Enum.map(fn [{style, from} | _] = run -> {style, from, from + length(run) - 1} end)

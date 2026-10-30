@@ -1,0 +1,194 @@
+#+TITLE: Fonts and the atlas: every glyph, from any font
+#+STARTUP: overview
+
+* What changed
+
+Until MVP 5 the renderer drew 95 glyphs, ASCII 32 to 126, all from one
+font, into an atlas built once at startup. Now a cell can hold any
+character or cluster (chapter 13), and no single font has them all:
+Source Code Pro has no kanji, no emoji, no Nerd Font icons.
+
+#+begin_example
+  cell: glyph 0x1F600, wide
+     |
+     v
+  atlas cache: "😀", width 2 ---- seen before? ----> slot 412 (and 413)
+     |  no
+     v
+  fonts.c: which font has U+1F600?   primary (Source Code Pro)? no
+                                     fonts already open?        no
+                                     ask fontconfig ---------> Noto Color Emoji
+     |
+     v
+  HarfBuzz shapes it, FreeType draws it (in color), shrunk to 2 cells
+     |
+     v
+  written into slots 412-413; the backend uploads just that band of rows
+#+end_example
+
+* Font fallback with fontconfig
+
+fontconfig is the Linux font database: it knows every installed font,
+what characters each one covers (its *charset*), and your preferences
+(=monospace= means Source Code Pro on this machine). [[file:../c_src/renderer/core/fonts.c][fonts.c]] asks it two
+kinds of questions:
+
+1. At startup, "the best match for this family name": the primary font.
+   It also sets the cell size, as before: the advance of =M= by
+   ascender + descender.
+2. When a character isn't in any open font: "fonts like this family that
+   have these characters". That's =FcFontSort= with an =FC_CHARSET= in the
+   pattern. Its ranking weighs everything (family, style, coverage), so we
+   still check that a candidate covers all the characters before loading
+   it.
+
+Up to 24 fonts stay open, so each fallback costs one query, ever. A
+character no installed font has goes on a short "missing" list (so we
+don't ask again) and draws as a hollow box, called *tofu*. On this machine,
+kanji are tofu until a CJK font is installed
+(=sudo zypper install noto-sans-cjk-fonts=).
+
+** Emoji: color, and a preference
+
+Should ⚡ be the emoji or a plain symbol from a text font? Unicode says
+some characters are emoji by default, and U+FE0F asks for emoji, U+FE0E
+for text. =wants_color/2= follows that, roughly: VS16, the emoji blocks
+(U+1F000 to U+1FAFF), and the wide symbols around U+2300 to U+2BFF
+prefer a font that has color glyphs (=FC_COLOR= in the query). Noto Color
+Emoji wins those.
+
+Color emoji fonts are odd fonts: Noto Color Emoji's glyphs are PNG
+pictures drawn for one fixed size, 109 pixels per em (=fc-query= says
+=pixelsize: 109=; they live in its CBDT table). FreeType can't scale them:
+the renderer selects that size (=FT_Select_Size=) and FreeType returns
+each glyph, with =FT_LOAD_COLOR=, as a BGRA bitmap with premultiplied
+alpha. That's far bigger than a cell, so it gets shrunk to fit.
+
+* Shaping with HarfBuzz
+
+A cluster like 👍🏽 is two codepoints but one picture: the font has a
+special glyph for "thumbs up, medium skin tone", and its rules (OpenType
+GSUB tables) say when to use it. Applying those rules is *shaping*, and
+HarfBuzz does it: give it UTF-8 and a font, get back glyph ids and
+positions.
+
+#+begin_example
+  "👍🏽" (2 codepoints)  -- hb_shape -->  one glyph: the font's own
+                                       "thumbs up, medium skin tone"
+  "e\u0301"           -- hb_shape -->  two glyphs: e, then the accent,
+                                       offset so it sits over the e
+#+end_example
+
+Every cluster goes through HarfBuzz, even plain letters: one code path,
+and it runs once per distinct glyph, since the atlas caches the result. HarfBuzz reads the font through the FreeType face
+(=hb_ft_font_create_referenced=), so both always agree on the size.
+
+* Drawing a glyph into its cell
+
+=fonts_render= draws the shaped glyphs on a scratch canvas at the font's
+own size, with room around the pen (glyphs reach left of it, or past
+their advance), then places the result in the cell:
+
+- *Fits* (a text font at our size): copied one to one, centered across
+  the cell or two (for the primary font's glyphs that's no shift at all),
+  with the baselines lined up.
+- *Too big* (an emoji bitmap, or a glyph much wider than its cells):
+  shrunk to fit, keeping its shape, centered. Each target pixel is the
+  average of the block of source pixels it covers.
+
+The atlas stores straight-alpha RGBA: text glyphs as white with coverage
+in alpha (the shader tints them with the cell's color), emoji with their
+own colors. A cell gets the =CELL_COLOR_GLYPH= bit so the shader knows
+which.
+
+* The atlas, filled as you go
+
+The atlas ([[file:../c_src/renderer/core/atlas.c][atlas.c]]) is a 2048-pixel-wide RGBA bitmap cut into
+cell-sized *slots* (186 per row at 11 px wide), up to 8,192 of them.
+Slot 0 is always blank.
+
+#+begin_example
+   slot:  0     1     2     3     4     5     6 ...           185
+         +-----+-----+-----+-----+-----+-----+--   ...  --+-----+
+   row 0 |     |  h  |  é  |  l  |  o  |  😀 (two slots) |     |
+         +-----+-----+-----+-----+-----+-----+--   ...  --+-----+
+   row 1 | ...
+#+end_example
+
+A cache maps (cluster text, width) to a slot: an open-addressing hash
+table, kept at most half full. A wide glyph takes two neighboring slots
+in the same row, and its two cells name them: the =wide= cell slot =s=, its
+spacer slot =s + 1=. So the shader still draws one cell per instance and
+knows nothing about wide characters.
+
+When the atlas is full, everything is thrown away: =generation= goes up,
+and every cell on screen is looked up again (=refill_atlas=). The glyphs
+in use come back; the ones that scrolled away don't. It's cheap, and rare:
+8,192 different glyphs is a lot of screen.
+
+** Uploading only what changed
+
+Re-sending 2048x1035 RGBA (8 MB) for each new glyph would be wasteful.
+The atlas tracks the band of pixel rows that changed since the last
+upload (=dirty_top= to =dirty_bottom=); the GL backend sends just that band
+with =glTexSubImage2D=. A new generation (or a new font) uploads the
+whole texture with =glTexImage2D=.
+
+* HiDPI and zoom
+
+A HiDPI screen has more pixels per inch, and the desktop tells programs a
+*content scale* (2.0 is common). SDL3 reports it with
+=SDL_GetWindowDisplayScale=. The font size in your config is in points:
+the renderer opens the font at =size x scale= pixels, and pads the grid by
+=6 x scale=. =SDL_WINDOW_HIGH_PIXEL_DENSITY= asks for a full-resolution
+drawable instead of one that's scaled up blurry.
+
+Two units to keep apart: SDL sizes windows and reports mouse positions
+in *window coordinates*, which on Wayland can be several pixels each
+(=SDL_GetWindowPixelDensity=). The renderer converts mouse positions to
+pixels before working out which cell they're in. When a window moves to a
+screen with another scale (=SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED=), the
+font is opened again.
+
+Zoom (Ctrl+= and Ctrl+-, Ctrl+0 to reset) is the same thing driven from
+Elixir: the Window sends a FONT message with the size plus the zoom
+steps, the renderer builds a new atlas, the cell size changes, and the
+usual resize chain runs (chapter 9).
+
+* Loot
+
+- =fonts-conf(5)=: how fontconfig matches; =fc-match=, =fc-list :charset=3042=
+  to try it by hand.
+- FreeType tutorial, part 1 and 2 (=FT_Load_Glyph=, metrics, bitmaps);
+  =FT_LOAD_COLOR=.
+- HarfBuzz manual, "What is text shaping?" and "Shaping and shape plans".
+- OpenType tables CBDT/CBLC (bitmap color glyphs) and COLR (vector ones).
+- SDL3 wiki: README-highdpi, =SDL_GetWindowDisplayScale=,
+  =SDL_GetWindowPixelDensity=.
+- LearnOpenGL "Text Rendering" (the classic glyph atlas).
+
+* Questions
+
+1. Why check a font's charset after =FcFontSort= already ranked it?
+2. Why does a wide glyph take two neighboring slots instead of one double
+   slot?
+3. What happens when the atlas fills up?
+4. Why is 😀 shrunk, but a letter from the primary font isn't?
+5. On a HiDPI screen with scale 2, what pixel size is a font of size 16?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The sort ranks by everything in the pattern; coverage is one factor
+   among many, not a guarantee.
+2. Each cell names its own slot, so the shader draws one cell per
+   instance as before; the spacer just names the slot after its left
+   half's.
+3. The cache and atlas are reset (a new generation), and every cell on
+   screen is looked up again; the whole texture is uploaded.
+4. The emoji comes from a bitmap font drawn at 109 pixels per em, far
+   bigger than two cells. The primary font is opened at our pixel size, so its glyphs
+   already fit.
+5. 32 pixels.

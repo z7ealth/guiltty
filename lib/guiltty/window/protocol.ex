@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 4
+  @version 5
 
   @hello 1
   @setup 2
@@ -27,6 +27,9 @@ defmodule Guiltty.Window.Protocol do
   @raise 14
   @frame 15
   @tab_click 16
+  @status 17
+  @clipboard 18
+  @paste_primary 19
 
   @max_tab_title 255
 
@@ -37,7 +40,7 @@ defmodule Guiltty.Window.Protocol do
           | {:resize, cols :: pos_integer(), rows :: pos_integer()}
           | {:paste, binary()}
           | {:mouse, :press | :release | :motion | :wheel, 0..3, non_neg_integer(),
-             non_neg_integer(), non_neg_integer()}
+             non_neg_integer(), non_neg_integer(), clicks :: 1..255}
           | {:frame, draw_us :: non_neg_integer()}
           | {:tab_click, index :: non_neg_integer()}
 
@@ -61,15 +64,32 @@ defmodule Guiltty.Window.Protocol do
   end
 
   @doc """
-  A screen update. Rows are sent as the grid stores them: `cols` cells of
-  10 bytes each. The renderer drops updates whose size doesn't match its
-  own (they were sent before a resize reached the screen).
+  A screen update. First the clusters the renderer hasn't seen (u32 id, u8
+  length, UTF-8), then the rows, sent as the grid stores them: `cols`
+  cells of 14 bytes each. The renderer drops updates whose size doesn't
+  match its own (they were sent before a resize reached the screen).
   """
   @spec rows(map()) :: iodata()
-  def rows(%{size: {cols, rows}, rows: lines, cursor: {crow, ccol}, cursor_visible: visible}) do
-    header = <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), length(lines)::16>>
-    [header | Enum.map(lines, fn {index, row} -> [<<index::16>>, row] end)]
+  def rows(%{size: {cols, rows}, rows: lines, cursor: {crow, ccol}, cursor_visible: visible} = u) do
+    clusters = Map.get(u, :clusters, [])
+
+    [
+      <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), length(clusters)::16>>,
+      Enum.map(clusters, fn {id, text} -> [<<id::32, byte_size(text)>>, text] end),
+      <<length(lines)::16>>
+      | Enum.map(lines, fn {index, row} -> [<<index::16>>, row] end)
+    ]
   end
+
+  @doc "A line of status shown at the right of the tab bar (search, scrollback); empty hides it."
+  def status(text), do: <<@status, truncate(text, 255)::binary>>
+
+  @doc "Put text on the clipboard (`:clipboard`) or the primary selection (`:primary`)."
+  def clipboard(target, text),
+    do: <<@clipboard, if(target == :primary, do: 1, else: 0), text::binary>>
+
+  @doc "Ask for the primary selection: the renderer answers with a paste."
+  def paste_primary, do: <<@paste_primary>>
 
   @doc "The window title (UTF-8)."
   @spec title(binary()) :: binary()
@@ -109,9 +129,9 @@ defmodule Guiltty.Window.Protocol do
 
   def decode(<<@paste, text::binary>>), do: {:ok, {:paste, text}}
 
-  def decode(<<@mouse, kind, button, col::16, row::16, mods::16>>)
+  def decode(<<@mouse, kind, button, col::16, row::16, mods::16, clicks>>)
       when is_map_key(@mouse_kinds, kind) and button <= 3,
-      do: {:ok, {:mouse, @mouse_kinds[kind], button, col, row, mods}}
+      do: {:ok, {:mouse, @mouse_kinds[kind], button, col, row, mods, max(clicks, 1)}}
 
   def decode(<<@frame, us::32>>), do: {:ok, {:frame, us}}
   def decode(<<@tab_click, index>>), do: {:ok, {:tab_click, index}}

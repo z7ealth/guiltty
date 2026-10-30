@@ -1,0 +1,246 @@
+#+TITLE: Unicode: bytes, characters, clusters and columns
+#+STARTUP: overview
+
+* Four different things called "a character"
+
+Until MVP 5, guiltty treated one byte as one character as one cell. Real
+text breaks that three times over:
+
+| Layer              | What it is                                  | Example: 🇯🇵            |
+|--------------------+---------------------------------------------+------------------------|
+| bytes              | what the PTY gives us                       | 8 bytes                |
+| codepoints         | what UTF-8 decodes to                       | U+1F1EF U+1F1F5        |
+| grapheme cluster   | what a reader sees as one character         | one flag               |
+| columns            | how many cells it takes on screen           | 2                      |
+
+Each layer has its own chapter-sized trap. This chapter goes through them in
+order, the way the bytes travel.
+
+* UTF-8 at the byte level
+
+UTF-8 encodes a codepoint in 1 to 4 bytes. The first byte says how many:
+
+#+begin_example
+  0xxxxxxx                              1 byte    U+0000 .. U+007F (ASCII)
+  110xxxxx 10xxxxxx                     2 bytes   up to U+07FF     (é, ñ)
+  1110xxxx 10xxxxxx 10xxxxxx            3 bytes   up to U+FFFF     (日, ─)
+  11110xxx 10xxxxxx 10xxxxxx 10xxxxxx   4 bytes   the rest         (😀, 🇯)
+#+end_example
+
+Every byte of a multi-byte character is 0x80 or more, so ASCII bytes
+(and so every control character and escape sequence) can never appear
+inside one. That's what lets the parser keep its state machine unchanged:
+a run of "text bytes" is printable ASCII plus anything >= 0x80.
+
+The start of a real recording ([[file:../test/fixtures/ls_unicode.bytes][ls_unicode.bytes]], =ls= of a folder with
+Japanese and emoji names):
+
+#+begin_example
+  00000000: 5245 4144 4d45 2e6d 6420 2064 6f6e 6ec3  README.md  donn.
+  00000010: a965 732e 6373 7609 e29c 9364 6f6e 6520  .es.csv....done
+  00000020: 20e5 8699 e79c 9f2e 6a70 6720 2020 20f0   .......jpg    .
+  00000030: 9f87 aff0 9f87 b566 6c61 6720 2020 2020  .......flag
+            ^^^^^^^^^^^^^^^^^^^
+            f0 9f 87 af  f0 9f 87 b5 = U+1F1EF U+1F1F5 = 🇯 🇵
+#+end_example
+
+=c3 a9= is é, =e2 9c 93= is ✓, =e5 86 99 e7 9c 9f= is 写真.
+
+** A character cut in half
+
+The PTY doesn't know about characters: a read can end in the middle of
+one. The parser decodes with =:unicode.characters_to_binary/1=, which says
+=:incomplete= when the input stops partway into a character. Those bytes
+wait in the parser's =pending= field and go first next time:
+
+#+begin_example
+  read 1:  61 e6 97        -> {:print, "a"}     pending: <<e6, 97>>
+  read 2:  a5 62           -> {:print, "日b"}   (e6 97 a5 = 日)
+#+end_example
+
+(Real output from iex.) If something else cuts the character short, like
+an escape sequence, it's broken, not incomplete: it prints as U+FFFD, the
+replacement character (�). So does any byte that can't start a character.
+Decoding then goes on after it, so one bad byte costs one �, not the rest
+of the line.
+
+Code: =text/4= in [[file:../lib/guiltty/parser.ex][Guiltty.Parser]].
+
+* Grapheme clusters
+
+Some characters take several codepoints:
+
+| Looks like | Codepoints                         | Why                                 |
+|------------+------------------------------------+-------------------------------------|
+| é          | U+0065 U+0301                      | e + combining acute accent          |
+| 🇯🇵         | U+1F1EF U+1F1F5                    | two regional indicators make a flag |
+| 👍🏽         | U+1F44D U+1F3FD                    | thumbs up + a skin tone modifier    |
+| 👨‍👩‍👧         | 1F468 200D 1F469 200D 1F467        | three emoji joined by ZWJ (U+200D)  |
+| ❤️          | U+2764 U+FE0F                      | heart + "show me as emoji" selector |
+
+(The first é can also be the single codepoint U+00E9. Both are valid; they
+render the same.)
+
+Unicode's rules for where one cluster ends and the next starts are UAX #29.
+Elixir implements them: =String.graphemes("👍🏽🇯🇵é")= is
+=["👍🏽", "🇯🇵", "é"]=. guiltty puts one cluster in one cell (or two, if
+it's wide).
+
+** Clusters arrive in pieces too
+
+The accent can come in the read after its letter; one half of a flag in
+one read and the other half in the next. So when text arrives right after
+the last cluster printed (same row, cursor just past it), the Grid
+segments that cluster and the new text together again. If the old
+cluster changes, it rewrites from the old cluster's cell:
+
+#+begin_example
+  print "e"          [e][ ][ ]          last: {0, 0, "e"}
+  print "́x"    "e" <> "́x" -> ["é", "x"]  -> rewrite from col 0
+                     [é][x][ ]
+#+end_example
+
+Regional indicators show why it has to be *all* the text, not just its
+first grapheme: they pair up counting from the start of the run, so
+=🇯🇯🇯= is a flag and a lone 🇯. A property test feeds random mixes of
+these pieces in random chunks and checks that the screen is always the
+same as for the whole text in one go. It found exactly this bug.
+
+* Columns: agreeing with wcwidth
+
+How wide is a character? Unicode has an opinion (East Asian Width, UAX
+#11), but what matters is what *programs* think, because they lay out
+their output by it. =ls= pads its columns, readline moves the cursor, vim
+draws its screen, all by asking glibc's =wcwidth(3)=. If guiltty draws a
+character one cell wider than =ls= thinks, every column after it is off by
+one.
+
+So guiltty doesn't read the Unicode tables. It asks the same function the
+programs ask: [[file:../c_src/tools/gen_width.c][c_src/tools/gen_width.c]] calls =wcwidth= for every
+codepoint and writes [[file:../lib/guiltty/unicode/width_table.ex][Guiltty.Unicode.WidthTable]] (506 ranges, glibc 2.44).
+=make width-table= rebuilds it after a glibc upgrade.
+
+| Character            | wcwidth |
+|----------------------+---------|
+| a, é (U+00E9), ─, ✓  |       1 |
+| 中, あ, 😀, ⚡        |       2 |
+| U+0301, ZWJ, U+FE0F  |       0 |
+| 🇯 (one half)         |       1 |
+| ❤ (U+2764)           |       1 |
+| a Nerd Font icon     |       1 |
+
+A cluster's width is the sum, as =wcswidth(3)= counts it, capped at 2
+([[file:../lib/guiltty/unicode.ex][Guiltty.Unicode]]). So é is 1+0 = 1 and 🇯🇵 is 1+1 = 2, matching =ls=.
+
+The proof is the recording: in [[file:../test/fixtures/ls_unicode.txt][ls_unicode]], every name in the second row
+starts in the same column as the one above it (0, 11, 24, 31, 43), and a
+test checks exactly that.
+
+** Where they still disagree (the Manus fight)
+
+The cap. 👨‍👩‍👧 is 2+0+2+0+2 = 6 to =wcswidth=, but it's one picture, and
+guiltty gives it 2 cells. A program that lays it out as 6 columns will be
+4 off after it. No answer is right for everyone: newer terminals offer a
+mode (DEC mode 2027, "grapheme cluster width") where programs and
+terminal agree to count clusters, and that's in the devlog's "Later".
+
+The other one is ❤️ (U+2764 U+FE0F): wcwidth says 1, but the selector asks
+for emoji. guiltty follows wcwidth, so it draws a small emoji in one cell.
+
+* The cell, from 10 bytes to 14
+
+#+begin_example
+  <<glyph::32, attrs::16, fg::32, bg::32>>
+
+  glyph   a codepoint (up to 0x10FFFF)
+          or a cluster id (0x110000 and up)
+          or 0, the right half of a wide character
+  attrs   the 8 SGR bits, plus 0x100 wide and 0x200 spacer
+          (0x400 and 0x800 mark search matches, see chapter 15)
+#+end_example
+
+"中x" in a 4-column grid, from iex:
+
+#+begin_example
+  00 00 4e 2d  01 00  00 00 00 00  00 00 00 00    中, wide
+  00 00 00 00  02 00  00 00 00 00  00 00 00 00    spacer
+  00 00 00 78  00 00  00 00 00 00  00 00 00 00    x
+  00 00 00 20  00 00  00 00 00 00  00 00 00 00    space
+#+end_example
+
+A wide character is a pair: the =wide= cell and its =spacer=. Writing,
+inserting or deleting cells can break a pair; the half left over would
+draw half a glyph, so it becomes a blank (=fix_left/2=, =fix_right/3= in
+[[file:../lib/guiltty/grid.ex][Guiltty.Grid]]). A wide character that doesn't fit in the last column wraps
+whole and leaves that column blank, like xterm.
+
+** Cluster ids
+
+A cluster with more than one codepoint gets an id the first time it's
+printed: =0x110000=, =0x110001= and so on, one past the last codepoint.
+The grid keeps =clusters= (id to text) and =cluster_ids= (text back to id).
+Ids never change, and after 65,536 distinct clusters new ones show only
+their first codepoint (a flood of random accents can't eat memory).
+
+The renderer needs the text behind an id, so ROWS messages carry the
+clusters it hasn't seen yet (the Screen tracks the last id it sent). Here's
+a whole ROWS message for "é" (e + U+0301) in a 2x1 grid:
+
+#+begin_example
+  03                   ROWS
+  00 02 00 01          2 cols, 1 row
+  00 00 00 01 01       cursor row 0, col 1, visible
+  00 01                one cluster:
+  00 11 00 00  03 65 cc 81       id 0x110000, 3 bytes: e + U+0301
+  00 01                one row:
+  00 00                row 0
+  00 11 00 00 00 00 ...          cell 0: glyph 0x110000
+  00 00 00 20 00 00 ...          cell 1: a space
+#+end_example
+
+* Line drawing, for real
+
+The DEC Special Graphics set (=ESC ( 0=) maps ASCII letters to box pieces:
+=lqqk= is a top border. Since MVP 2 those became ASCII lookalikes (=+--+=);
+now they're the Unicode pieces (=┌──┐=). The tmux and htop snapshots
+changed accordingly.
+
+* Loot
+
+- =utf-8(7)=, =unicode(7)=.
+- =wcwidth(3)=, =wcswidth(3)=: the width every program uses.
+- UAX #29, "Unicode Text Segmentation": grapheme clusters.
+- UAX #11, "East Asian Width"; UTS #51, "Unicode Emoji" (presentation
+  selectors, ZWJ sequences, flags).
+- Elixir: =String.graphemes/1=, =:unicode.characters_to_binary/1=.
+- Contour's "Unicode Core" spec (DEC mode 2027): how terminals and
+  programs could agree on cluster widths.
+
+* Questions
+
+1. Why can't an escape sequence's bytes appear inside a UTF-8 character?
+2. A read ends with =e6 97=. What does the parser do with them?
+3. Why does guiltty generate its width table from glibc instead of from
+   the Unicode data files?
+4. What's in the cell after "中" and why?
+5. How does the renderer learn what cluster id 0x110003 is?
+6. Why does a split-up 🇯🇯🇯 need the previous cluster *and* all the new
+   text to be segmented together?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Every byte of a multi-byte character is 0x80 or above; escape
+   sequences and controls are below 0x80.
+2. They're the start of a 3-byte character with its last byte missing:
+   they wait in =pending= and go in front of the next read.
+3. Programs lay out text with glibc's =wcwidth=. Agreeing with them is what
+   keeps columns lined up; agreeing with the Unicode files wouldn't help
+   if glibc disagreed.
+4. A spacer (glyph 0, attr 0x200): 中 is wide, so it takes two cells.
+5. The Screen sends its definition (id, length, UTF-8) in the ROWS message
+   that first uses it, or in the first one after the renderer subscribes.
+6. Regional indicators pair from the start of a run. Looking only at the
+   first new grapheme can pair the wrong two.

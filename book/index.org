@@ -17,3 +17,6 @@ the loot (what to read next) and a few questions to check yourself.
 11. [[file:10-testing.org][Testing a terminal with real bytes]]
 12. [[file:11-full-screen.org][Full-screen programs: what vim needs from a terminal]]
 13. [[file:12-beam-advantage.org][The BEAM advantage: tabs, crashes, detaching, live config]]
+14. [[file:13-unicode.org][Unicode: bytes, characters, clusters and columns]]
+15. [[file:14-fonts-and-atlas.org][Fonts and the atlas: every glyph, from any font]]
+16. [[file:15-scrollback-and-selection.org][Scrollback, search and the clipboard]]

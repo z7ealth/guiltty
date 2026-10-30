@@ -92,12 +92,12 @@ Special Graphics: after =ESC ( 0=, =q= draws a horizontal line, =x= a vertical
 one, =l k m j= the corners. =ESC ( B= switches back to ASCII. A terminal can
 hold two sets, G0 and G1, and SO/SI (=0x0E=/=0x0F=) pick between them.
 
-Until guiltty draws Unicode (MVP 5), each line-drawing character becomes
-the closest ASCII one, so boxes still look like boxes:
+Each one becomes its Unicode box piece (until MVP 5 they became ASCII
+lookalikes, =+--+=):
 
 #+begin_example
   bytes:   ESC ( 0  l q q k  ESC ( B
-  draws:            + - - +
+  draws:            ┌ ─ ─ ┐
 #+end_example
 
 * Answering questions

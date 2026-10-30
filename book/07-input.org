@@ -31,8 +31,8 @@ guiltty never draws your keys directly.
 SDL reports keyboard input twice, on purpose:
 
 - *Text input* (=SDL_EVENT_TEXT_INPUT=): the character that key produced,
-  after Shift, the keyboard layout and (from MVP 5) dead keys and input
-  methods. "Shift + 4" arrives as ="$"=. This is what printable keys use.
+  after Shift, the keyboard layout, dead keys and input methods (see
+  "Dead keys and input methods" below). "Shift + 4" arrives as ="$"=. This is what printable keys use.
 - *Key events* (=SDL_EVENT_KEY_DOWN=): which key, plus modifier bits. This
   is the only way to see Enter, Backspace, Ctrl+C and so on, which produce
   no text.
@@ -126,6 +126,46 @@ cell; =Guiltty.Keymap.mouse/2= decides, from the modes, what (if anything)
 the program gets. Without 1006, the old X10 encoding is used, which can't
 go past column 222.
 
+When the program didn't ask, or Shift is held, the mouse is guiltty's:
+the left button selects, the middle one pastes, the wheel scrolls back.
+That's in [[file:15-scrollback-and-selection.org][the scrollback and selection chapter]].
+
+* Dead keys and input methods
+
+With the US-International layout, the =\'= key doesn't type anything by
+itself: it's a *dead key* (=dead_acute=). The next key decides: =e= gives
+é, space gives a plain ='=. Spanish =¿= is AltGr+/ on the same layout, and
+=ñ= is =~= (=dead_tilde=) then =n=.
+
+Who combines them? Not the terminal. On X11 it's the *input method*: here
+=XMODIFIERS=@im=local=, Xlib's built-in one, which follows the compose
+rules for your locale (=/usr/share/X11/locale/en_US.UTF-8/Compose=). For
+Japanese or Chinese it's a bigger program (IBus, Fcitx) with a candidate
+window. On Wayland it's the compositor, through the text-input protocol.
+
+SDL3 talks to all of them once the renderer calls =SDL_StartTextInput=.
+What guiltty sees:
+
+#+begin_example
+  key            SDL events                               guiltty
+  ' (dead)       KEY_DOWN (keycode for '), TEXT_EDITING ""  key: no bytes
+  e              KEY_DOWN e, TEXT_INPUT "é"                 sends é
+#+end_example
+
+The key events still arrive, but =Keymap= maps plain keys to nothing, so
+only the composed text reaches the shell.
+
+While an input method is composing, =SDL_EVENT_TEXT_EDITING= carries the
+unfinished text (the *preedit*). The renderer draws it at the cursor,
+underlined, for as long as it lasts, without touching the grid: it's
+painted over the row for one frame and the row is put back. And it tells
+the input method where the cursor is (=SDL_SetTextInputArea=), so a
+candidate window opens next to it.
+
+Tested for real: XTest key events (the same events a keyboard makes) on
+a private X server with this layout typed =´ e=, =~ n=, AltGr+/ and the
+rest, and bash printed =¿Qué tal, señor?=.
+
 * Ctrl+C is not a signal (yet)
 
 guiltty sends only the byte =0x03=. The *kernel* does the rest: the line
@@ -145,7 +185,12 @@ can act like Alt.
 
 - =termios(3)=: =ICRNL=, =ISIG=, =VINTR=, =VERASE=.
 - =stty -a=: your terminal's settings right now.
-- The SDL3 wiki: =SDL_EVENT_TEXT_INPUT=, =SDL_Keycode=, =SDL_Keymod=.
+- The SDL3 wiki: =SDL_EVENT_TEXT_INPUT=, =SDL_EVENT_TEXT_EDITING=,
+  =SDL_StartTextInput=, =SDL_SetTextInputArea=, =SDL_Keycode=, =SDL_Keymod=.
+- =Compose(5)= (libX11's; not installed here, read it at
+  manpages.opensuse.org): how dead keys and Compose sequences combine. The
+  rules themselves: =/usr/share/X11/locale/en_US.UTF-8/Compose=.
+- =setxkbmap -query=: your layout; =xkeyboard-config(7)= for the variants.
 - =ascii(7)=: the control characters.
 
 * Questions
@@ -154,6 +199,8 @@ can act like Alt.
 2. Why does Ctrl+C stop =sleep 100= but not bash?
 3. Why is Backspace =0x7F=?
 4. What byte does Ctrl+[ produce, and which key does that match?
+5. Who turns =´= then =e= into =é=: the keyboard, the input method, SDL
+   or guiltty?
 
 ** Answers
 :PROPERTIES:
@@ -169,3 +216,6 @@ can act like Alt.
    =erase = ^?=).
 4. =[= is =0x5B=; clearing the top bits gives =0x1B=: Escape. (Input v0
    only maps Ctrl+A..Z, so guiltty doesn't send it yet.)
+5. The input method (XIM here; IBus, Fcitx or the Wayland compositor
+   elsewhere). SDL passes on the result as text input, and guiltty sends
+   that text as is.

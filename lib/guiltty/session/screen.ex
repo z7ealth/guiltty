@@ -16,8 +16,16 @@ defmodule Guiltty.Session.Screen do
   one per chunk.
 
   An update is a map with `:size` (`{cols, rows}`), `:rows` (`[{index, row}]`),
-  `:cursor` (`{row, col}`), `:cursor_visible`, `:title` and `:input` (the
-  modes that change what keys, paste and the mouse send).
+  `:clusters` (`[{id, text}]`, the clusters the viewer hasn't seen yet),
+  `:cursor` (`{row, col}`), `:cursor_visible`, `:title`, `:input` (the
+  modes that change what keys, paste and the mouse send), `:scroll` and
+  `:scrollback` (how far back the view is, and how far it could go).
+
+  ## The view
+
+  The viewer can scroll back, select text and search (see `Guiltty.View`).
+  That state lives here, next to the grid it points into. While the view
+  is scrolled back, new output doesn't move it: it stays on the same text.
 
   Title changes also go to `opts[:owner]` (the tab manager) as
   `{:title, id, title}`.
@@ -25,7 +33,7 @@ defmodule Guiltty.Session.Screen do
 
   use GenServer
 
-  alias Guiltty.{Grid, Session, Terminal}
+  alias Guiltty.{Config, Grid, Search, Selection, Session, Terminal, View}
   alias Guiltty.Session.Pty
 
   def start_link(opts) do
@@ -56,9 +64,41 @@ defmodule Guiltty.Session.Screen do
   @doc "The grid's `{cols, rows}`."
   def size(id), do: GenServer.call(Session.via(id, :screen), :size)
 
+  @doc """
+  Scrolls the view: `{:lines, n}` (positive is back, into the scrollback),
+  `:page_up`, `:page_down`, `:top` or `:bottom` (back to the live screen).
+  """
+  def scroll(id, how), do: GenServer.call(Session.via(id, :screen), {:scroll, how})
+
+  @doc """
+  Mouse selection at a visible `{row, col}`: `{:start, pos, clicks}`
+  (1 = by character, 2 = by word, 3 = by line), `{:extend, pos}`, or
+  `:finish`, which returns the selected text (nil for a plain click, which
+  clears the selection instead).
+  """
+  def select(id, action), do: GenServer.call(Session.via(id, :screen), {:select, action})
+
+  @doc "The selected text, or nil."
+  def selection_text(id), do: GenServer.call(Session.via(id, :screen), :selection_text)
+
+  def clear_selection(id), do: GenServer.call(Session.via(id, :screen), :clear_selection)
+
+  @doc """
+  Searches for `query`: `:start` from the newest output, then `:older` or
+  `:newer` from the current match. Scrolls the view to the match and marks
+  every match in view. Returns `:found` or `:not_found`.
+  """
+  def search(id, query, direction),
+    do: GenServer.call(Session.via(id, :screen), {:search, query, direction})
+
+  def end_search(id), do: GenServer.call(Session.via(id, :screen), :end_search)
+
   @impl true
   def init(opts) do
-    grid = Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24))
+    scrollback = Keyword.get_lazy(opts, :scrollback, fn -> Config.get().scrollback end)
+
+    grid =
+      Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24), scrollback: scrollback)
 
     {:ok,
      %{
@@ -70,13 +110,24 @@ defmodule Guiltty.Session.Screen do
        # whether the viewer was told about changes it hasn't taken yet
        notified: false,
        sent_state: nil,
-       title: ""
+       # cluster ids below this one were sent to the viewer
+       sent_clusters: 0,
+       title: "",
+       scroll: 0,
+       selection: nil,
+       # %{query: binary, match: Search.match() | nil}
+       search: nil,
+       # the last update was decorated (see Guiltty.View): the next plain one
+       # must send every row
+       decorated: false
      }}
   end
 
   @impl true
   def handle_call({:apply, commands}, _from, state) do
-    {:reply, :ok, state |> update_grid(&Terminal.apply(&1, commands)) |> after_change()}
+    history = state.grid.history
+    state = update_grid(state, &Terminal.apply(&1, commands))
+    {:reply, :ok, state |> keep_view(history) |> after_change()}
   end
 
   def handle_call(:dump, _from, state), do: {:reply, Grid.dump(state.grid), state}
@@ -92,6 +143,7 @@ defmodule Guiltty.Session.Screen do
         viewer_ref: Process.monitor(pid),
         grid: Grid.mark_all_dirty(state.grid),
         sent_state: nil,
+        sent_clusters: 0,
         notified: false
     }
 
@@ -106,14 +158,106 @@ defmodule Guiltty.Session.Screen do
   def handle_call({:unsubscribe, _pid}, _from, state), do: {:reply, :ok, state}
 
   def handle_call(:take_update, _from, state) do
-    {rows, grid} = Grid.take_dirty(state.grid)
-    state = %{state | grid: grid, notified: false, sent_state: viewer_state(grid)}
-    {:reply, update(grid, rows), state}
+    decorated = View.decorated?(state.scroll, state.selection, state.search)
+
+    grid =
+      if state.decorated and not decorated, do: Grid.mark_all_dirty(state.grid), else: state.grid
+
+    {rows, grid} = Grid.take_dirty(grid)
+
+    rows =
+      if decorated, do: View.rows(grid, state.scroll, state.selection, state.search), else: rows
+
+    clusters = Grid.clusters_since(grid, state.sent_clusters)
+
+    update = update(grid, rows, clusters, state)
+
+    state = %{
+      state
+      | grid: grid,
+        notified: false,
+        sent_state: viewer_state(state, grid),
+        sent_clusters: grid.next_cluster,
+        decorated: decorated
+    }
+
+    {:reply, update, state}
   end
 
   def handle_call({:resize, cols, rows}, _from, state) do
-    {:reply, :ok, state |> update_grid(&Grid.resize(&1, cols, rows)) |> after_change()}
+    state = %{state | selection: nil} |> update_grid(&Grid.resize(&1, cols, rows))
+    {:reply, :ok, state |> keep_view(state.grid.history) |> after_change()}
   end
+
+  def handle_call({:scroll, how}, _from, state) do
+    page = state.grid.rows - 1
+
+    scroll =
+      case how do
+        {:lines, n} -> state.scroll + n
+        :page_up -> state.scroll + page
+        :page_down -> state.scroll - page
+        :top -> Grid.scrollback_size(state.grid)
+        :bottom -> 0
+      end
+
+    {:reply, :ok, notify(%{state | scroll: View.clamp_scroll(state.grid, scroll)})}
+  end
+
+  def handle_call({:select, {:start, pos, clicks}}, _from, state) do
+    selection = Selection.new(position(state, pos), clicks)
+    {:reply, :ok, notify(%{state | selection: selection})}
+  end
+
+  def handle_call({:select, {:extend, pos}}, _from, %{selection: %Selection{} = sel} = state) do
+    {:reply, :ok, notify(%{state | selection: Selection.extend(sel, position(state, pos))})}
+  end
+
+  # A click that didn't move: no selection, just a click.
+  def handle_call(
+        {:select, :finish},
+        _from,
+        %{selection: %{mode: :char, anchor: p, head: p}} = state
+      ),
+      do: {:reply, nil, notify(%{state | selection: nil})}
+
+  def handle_call({:select, :finish}, _from, %{selection: %Selection{} = sel} = state),
+    do: {:reply, Selection.text(state.grid, sel), state}
+
+  def handle_call({:select, _action}, _from, state), do: {:reply, nil, state}
+
+  def handle_call(:selection_text, _from, %{selection: nil} = state), do: {:reply, nil, state}
+
+  def handle_call(:selection_text, _from, state),
+    do: {:reply, Selection.text(state.grid, state.selection), state}
+
+  def handle_call(:clear_selection, _from, state),
+    do: {:reply, :ok, notify(%{state | selection: nil})}
+
+  def handle_call({:search, query, direction}, _from, state) do
+    from =
+      case {direction, state.search} do
+        {:start, _} -> nil
+        {_, %{match: {n, col, _}}} -> {n, col}
+        _ -> nil
+      end
+
+    direction = if direction == :start, do: :older, else: direction
+
+    case Search.find(state.grid, query, from, direction) do
+      nil ->
+        # Stepping past the last match keeps it marked: there's just no
+        # other one. A new query with no match marks nothing.
+        match = if from, do: state.search.match
+        {:reply, :not_found, notify(%{state | search: %{query: query, match: match}})}
+
+      {n, _c1, _c2} = match ->
+        state = %{state | search: %{query: query, match: match}} |> show_row(n)
+        {:reply, :found, notify(state)}
+    end
+  end
+
+  def handle_call(:end_search, _from, state), do: {:reply, :ok, notify(%{state | search: nil})}
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{viewer_ref: ref} = state) do
@@ -123,6 +267,33 @@ defmodule Guiltty.Session.Screen do
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 
   defp update_grid(state, fun), do: %{state | grid: fun.(state.grid)}
+
+  # Scrolled back, new rows entering the scrollback would move the text up
+  # under the viewer: scroll back as many rows to stay on the same text.
+  defp keep_view(%{scroll: 0} = state, _history), do: state
+
+  defp keep_view(state, history) do
+    scroll = View.clamp_scroll(state.grid, state.scroll + state.grid.history - history)
+    %{state | scroll: scroll}
+  end
+
+  # A visible {row, col} to a position in row numbers (see Guiltty.Grid).
+  defp position(state, {row, col}) do
+    row = min(max(row, 0), state.grid.rows - 1)
+    {View.top(state.grid, state.scroll) + row, min(col, state.grid.cols - 1)}
+  end
+
+  # Scroll so that row number n is in view, near the middle if it wasn't.
+  defp show_row(state, n) do
+    top = View.top(state.grid, state.scroll)
+
+    if n >= top and n < top + state.grid.rows do
+      state
+    else
+      scroll = state.grid.history - (n - div(state.grid.rows, 2))
+      %{state | scroll: View.clamp_scroll(state.grid, scroll)}
+    end
+  end
 
   defp after_change(state), do: state |> answer_queries() |> report_title() |> notify()
 
@@ -144,7 +315,7 @@ defmodule Guiltty.Session.Screen do
   defp notify(%{notified: true} = state), do: state
 
   defp notify(state) do
-    if MapSet.size(state.grid.dirty) > 0 or viewer_state(state.grid) != state.sent_state do
+    if MapSet.size(state.grid.dirty) > 0 or viewer_state(state, state.grid) != state.sent_state do
       send(state.viewer, {:screen_dirty, state.id})
       %{state | notified: true}
     else
@@ -152,16 +323,25 @@ defmodule Guiltty.Session.Screen do
     end
   end
 
-  defp viewer_state(grid), do: {Grid.cursor(grid), grid.cursor_visible, grid.title, grid.input}
+  defp viewer_state(state, grid) do
+    {Grid.cursor(grid), grid.cursor_visible, grid.title, grid.input, grid.alt?, state.scroll,
+     state.selection, state.search, Grid.scrollback_size(grid)}
+  end
 
-  defp update(grid, rows) do
+  defp update(grid, rows, clusters, state) do
+    cursor = View.cursor(grid, state.scroll)
+
     %{
       size: {grid.cols, grid.rows},
       rows: rows,
-      cursor: Grid.cursor(grid),
-      cursor_visible: grid.cursor_visible,
+      clusters: clusters,
+      cursor: cursor || {0, 0},
+      cursor_visible: grid.cursor_visible and cursor != nil,
       title: grid.title,
-      input: grid.input
+      input: grid.input,
+      alt_screen: grid.alt?,
+      scroll: state.scroll,
+      scrollback: Grid.scrollback_size(grid)
     }
   end
 end

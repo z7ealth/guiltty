@@ -1,26 +1,26 @@
-$ echo left pane                        ?$ echo right pane
-left pane                               ?right pane
-$                                       ?$
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ????????????????????????????????????????
-                                        ?$ tput cols; tput lines
-                                        ?39
-                                        ?11
-                                        ?$
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
-                                        ?
+$ echo left pane                        │$ echo right pane
+left pane                               │right pane
+$                                       │$
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        ├───────────────────────────────────────
+                                        │$ tput cols; tput lines
+                                        │39
+                                        │11
+                                        │$
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
+                                        │
 [0] 0:bash*                                            "hs-suse" 18:37 29-Oct-26
 --- cursor 15,43 visible
 --- styles

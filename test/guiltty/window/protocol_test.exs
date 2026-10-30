@@ -17,17 +17,28 @@ defmodule Guiltty.Window.ProtocolTest do
     assert binary_part(colors, 257 * 3, 3) == <<0x1D, 0x1F, 0x21>>
   end
 
-  test "rows carry the size, the cursor and raw grid rows" do
+  test "rows carry the size, the cursor, new clusters and raw grid rows" do
     row = Grid.new(2, 1).lines |> elem(0)
-    update = %{size: {2, 1}, rows: [{0, row}], cursor: {0, 1}, cursor_visible: false}
+
+    update = %{
+      size: {2, 1},
+      rows: [{0, row}],
+      clusters: [{0x110000, "🇯🇵"}],
+      cursor: {0, 1},
+      cursor_visible: false
+    }
+
     bin = IO.iodata_to_binary(Protocol.rows(update))
-    assert <<3, 2::16, 1::16, 0::16, 1::16, 0, 1::16, 0::16, cells::binary>> = bin
+
+    assert <<3, 2::16, 1::16, 0::16, 1::16, 0, 1::16, 0x110000::32, 8, "🇯🇵", 1::16, 0::16,
+             cells::binary>> = bin
+
     assert cells == row
     assert byte_size(cells) == 2 * Grid.cell_size()
   end
 
   test "decodes renderer events" do
-    assert Protocol.decode(<<1, 0, 4, 2, "gl">>) == {:ok, {:hello, 4, "gl"}}
+    assert Protocol.decode(<<1, 0, 5, 2, "gl">>) == {:ok, {:hello, 5, "gl"}}
     assert Protocol.decode(<<15, 1234::32>>) == {:ok, {:frame, 1234}}
     assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
@@ -37,13 +48,13 @@ defmodule Guiltty.Window.ProtocolTest do
     assert {:error, {:bad_message, _}} = Protocol.decode(<<99>>)
     assert Protocol.decode(<<8, "a\nb">>) == {:ok, {:paste, "a\nb"}}
 
-    assert Protocol.decode(<<9, 0, 2, 4::16, 7::16, 0x40::16>>) ==
-             {:ok, {:mouse, :press, 2, 4, 7, 0x40}}
+    assert Protocol.decode(<<9, 0, 2, 4::16, 7::16, 0x40::16, 2>>) ==
+             {:ok, {:mouse, :press, 2, 4, 7, 0x40, 2}}
 
-    assert Protocol.decode(<<9, 3, 1, 0::16, 0::16, 0::16>>) ==
-             {:ok, {:mouse, :wheel, 1, 0, 0, 0}}
+    assert Protocol.decode(<<9, 3, 1, 0::16, 0::16, 0::16, 1>>) ==
+             {:ok, {:mouse, :wheel, 1, 0, 0, 0, 1}}
 
-    assert {:error, {:bad_message, _}} = Protocol.decode(<<9, 7, 0, 0::16, 0::16, 0::16>>)
+    assert {:error, {:bad_message, _}} = Protocol.decode(<<9, 7, 0, 0::16, 0::16, 0::16, 1>>)
   end
 
   test "encodes the title" do

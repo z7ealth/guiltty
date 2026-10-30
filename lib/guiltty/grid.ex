@@ -3,17 +3,41 @@ defmodule Guiltty.Grid do
   The screen as data: rows of cells, a cursor, the current *pen* (the style
   new text is written with), and the terminal's modes.
 
-  A cell is 10 bytes, and a row is one binary of `cols` cells:
+  A cell is 14 bytes, and a row is one binary of `cols` cells:
 
-      <<char::8, attrs::8, fg::32, bg::32>>
+      <<glyph::32, attrs::16, fg::32, bg::32>>
 
-  `attrs` holds bit flags (see the `@bold` etc. below). A color is one of:
+  `glyph` is what the cell shows:
+
+    * a Unicode codepoint (up to `0x10FFFF`), for the usual case;
+    * a *cluster id* (`0x110000` and up) when it takes several codepoints
+      (`e` + a combining accent, a flag, an emoji with a skin tone). The
+      grid's `clusters` map holds the text of each id;
+    * `0` in the right half of a wide character.
+
+  `attrs` holds bit flags (see the `@bold` etc. below). A wide character
+  (CJK, most emoji) takes two cells: the first has the `wide` flag, the
+  second, the *spacer*, has `spacer`. A color is one of:
 
     * `0` - the default foreground or background
     * `0x01_0000NN` - palette index `NN` (0-255)
     * `0x02_RRGGBB` - a 24-bit color
 
   The renderer understands the same layout, so a row goes to it unchanged.
+
+  ## Scrollback
+
+  On the main screen, rows that scroll off the top are kept in
+  `scrollback`, up to `scrollback_max` of them. Every row that ever
+  scrolled off has a number, counting from 0: the scrollback holds rows
+  `scrollback_first` to `history - 1`, and the screen's row `r` is row
+  `history + r`. Those numbers don't change as more output arrives, so a
+  selection or a search match stays on the text it was on.
+
+  New rows collect in `recent` (a list, newest first). Every 256 rows are
+  sealed into a *block*: one binary with the rows end to end, trailing
+  blank cells cut off, and a tuple of where each row starts. A row costs a
+  list prepend; a block, one allocation. Any row is found in O(1).
 
   There are two screens. The *main* one is where the shell runs; full-screen
   programs switch to the *alternate* one and back, which brings the shell's
@@ -27,7 +51,10 @@ defmodule Guiltty.Grid do
 
   import Bitwise
 
-  @cell_size 10
+  alias Guiltty.Unicode
+
+  @cell_size 14
+  @block 256
 
   # attrs bits
   @bold 0x01
@@ -38,8 +65,20 @@ defmodule Guiltty.Grid do
   @inverse 0x20
   @hidden 0x40
   @strike 0x80
+  @wide 0x100
+  @spacer 0x200
+  # Set by Guiltty.View on what it shows, never stored in the grid.
+  @match 0x400
+  @current_match 0x800
 
   @default_color 0
+
+  @first_cluster 0x110000
+  # Past this many distinct clusters, new ones show their first codepoint.
+  @max_clusters 65_536
+  # The renderer keeps cluster text up to this many bytes.
+  @max_cluster_bytes 64
+  @blank <<?\s::32, 0::16, @default_color::32, @default_color::32>>
 
   # Modes that change what the keyboard and mouse send; Window reads them.
   @input_modes %{
@@ -75,7 +114,19 @@ defmodule Guiltty.Grid do
     gl: 0,
     # DECSC state, one per screen
     saved: %{main: nil, alt: nil},
+    # the last cluster printed, {row, col, text}: REP repeats it, and a
+    # combining mark that arrives in the next read joins it
     last_char: nil,
+    # cluster id -> text, and back
+    clusters: %{},
+    cluster_ids: %{},
+    next_cluster: @first_cluster,
+    # block number => {row starts, rows}; block b holds rows b * 256 ..
+    scrollback: %{},
+    recent: [],
+    scrollback_first: 0,
+    history: 0,
+    scrollback_max: 10_000,
     title: "",
     input: @input_modes,
     # bytes to send back to the program (answers to its queries), newest first
@@ -96,6 +147,10 @@ defmodule Guiltty.Grid do
   def attr(:inverse), do: @inverse
   def attr(:hidden), do: @hidden
   def attr(:strike), do: @strike
+  def attr(:wide), do: @wide
+  def attr(:spacer), do: @spacer
+  def attr(:match), do: @match
+  def attr(:current_match), do: @current_match
 
   @spec indexed(0..255) :: color()
   def indexed(n), do: 0x01_000000 ||| n
@@ -105,9 +160,16 @@ defmodule Guiltty.Grid do
 
   def cell_size, do: @cell_size
 
-  @spec new(pos_integer(), pos_integer()) :: t()
-  def new(cols \\ 80, rows \\ 24) do
-    %__MODULE__{cols: cols, rows: rows, bottom: rows - 1, lines: blank_screen(cols, rows)}
+  @doc "A blank grid. Options: `:scrollback` (rows to keep, default 10,000)."
+  @spec new(pos_integer(), pos_integer(), keyword()) :: t()
+  def new(cols \\ 80, rows \\ 24, opts \\ []) do
+    %__MODULE__{
+      cols: cols,
+      rows: rows,
+      bottom: rows - 1,
+      lines: blank_screen(cols, rows),
+      scrollback_max: Keyword.get(opts, :scrollback, 10_000)
+    }
     |> all_dirty()
   end
 
@@ -132,39 +194,236 @@ defmodule Guiltty.Grid do
   def dump(grid) do
     grid.lines
     |> Tuple.to_list()
-    |> Enum.map_join("\n", &(&1 |> line_text() |> String.trim_trailing()))
+    |> Enum.map_join("\n", &(grid |> line_text(&1) |> String.trim_trailing()))
   end
 
-  @doc "The characters of one row."
-  def line_text(line), do: for(<<c, _::binary-size(9) <- line>>, into: "", do: <<c>>)
+  @doc "The text of one row (a wide character's spacer adds nothing)."
+  def line_text(grid, line) do
+    for <<glyph::32, _::binary-size(10) <- line>>, into: "", do: glyph_text(grid, glyph)
+  end
 
-  @doc "The cell at `{row, col}` as `{char, attrs, fg, bg}`."
+  @doc "The text a cell's glyph stands for."
+  def glyph_text(_grid, 0), do: ""
+  def glyph_text(_grid, glyph) when glyph < @first_cluster, do: <<glyph::utf8>>
+  def glyph_text(grid, id), do: Map.get(grid.clusters, id, "\uFFFD")
+
+  @doc "The cell at `{row, col}` as `{glyph, attrs, fg, bg}`."
   def cell(grid, row, col) do
     offset = col * @cell_size
-    <<_::binary-size(^offset), c, attrs, fg::32, bg::32, _::binary>> = elem(grid.lines, row)
-    {c, attrs, fg, bg}
+
+    <<_::binary-size(^offset), g::32, attrs::16, fg::32, bg::32, _::binary>> =
+      elem(grid.lines, row)
+
+    {g, attrs, fg, bg}
+  end
+
+  @doc "Cluster definitions `[{id, text}]` with ids from `from` on (they're numbered in order)."
+  def clusters_since(%{next_cluster: next}, from) when from >= next, do: []
+
+  def clusters_since(grid, from) do
+    for id <- max(from, @first_cluster)..(grid.next_cluster - 1)//1,
+        do: {id, Map.fetch!(grid.clusters, id)}
+  end
+
+  ## Scrollback
+
+  @doc "How many rows the scrollback holds."
+  def scrollback_size(grid), do: grid.history - grid.scrollback_first
+
+  @doc """
+  Row number `n` (see "Scrollback" above), cut or padded to the screen's
+  width, or nil if it's gone or doesn't exist.
+  """
+  def line(grid, n) do
+    cond do
+      n >= grid.history and n < grid.history + grid.rows -> elem(grid.lines, n - grid.history)
+      n >= grid.scrollback_first and n < grid.history -> fit_line(saved_line(grid, n), grid.cols)
+      true -> nil
+    end
   end
 
   ## Text
 
   @doc """
-  Writes printable ASCII at the cursor with the current pen. Wraps at the
-  right edge (unless autowrap is off), shifts the rest of the line right in
-  insert mode, and translates through the DEC line-drawing set if it's
-  active.
+  Writes text at the cursor with the current pen. Wraps at the right edge
+  (unless autowrap is off), shifts the rest of the line right in insert
+  mode, and translates through the DEC line-drawing set if it's active.
+
+  ASCII takes a fast path, one byte per cell. Anything else is split into
+  grapheme clusters, each taking one cell, or two if it's wide.
   """
   def print(grid, <<>>), do: grid
 
   def print(grid, text) do
     text = translate(text, if(grid.gl == 1, do: grid.g1, else: grid.g0))
-    grid |> put_text(text) |> Map.put(:last_char, :binary.last(text))
+
+    if ascii?(text),
+      do: grid |> put_text(text) |> remember_last(binary_part(text, byte_size(text) - 1, 1)),
+      else: put_clusters(grid, text)
   end
 
   @doc "REP: prints the last printed character `n` more times."
   def repeat(%{last_char: nil} = grid, _n), do: grid
 
-  def repeat(grid, n),
-    do: put_text(grid, :binary.copy(<<grid.last_char>>, min(n, grid.cols * grid.rows)))
+  def repeat(grid, n) do
+    {_row, _col, text} = grid.last_char
+    n = min(n, grid.cols * grid.rows)
+
+    if ascii?(text),
+      do: put_text(grid, :binary.copy(text, n)),
+      else: put_graphemes(grid, List.duplicate(text, n))
+  end
+
+  # :binary.match searches in C, much faster than walking the bytes here.
+  # The compiled pattern is cached in persistent_term (it can't be a module
+  # attribute: it holds a reference).
+  defp ascii?(text), do: :binary.match(text, high_bytes()) == :nomatch
+
+  defp high_bytes do
+    with nil <- :persistent_term.get({__MODULE__, :high_bytes}, nil) do
+      pattern = :binary.compile_pattern(for b <- 0x80..0xFF, do: <<b>>)
+      :persistent_term.put({__MODULE__, :high_bytes}, pattern)
+      pattern
+    end
+  end
+
+  # The cluster just printed ends right before the cursor.
+  defp remember_last(grid, text) do
+    col = min(grid.col, grid.cols) - Unicode.width(text)
+    %{grid | last_char: {grid.row, max(col, 0), text}}
+  end
+
+  ## Clusters
+
+  # A cluster can arrive in pieces: `e` in one read, its combining accent
+  # in the next; half a flag, then the other half. So the last cluster
+  # printed is segmented again together with the new text. If that changes
+  # it, the two are printed again from that cluster's cell.
+  #
+  # (Regional indicators pair from the start of a run: 🇯🇯🇯 is a flag and
+  # a lone 🇯. Only segmenting them together gets that right.)
+  defp put_clusters(grid, text) do
+    case continued(grid, text) do
+      {row, col, graphemes} -> put_graphemes(%{grid | row: row, col: col}, graphemes)
+      nil -> put_graphemes(grid, String.graphemes(text))
+    end
+  end
+
+  defp put_graphemes(grid, graphemes) do
+    {grid, units} = intern_units(grid, graphemes)
+    grid |> put_units(units) |> remember_last(List.last(graphemes))
+  end
+
+  defp continued(%{last_char: {row, col, prev}} = grid, text) do
+    width = Unicode.width(prev)
+
+    with true <- grid.row == row and grid.col == col + width,
+         {glyph, _, _, _} when glyph != 0 <- cell(grid, row, col),
+         true <- glyph_text(grid, glyph) == prev,
+         [first | _] = graphemes when first != prev <- String.graphemes(prev <> text) do
+      {row, col, graphemes}
+    else
+      _ -> nil
+    end
+  end
+
+  defp continued(_grid, _text), do: nil
+
+  defp intern_units(grid, graphemes) do
+    Enum.map_reduce(graphemes, grid, fn text, grid ->
+      {glyph, grid} = intern(grid, text)
+      {{glyph, Unicode.width(text)}, grid}
+    end)
+    |> then(fn {units, grid} -> {grid, units} end)
+  end
+
+  # A one-codepoint cluster is its own glyph. Longer ones get an id.
+  defp intern(grid, <<cp::utf8>>), do: {cp, grid}
+
+  defp intern(grid, text) do
+    case grid.cluster_ids do
+      %{^text => id} ->
+        {id, grid}
+
+      _ when map_size(grid.clusters) >= @max_clusters or byte_size(text) > @max_cluster_bytes ->
+        <<cp::utf8, _::binary>> = text
+        {cp, grid}
+
+      _ ->
+        id = grid.next_cluster
+
+        {id,
+         %{
+           grid
+           | clusters: Map.put(grid.clusters, id, text),
+             cluster_ids: Map.put(grid.cluster_ids, text, id),
+             next_cluster: id + 1
+         }}
+    end
+  end
+
+  # Writes {glyph, width} units, as many per row as fit, wrapping between
+  # rows. A wide character that doesn't fit in the last column wraps whole
+  # and leaves that column blank.
+  defp put_units(grid, []), do: grid
+
+  defp put_units(%{col: col, cols: cols, autowrap: true} = grid, units) when col >= cols do
+    grid |> Map.put(:col, 0) |> index() |> put_units(units)
+  end
+
+  defp put_units(%{autowrap: false} = grid, [{_glyph, width} = unit | rest])
+       when grid.col + width > grid.cols do
+    col = max(grid.cols - width, 0)
+
+    grid
+    |> Map.put(:col, col)
+    |> write_units([unit], width)
+    |> Map.put(:col, grid.cols - 1)
+    |> put_units(rest)
+  end
+
+  defp put_units(grid, units) do
+    case fitting(units, grid.cols - grid.col, [], 0) do
+      {[], _width, [{_glyph, 2} | _] = rest} ->
+        # A wide character with one column left: blank it and wrap.
+        grid
+        |> blank_cells(grid.row, grid.col, grid.cols)
+        |> Map.put(:col, grid.cols)
+        |> put_units(rest)
+
+      {chunk, width, rest} ->
+        grid
+        |> then(&if(&1.insert, do: insert_chars(&1, width), else: &1))
+        |> write_units(chunk, width)
+        |> Map.put(:col, grid.col + width)
+        |> put_units(rest)
+    end
+  end
+
+  defp fitting([{_g, w} = unit | rest], room, acc, width) when width + w <= room,
+    do: fitting(rest, room, [unit | acc], width + w)
+
+  defp fitting(rest, _room, acc, width), do: {Enum.reverse(acc), width, rest}
+
+  defp write_units(grid, units, _width) do
+    style = <<grid.fg::32, grid.bg::32>>
+
+    cells =
+      for {glyph, width} <- units, into: <<>> do
+        case width do
+          1 ->
+            <<glyph::32, grid.attrs::16, style::binary>>
+
+          2 ->
+            <<glyph::32, grid.attrs ||| @wide::16, style::binary, 0::32,
+              grid.attrs ||| @spacer::16, style::binary>>
+        end
+      end
+
+    replace_cells(grid, grid.row, grid.col, cells)
+  end
+
+  ## ASCII
 
   defp put_text(grid, <<>>), do: grid
 
@@ -190,48 +449,52 @@ defmodule Guiltty.Grid do
   end
 
   defp write_cells(grid, chunk) do
-    style = <<grid.attrs, grid.fg::32, grid.bg::32>>
-    cells = for <<c <- chunk>>, into: <<>>, do: <<c, style::binary>>
+    style = <<grid.attrs::16, grid.fg::32, grid.bg::32>>
+    cells = for <<c <- chunk>>, into: <<>>, do: <<c::32, style::binary>>
     replace_cells(grid, grid.row, grid.col, cells)
   end
 
-  # DEC Special Graphics, the line-drawing set ncurses selects with ESC ( 0.
-  # Until guiltty draws Unicode (MVP 5), each piece becomes the closest
-  # ASCII character, so boxes still look like boxes.
+  # DEC Special Graphics, the line-drawing set ncurses selects with ESC ( 0:
+  # ASCII letters stand for box pieces. Here they become the Unicode ones.
   @dec_graphics %{
-    ?` => ?+,
-    ?a => ?:,
-    ?f => ?',
-    ?g => ?#,
-    ?h => ?#,
-    ?i => ?#,
-    ?j => ?+,
-    ?k => ?+,
-    ?l => ?+,
-    ?m => ?+,
-    ?n => ?+,
-    ?o => ?-,
-    ?p => ?-,
-    ?q => ?-,
-    ?r => ?-,
-    ?s => ?_,
-    ?t => ?+,
-    ?u => ?+,
-    ?v => ?+,
-    ?w => ?+,
-    ?x => ?|,
-    ?y => ?<,
-    ?z => ?>,
-    ?{ => ?*,
-    ?| => ?!,
-    ?} => ?f,
-    ?~ => ?.
+    ?` => ?◆,
+    ?a => ?▒,
+    ?b => ?␉,
+    ?c => ?␌,
+    ?d => ?␍,
+    ?e => ?␊,
+    ?f => ?°,
+    ?g => ?±,
+    ?h => ?␤,
+    ?i => ?␋,
+    ?j => ?┘,
+    ?k => ?┐,
+    ?l => ?┌,
+    ?m => ?└,
+    ?n => ?┼,
+    ?o => ?⎺,
+    ?p => ?⎻,
+    ?q => ?─,
+    ?r => ?⎼,
+    ?s => ?⎽,
+    ?t => ?├,
+    ?u => ?┤,
+    ?v => ?┴,
+    ?w => ?┬,
+    ?x => ?│,
+    ?y => ?≤,
+    ?z => ?≥,
+    ?{ => ?π,
+    ?| => ?≠,
+    ?} => ?£,
+    ?~ => ?·
   }
 
   defp translate(text, :ascii), do: text
 
-  defp translate(text, :dec_graphics),
-    do: for(<<c <- text>>, into: "", do: <<Map.get(@dec_graphics, c, c)>>)
+  defp translate(text, :dec_graphics) do
+    for <<c::utf8 <- text>>, into: "", do: <<Map.get(@dec_graphics, c, c)::utf8>>
+  end
 
   def designate(grid, :g0, set), do: %{grid | g0: set}
   def designate(grid, :g1, set), do: %{grid | g1: set}
@@ -359,12 +622,28 @@ defmodule Guiltty.Grid do
   defp in_region?(grid), do: grid.row >= grid.top and grid.row <= grid.bottom
 
   # Moves rows from..to by n (positive = down), filling with blank rows.
+  # Rows pushed off the top of the whole main screen go to the scrollback.
+  #
+  # The usual case, a line feed at the bottom of the whole screen, is one
+  # row up: tuple operations, without going through a list.
+  defp shift_rows(%{rows: rows} = grid, 0, to, -1) when to == rows - 1 do
+    grid = if grid.alt?, do: grid, else: save_lines(grid, [elem(grid.lines, 0)])
+    blank = blank_line(grid.cols, grid.bg)
+    lines = grid.lines |> Tuple.delete_at(0) |> Tuple.insert_at(rows - 1, blank)
+    %{grid | lines: lines} |> all_dirty()
+  end
+
   defp shift_rows(grid, from, to, n) do
     size = to - from + 1
     n = clamp(n, -size, size)
     blank = blank_line(grid.cols, grid.bg)
     {before, rest} = grid.lines |> Tuple.to_list() |> Enum.split(from)
     {region, after_} = Enum.split(rest, size)
+
+    grid =
+      if n < 0 and from == 0 and to == grid.rows - 1 and not grid.alt?,
+        do: save_lines(grid, Enum.take(region, -n)),
+        else: grid
 
     region =
       if n >= 0,
@@ -373,6 +652,64 @@ defmodule Guiltty.Grid do
 
     lines = List.to_tuple(before ++ region ++ after_)
     %{grid | lines: lines, dirty: MapSet.union(grid.dirty, MapSet.new(from..to))}
+  end
+
+  defp save_lines(%{scrollback_max: 0} = grid, _lines), do: grid
+
+  defp save_lines(grid, lines) do
+    grid = Enum.reduce(lines, grid, &save_line(&2, &1))
+    first = max(grid.scrollback_first, grid.history - grid.scrollback_max)
+    # Drop whole blocks once all their rows are older than the first kept.
+    gone = div(first, @block) - 1
+
+    blocks =
+      Enum.reduce(
+        div(grid.scrollback_first, @block)..gone//1,
+        grid.scrollback,
+        &Map.delete(&2, &1)
+      )
+
+    %{grid | scrollback: blocks, scrollback_first: first}
+  end
+
+  defp save_line(grid, line) do
+    grid = %{grid | recent: [line | grid.recent], history: grid.history + 1}
+    if rem(grid.history, @block) == 0, do: seal(grid), else: grid
+  end
+
+  # The last 256 rows become one block.
+  defp seal(grid) do
+    longest = grid.recent |> Enum.map(&byte_size/1) |> Enum.max()
+    blanks = :binary.copy(@blank, div(longest, @cell_size))
+    rows = grid.recent |> Enum.reverse() |> Enum.map(&trim_line(&1, blanks))
+    starts = rows |> Enum.scan(0, &(byte_size(&1) + &2)) |> then(&[0 | &1]) |> List.to_tuple()
+    block = div(grid.history - 1, @block)
+
+    %{
+      grid
+      | scrollback: Map.put(grid.scrollback, block, {starts, IO.iodata_to_binary(rows)}),
+        recent: []
+    }
+  end
+
+  # A saved row, as stored (maybe shorter than the screen).
+  defp saved_line(grid, n) do
+    if n >= grid.history - length(grid.recent) do
+      Enum.at(grid.recent, grid.history - 1 - n)
+    else
+      {starts, rows} = Map.fetch!(grid.scrollback, div(n, @block))
+      i = rem(n, @block)
+      binary_part(rows, elem(starts, i), elem(starts, i + 1) - elem(starts, i))
+    end
+  end
+
+  # Most rows are short: keep them without their trailing blank cells.
+  # `blanks` is a row of blank cells at least as long as `line`.
+  defp trim_line(line, blanks) do
+    blanks = binary_part(blanks, 0, byte_size(line))
+    # Whole cells only: the common suffix may end partway into a cell.
+    blank_bytes = div(:binary.longest_common_suffix([line, blanks]), @cell_size) * @cell_size
+    binary_part(line, 0, byte_size(line) - blank_bytes)
   end
 
   ## Characters in a line
@@ -401,7 +738,7 @@ defmodule Guiltty.Grid do
   # Erased cells take the current background color ("back color erase", the
   # `bce` capability in xterm-256color's terminfo entry), with no attributes.
 
-  @doc "ED: 0 = cursor to end, 1 = start to cursor, 2 = everything."
+  @doc "ED: 0 = cursor to end, 1 = start to cursor, 2 = the screen, 3 = the scrollback."
   def erase_display(grid, 0) do
     grid = erase_line(grid, 0)
     Enum.reduce((grid.row + 1)..(grid.rows - 1)//1, grid, &blank_row(&2, &1))
@@ -413,6 +750,11 @@ defmodule Guiltty.Grid do
   end
 
   def erase_display(grid, 2), do: Enum.reduce(0..(grid.rows - 1), grid, &blank_row(&2, &1))
+
+  # 3: the scrollback (what `clear` sends after erasing the screen).
+  def erase_display(grid, 3),
+    do: %{grid | scrollback: %{}, recent: [], scrollback_first: grid.history}
+
   def erase_display(grid, _mode), do: grid
 
   @doc "EL: 0 = cursor to end of line, 1 = start to cursor, 2 = whole line."
@@ -431,7 +773,7 @@ defmodule Guiltty.Grid do
 
   @doc "DECALN: fills the screen with E (used by vttest to check alignment)."
   def fill_with_e(grid) do
-    line = :binary.copy(<<?E, 0, 0::32, 0::32>>, grid.cols)
+    line = :binary.copy(<<?E::32, 0::16, 0::32, 0::32>>, grid.cols)
 
     %{
       grid
@@ -484,8 +826,17 @@ defmodule Guiltty.Grid do
     %{grid | other_lines: grid.lines, lines: grid.other_lines, alt?: false} |> all_dirty()
   end
 
-  @doc "RIS: everything back to how a new grid starts."
-  def reset(grid), do: new(grid.cols, grid.rows)
+  @doc "RIS: everything back to how a new grid starts, except the scrollback."
+  def reset(grid) do
+    keep =
+      Map.take(
+        grid,
+        [:scrollback, :recent, :scrollback_first, :history, :scrollback_max] ++
+          [:clusters, :cluster_ids, :next_cluster]
+      )
+
+    grid.cols |> new(grid.rows) |> Map.merge(keep)
+  end
 
   @doc "DECSTR: resets modes, the pen and the region, but keeps the screen."
   def soft_reset(grid) do
@@ -550,13 +901,13 @@ defmodule Guiltty.Grid do
     have = div(byte_size(line), @cell_size)
 
     if have >= cols,
-      do: binary_part(line, 0, cols * @cell_size),
+      do: line |> binary_part(0, cols * @cell_size) |> fix_right(cols, cols),
       else: line <> blank_line(cols - have, @default_color)
   end
 
   defp blank_screen(cols, rows), do: Tuple.duplicate(blank_line(cols, @default_color), rows)
   defp blank_line(n, bg), do: :binary.copy(blank_cell(bg), n)
-  defp blank_cell(bg), do: <<?\s, 0, @default_color::32, bg::32>>
+  defp blank_cell(bg), do: <<?\s::32, 0::16, @default_color::32, bg::32>>
 
   defp blank_row(grid, row), do: blank_cells(grid, row, 0, grid.cols)
 
@@ -571,8 +922,59 @@ defmodule Guiltty.Grid do
     start = col * @cell_size
     len = byte_size(cells)
     <<before::binary-size(^start), _::binary-size(^len), after_::binary>> = line
-    line = <<before::binary, cells::binary, after_::binary>>
+
+    line =
+      <<before::binary, cells::binary, after_::binary>>
+      |> fix_left(col)
+      |> fix_right(col + div(len, @cell_size), grid.cols)
+
     %{grid | lines: put_elem(grid.lines, row, line), dirty: MapSet.put(grid.dirty, row)}
+  end
+
+  ## Wide characters cut in half
+  #
+  # A wide character is a pair: a `wide` cell and its `spacer`. Overwriting,
+  # inserting or deleting cells can split a pair at the edge of the cells
+  # that changed. The half left behind would draw half a glyph, so it
+  # becomes a blank. Only the two edges need checking.
+
+  defp fix_left(line, 0), do: if(spacer?(line, 0), do: blank_at(line, 0), else: line)
+
+  defp fix_left(line, col) do
+    cond do
+      spacer?(line, col) and not wide?(line, col - 1) -> blank_at(line, col)
+      not spacer?(line, col) and wide?(line, col - 1) -> blank_at(line, col - 1)
+      true -> line
+    end
+  end
+
+  defp fix_right(line, col, cols) when col >= cols,
+    do: if(wide?(line, cols - 1), do: blank_at(line, cols - 1), else: line)
+
+  defp fix_right(line, col, _cols) do
+    cond do
+      spacer?(line, col) and not wide?(line, col - 1) -> blank_at(line, col)
+      wide?(line, col - 1) and not spacer?(line, col) -> blank_at(line, col - 1)
+      true -> line
+    end
+  end
+
+  defp wide?(line, col), do: (attrs_at(line, col) &&& @wide) != 0
+  defp spacer?(line, col), do: (attrs_at(line, col) &&& @spacer) != 0
+
+  defp attrs_at(line, col) do
+    offset = col * @cell_size + 4
+
+    if offset < byte_size(line),
+      do: :binary.decode_unsigned(binary_part(line, offset, 2)),
+      else: 0
+  end
+
+  # Keeps the cell's background, so a colored line stays colored.
+  defp blank_at(line, col) do
+    offset = col * @cell_size
+    <<before::binary-size(^offset), _::binary-size(10), bg::32, after_::binary>> = line
+    <<before::binary, blank_cell(bg)::binary, after_::binary>>
   end
 
   defp all_dirty(grid), do: %{grid | dirty: MapSet.new(0..(grid.rows - 1))}

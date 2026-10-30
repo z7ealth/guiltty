@@ -7,7 +7,7 @@
 |  27 files changed, 2283 insertions(+), 9 deletions(-)
 |
 * commit dbe6d90321ddacd0e3d39ad94b42d37808c1fca0
-  Author: H?ctor Alonso Salinas Garc?a <ha_sg@outlook.com>
+  Author: Héctor Alonso Salinas García <ha_sg@outlook.com>
   Date:   Tue Oct 27 12:30:16 2026 -0600
 
       First bonfire lit

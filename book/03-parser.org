@@ -21,7 +21,7 @@ guiltty learns a new sequence.
 | =ESC M=, =ESC ( B=          | ={:esc, "", ?M}=, ={:esc, "(", ?B}=  |
 | =ESC ] 0 ; title BEL=       | ={:osc, "0;title"}=                  |
 | =ESC P ... ESC \=           | (dropped: DCS)                       |
-| a UTF-8 character           | ={:print, "?"}= until MVP 5          |
+| UTF-8 text                  | ={:print, "señor 日本"}= (chapter 13) |
 
 * The anatomy of a CSI sequence
 

@@ -4,16 +4,16 @@
 * The grid
 
 [[file:../lib/guiltty/grid.ex][Guiltty.Grid]] is the screen as data: rows of cells, a cursor, and the
-*pen* (the style new text is written with). A cell is 10 bytes (character,
-attributes, foreground, background; see [[file:08-colors.org][the colors chapter]]), and each
-row is one binary of =cols= cells.
+*pen* (the style new text is written with). A cell is 14 bytes (glyph,
+attributes, foreground, background; see [[file:08-colors.org][the colors chapter]] and
+[[file:13-unicode.org][the Unicode chapter]]), and each row is one binary of =cols= cells.
 
 #+begin_example
   lines (a tuple of rows)                         cursor     pen
   0  [$][ ][e][c][h][o][ ][h][i] ... [ ]          row 2      attrs 0
   1  [h][i][ ][ ][ ][ ][ ][ ][ ] ... [ ]          col 2      fg default
   2  [$][ ][ ][ ][ ][ ][ ][ ][ ] ... [ ]                     bg default
-      \__ each [x] is <<char, attrs, fg::32, bg::32>>, 10 bytes
+      \__ each [x] is <<glyph::32, attrs::16, fg::32, bg::32>>, 14 bytes
 #+end_example
 
 A row being a plain binary is handy: it's already exactly what the renderer

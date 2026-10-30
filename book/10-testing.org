@@ -33,8 +33,8 @@ first. Lessons learned while recording:
 - openSUSE's =man ls= first asks which =ls= you mean (=ls(1)= or =ls(1p)=):
   use =man 1 ls=.
 - =/etc/services= moved to =/usr/etc/services= on openSUSE.
-- =LC_ALL=C= keeps output ASCII until MVP 5 (git's author names are still
-  UTF-8, and show as =?=).
+- The recorder runs programs with =LC_ALL=C.UTF-8=. Fixtures from before
+  MVP 5 were recorded with =LC_ALL=C=, which kept them mostly ASCII.
 
 * Golden snapshots
 
@@ -70,8 +70,8 @@ A snapshot only proves guiltty does what it did yesterday. To check it's
 80x24 screen, then compare the text, the cursor, bold, underline, inverse
 and both colors. All 13 fixtures matched. The two differences found were
 representation only (pyte names =31= "red" but writes =38;5;1= as a hex
-value; guiltty stores both as palette 1), and UTF-8 (pyte decodes it,
-guiltty shows =?= until MVP 5).
+value; guiltty stores both as palette 1), and UTF-8 (pyte decoded it;
+guiltty showed =?= before MVP 5).
 
 * Full-screen programs (MVP 3)
 
@@ -111,9 +111,9 @@ reference than pyte for full-screen programs:
 #+end_example
 
 Then guiltty renders =htop.bytes= and the two screens are compared row by
-row, plus the cursor. guiltty's =?= (no UTF-8 until MVP 5) counts as
-matching any non-ASCII character, and its ASCII line-drawing lookalikes
-as matching the box characters tmux shows. htop, vim, less, and tmux
+row, plus the cursor. (Before MVP 5, guiltty's =?= for non-ASCII and its
+ASCII line-drawing lookalikes counted as matching; now the snapshots have
+the real characters.) htop, vim, less, and tmux
 itself (one tmux running inside another) all match exactly. The htop and
 tmux recordings are fixtures now.
 

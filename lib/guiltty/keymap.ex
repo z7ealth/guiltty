@@ -163,8 +163,8 @@ defmodule Guiltty.Keymap do
 
   @doc """
   Parses a key name like `"ctrl+shift+t"` into `{keycode, modifiers}`,
-  where modifiers is a set of `:ctrl`, `:shift` and `:alt`. Single letters
-  and digits are their own keycode.
+  where modifiers is a set of `:ctrl`, `:shift` and `:alt`. Single letters,
+  digits and punctuation (`"ctrl+="`) are their own keycode.
   """
   @spec parse_key(binary()) :: {:ok, {non_neg_integer(), MapSet.t()}} | :error
   def parse_key(name) do
@@ -178,8 +178,16 @@ defmodule Guiltty.Keymap do
     end
   end
 
-  defp keycode(<<c>>) when c in ?a..?z or c in ?0..?9, do: {:ok, c}
+  # Letters, digits and punctuation are their own SDL keycode (the
+  # unshifted key: "ctrl+shift+=" is the key that has + on it).
+  defp keycode(<<c>>) when c in ?!..?~ and c not in ?A..?Z, do: {:ok, c}
   defp keycode(name), do: Map.fetch(@key_names, name)
+
+  @doc "The SDL keycode of a named key (`:up`, `:enter`, `:escape`...)."
+  def key(name), do: Map.fetch!(@key_names, Atom.to_string(name))
+
+  @doc "Whether Shift is in an SDL modifier set."
+  def shift?(mods), do: (mods &&& @kmod_shift) != 0
 
   @doc "Whether a key event matches a parsed binding."
   def matches?({:key, code, mods}, {code, wanted}), do: modifier_set(mods) == wanted
@@ -213,7 +221,7 @@ defmodule Guiltty.Keymap do
 
   @doc """
   What to send for a mouse event, or nil when the program didn't ask for
-  it. `event` is `{:mouse, kind, button, col, row, mods}`, with `kind` one
+  it. `event` is `{:mouse, kind, button, col, row, mods, clicks}`, with `kind` one
   of `:press`, `:release`, `:motion`, `:wheel`, `button` 0-2 (left, middle,
   right; 3 = none held) or for the wheel 0 (up) and 1 (down), and 0-based
   cell coordinates.
@@ -223,7 +231,7 @@ defmodule Guiltty.Keymap do
   `CSI < b ; x ; y M` or `m` on release) or else the original X10 one.
   """
   @spec mouse(tuple(), map()) :: binary() | nil
-  def mouse({:mouse, kind, button, col, row, mods}, input) do
+  def mouse({:mouse, kind, button, col, row, mods, _clicks}, input) do
     if reported?(kind, button, input.mouse) do
       code = button_code(kind, button) ||| mouse_mods(mods)
       encode_mouse(code, kind, col, row, input.mouse_sgr)

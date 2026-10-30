@@ -292,3 +292,63 @@ flashes on any parser restart.
 **Not verified by me.** `kill -9` on the renderer: the safety checks in
 my environment didn't allow it this time. It worked in MVP 1, and the new
 Window takes the tabs back through the same path as reattaching.
+
+## 2026-10-29 — MVP 5: Daily driver
+
+_Draft: agent, awaiting user_
+
+**Tried.** Unicode from end to end. The parser decodes UTF-8 and keeps a
+character cut in half by a read until the next one. The grid splits text
+into grapheme clusters, one per cell, two for wide ones (a cell grew from
+10 to 14 bytes: a 32-bit glyph, 16 bits of attributes). Clusters with
+several codepoints get ids, and ROWS messages carry their text to the
+renderer. Widths come from glibc's own `wcwidth`, baked into a table by a
+small C program, so guiltty agrees with `ls` and readline. The renderer
+learned fallback fonts (fontconfig), shaping (HarfBuzz), color emoji, and
+an atlas that fills as glyphs appear. On top of that: 10,000 rows of
+scrollback, search, mouse selection with the X11 PRIMARY and CLIPBOARD,
+dead keys and input-method preedit, zoom and HiDPI. Protocol version 5.
+
+**Broke.**
+- The first scrollback was a map from row number to row. On a flood of
+  short lines it halved the speed. Profiling showed one map update and one
+  allocation per line; now rows collect in a list and every 256 become
+  one binary. Now 6.6 MB/s with scrollback; MVP 4's grid did 7.0 MB/s
+  without any.
+- The property test (random emoji, accents and flag halves, cut at random
+  places) found that a flag split across reads paired the wrong regional
+  indicators. The previous cluster is now segmented again together with
+  all the new text, not just its first grapheme.
+- A race: scroll back with the wheel, type at once, and the view stayed
+  back, because the Window learns the scroll position only from the next
+  update. It now also remembers that it moved the view itself.
+- Several of my tests were wrong, not the code: `"é"` in source is the
+  single codepoint U+00E9, not a cluster; "hello world" wraps at 10
+  columns.
+
+**Clicked.** A real `ls` recording of a folder named in Japanese, emoji,
+flags and combining accents lines up column for column. On a private X
+server with the US-International layout, real key events typed
+`echo ¿Qué tal, señor?` with dead keys and bash printed it back. In the
+same session, `seq 1 12000` was searched for `5000` almost 7,000 rows
+back. A drag selection was copied with Ctrl+Shift+C and pasted back with
+Ctrl+Shift+V, and a middle click pasted the PRIMARY selection. The
+renderer runs clean under AddressSanitizer with leak checks on.
+
+**Not verified.** A real HiDPI screen (Xvfb with SDL's scale override
+doubled the font, as it should) and a CJK input method with a candidate
+window (no IBus or Fcitx here). Kanji show as tofu until
+`noto-sans-cjk-fonts` is installed. The week as your only terminal is
+yours.
+
+### Later
+
+- Width of ZWJ sequences: wcswidth says 6 for 👨‍👩‍👧, guiltty draws 2.
+  DEC mode 2027 (grapheme cluster width) would let programs agree.
+- Reflow on resize, and joining wrapped rows when copying (selection puts
+  a newline at every row end).
+- OSC 52 (programs setting the clipboard), OSC 8 hyperlinks, URL detection
+  (the MVP's stretch goal).
+- Real bold and italic faces instead of the one-pixel smear.
+- Box-drawing characters drawn by guiltty instead of the font, so lines
+  meet without gaps.

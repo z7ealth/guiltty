@@ -113,7 +113,8 @@ guiltty/
 ├── c_src/
 │   ├── pty_nif.c            # openpty, spawn, enif_select
 │   └── renderer/
-│       ├── core/            # port protocol, SDL3 window and input, FreeType atlas
+│       ├── core/            # port protocol, SDL3 window and input, glyph atlas,
+│       │                    # fonts (fontconfig fallback, HarfBuzz, FreeType)
 │       ├── gl/              # OpenGL 3.3 core backend (MVP 1)
 │       └── vk/              # Vulkan backend (side quest)
 ├── priv/                    # built binaries: guiltty_gl, later guiltty_vk
@@ -207,6 +208,7 @@ mix guiltty                 # dev: open a window; closing it ends everything
 _build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel/env.sh.eex)
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
+make width-table            # regenerate the Unicode width table from glibc's wcwidth
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir
 ```
 
@@ -219,7 +221,12 @@ under the sanitizers.
 The user's machine is openSUSE (packages via `zypper`), with:
 
 - GCC 16, Elixir 1.20 on OTP 29 (via asdf)
-- FreeType, fontconfig, OpenGL and EGL development files present
+- FreeType, fontconfig, HarfBuzz, OpenGL and EGL development files present
+- Fonts: Source Code Pro (monospace), JetBrainsMono Nerd Font, Noto Color
+  Emoji. No CJK font yet (`noto-sans-cjk-fonts`), so kanji draw as tofu.
+- Keyboard: US-International (dead keys), X11 input method `@im=local`
+- Xvfb and Xephyr are installed: use a private display (`Xvfb :77`) for
+  tests that need real X key or mouse events, never the user's display
 - SDL3 3.4, an X11 session (`DISPLAY=:0`)
 - **Not installed yet:** Valgrind, Clang. Ask before installing system
   packages and give the exact `zypper` command.

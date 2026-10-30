@@ -176,7 +176,7 @@ defmodule Guiltty.WindowTest do
     # `cat -v` shows it.
     Session.write(id, "printf '\\e[?1000h\\e[?1006h'; cat -v\r")
     assert eventually(fn -> match?(%{mouse: 1000}, :sys.get_state(window).input) end)
-    renderer(window, <<9, 0, 0, 4::16, 2::16, 0::16>>)
+    renderer(window, <<9, 0, 0, 4::16, 2::16, 0::16, 1>>)
     Session.write(id, "\r\x04")
     assert eventually(fn -> Session.dump(id) =~ "^[[<0;5;3M" end)
   end
@@ -207,7 +207,7 @@ defmodule Guiltty.WindowTest do
     # half of one.
     Port.command(
       port(window),
-      <<3, 80::16, 24::16, 0::16, 0::16, 1, 5::16, 0::16, 0::size(400)-unit(8)>>
+      <<3, 80::16, 24::16, 0::16, 0::16, 1, 0::16, 5::16, 0::16, 0::size(560)-unit(8)>>
     )
 
     # The renderer exits with status 2 (protocol error), not a sanitizer crash.
@@ -220,7 +220,100 @@ defmodule Guiltty.WindowTest do
     Session.write(id, "seq 1 20000\r")
     assert eventually(fn -> Session.dump(id) =~ ~r/^20000$/m end)
     assert eventually(fn -> not :sys.get_state(window).awaiting_frame end)
-    assert Grid.cell_size() == 10
+    assert Grid.cell_size() == 14
+  end
+
+  defp screen_state(id), do: :sys.get_state(GenServer.whereis(Session.via(id, :screen)))
+
+  defp mouse(window, kind, button, col, row, clicks \\ 1),
+    do: renderer(window, <<9, kind, button, col::16, row::16, 0::16, clicks>>)
+
+  test "Unicode reaches the renderer: clusters and wide characters", %{id: id, window: window} do
+    Session.write(
+      id,
+      "printf '\\xe6\\x97\\xa5\\xe6\\x9c\\xac e\\xcc\\x81 \\xf0\\x9f\\x87\\xaf\\xf0\\x9f\\x87\\xb5 ok\\n'\r"
+    )
+
+    assert eventually(fn -> Session.dump(id) =~ ~r/^日本 e\x{301} 🇯🇵 ok$/mu end)
+    assert eventually(fn -> not :sys.get_state(window).awaiting_frame end)
+    assert screen_state(id).sent_clusters > 0x110000
+    assert Port.info(port(window))
+  end
+
+  test "the wheel scrolls back when the program doesn't want the mouse", %{id: id, window: window} do
+    Session.write(id, "seq 1 100\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^100$/m end)
+    mouse(window, 3, 0, 0, 0)
+    assert eventually(fn -> screen_state(id).scroll == 3 end)
+    renderer(window, <<6, 80::16, 24::16>>)
+
+    # Shift+PgUp goes a page further; typing brings the view back.
+    key(window, 0x4000004B, @shift)
+    assert eventually(fn -> screen_state(id).scroll == 26 end)
+    renderer(window, <<4, "x">>)
+    assert eventually(fn -> screen_state(id).scroll == 0 end)
+  end
+
+  test "dragging selects text; a plain click clears it", %{id: id, window: window} do
+    Session.write(id, "clear; echo select-me\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^select-me$/m end)
+
+    {row, _} =
+      Enum.find(Enum.with_index(String.split(Session.dump(id), "\n")), fn {l, _} ->
+        l == "select-me"
+      end)
+      |> then(fn {_l, i} -> {i, 0} end)
+
+    mouse(window, 0, 0, 0, row)
+    mouse(window, 2, 0, 5, row)
+    mouse(window, 1, 0, 5, row)
+    assert eventually(fn -> Screen.selection_text(id) == "select" end)
+
+    # A double click takes the word.
+    mouse(window, 0, 0, 2, row, 2)
+    mouse(window, 1, 0, 2, row, 2)
+    assert eventually(fn -> Screen.selection_text(id) == "select-me" end)
+
+    mouse(window, 0, 0, 1, row)
+    mouse(window, 1, 0, 1, row)
+    assert eventually(fn -> Screen.selection_text(id) == nil end)
+  end
+
+  test "search: Ctrl+Shift+F, type, Enter for older, Escape to end", %{id: id, window: window} do
+    Session.write(id, "echo needle-1; seq 1 60; echo needle-2\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^needle-2$/m end)
+
+    key(window, ?f, @ctrl ||| @shift)
+    renderer(window, <<4, "needle">>)
+
+    assert eventually(fn ->
+             match?(%{search: %{query: "needle", match: {_, 0, 5}}}, screen_state(id))
+           end)
+
+    {n, 0, 5} = screen_state(id).search.match
+
+    # Typing goes to the query, not the shell.
+    refute Session.dump(id) =~ "$ needle"
+
+    key(window, 0x0D, 0)
+
+    assert eventually(fn ->
+             match?({older, 0, 5} when older < n, screen_state(id).search.match)
+           end)
+
+    assert screen_state(id).scroll > 0
+
+    key(window, 0x1B, 0)
+    assert eventually(fn -> screen_state(id).search == nil end)
+    assert :sys.get_state(window).search == nil
+  end
+
+  test "Ctrl+= zooms in: bigger cells, fewer of them", %{window: window} do
+    key(window, ?=, @ctrl)
+    assert eventually(fn -> :sys.get_state(window).zoom == 1 end)
+    assert eventually(fn -> :sys.get_state(window).size != {80, 24} end)
+    key(window, ?0, @ctrl)
+    assert eventually(fn -> :sys.get_state(window).zoom == 0 end)
   end
 
   defp a ||| b, do: Bitwise.bor(a, b)

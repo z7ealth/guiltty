@@ -130,6 +130,6 @@ defmodule Guiltty.GridTest do
     {_p, cmds} = Parser.feed(Parser.new(), "\nx")
     {rows, _} = grid |> Terminal.apply(cmds) |> Grid.take_dirty()
     assert [{1, row}] = rows
-    assert Grid.line_text(row) == "x         "
+    assert Grid.line_text(grid, row) == "x         "
   end
 end

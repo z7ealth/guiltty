@@ -109,7 +109,7 @@ defmodule Guiltty.KeymapTest do
 
   describe "mouse" do
     defp mouse(kind, button, input, mods \\ 0),
-      do: Keymap.mouse({:mouse, kind, button, 4, 2, mods}, input)
+      do: Keymap.mouse({:mouse, kind, button, 4, 2, mods, 1}, input)
 
     test "nothing unless the program asked" do
       assert mouse(:press, 0, @normal) == nil

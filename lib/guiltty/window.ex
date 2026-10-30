@@ -18,6 +18,22 @@ defmodule Guiltty.Window do
   renderer gets at most one update per frame, however fast a program
   prints. Frame times are emitted as `[:guiltty, :renderer, :frame]`
   (`%{duration: microseconds}`).
+
+  ## The mouse
+
+  Mouse events go to the program when it asked for them (mouse reporting
+  modes), unless Shift is held. Otherwise guiltty uses them: the left
+  button selects (double click: words, triple: lines) and copies the
+  selection to the primary selection, the middle button pastes it, and the
+  wheel scrolls back (or, on the alternate screen, sends arrow keys, so
+  `less` and `man` scroll).
+
+  ## Search
+
+  The search key (Ctrl+Shift+F) starts a search: typing goes to the query
+  instead of the program, Enter finds the next older match, Shift+Enter
+  the next newer one, and Escape ends it. The query shows at the right of
+  the tab bar.
   """
 
   use GenServer, restart: :transient
@@ -32,6 +48,9 @@ defmodule Guiltty.Window do
   @resubscribe_ms 50
   @halo_color {0x81, 0xA2, 0xBE}
   @halo_ms 400
+  @wheel_lines 3
+  @min_font 6
+  @max_font 96
   @default_input %{
     cursor_keys: :normal,
     keypad: :numeric,
@@ -94,7 +113,20 @@ defmodule Guiltty.Window do
       input: @default_input,
       title: nil,
       config: config,
-      bindings: parse_bindings(config.keys)
+      bindings: parse_bindings(config.keys),
+      # font size steps added by zooming
+      zoom: 0,
+      # the left button is down and selecting
+      selecting: false,
+      # search mode: %{query: binary, found: boolean}
+      search: nil,
+      alt_screen: false,
+      # the view's scroll as of the last update, and whether this window
+      # moved it since (the update saying so may not have arrived yet)
+      scroll: 0,
+      view_moved: false,
+      scrollback: 0,
+      status: ""
     }
 
     {:ok, state, @hello_timeout}
@@ -161,7 +193,7 @@ defmodule Guiltty.Window do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
       {tabs, active} = Tabs.attach_window(self())
       {cols, rows} = Session.size(active)
-      send_port(state, Protocol.setup(cols, rows, state.config.theme, state.config.font))
+      send_port(state, Protocol.setup(cols, rows, state.config.theme, font(state)))
       {:noreply, show_tabs(%{state | ready: true, size: {cols, rows}}, tabs, active)}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
@@ -186,32 +218,117 @@ defmodule Guiltty.Window do
   end
 
   defp handle_event({:paste, text}, state) do
-    write(state, Keymap.paste(text, state.input))
-    {:noreply, state}
+    {:noreply, write(state, Keymap.paste(text, state.input))}
   end
 
-  defp handle_event({:mouse, _, _, _, _, _} = event, state) do
-    write(state, Keymap.mouse(event, state.input))
-    {:noreply, state}
+  defp handle_event({:mouse, _kind, _button, _col, _row, mods, _clicks} = event, state) do
+    if state.input.mouse != nil and not Keymap.shift?(mods),
+      do: {:noreply, write(state, Keymap.mouse(event, state.input))},
+      else: {:noreply, local_mouse(event, state)}
   end
 
   defp handle_event({:key, _, _} = event, state) do
     case Enum.find(state.bindings, fn {_action, binding} -> Keymap.matches?(event, binding) end) do
       {action, _binding} -> {:noreply, run(action, state)}
+      nil when state.search != nil -> {:noreply, search_key(event, state)}
       nil -> type(event, state)
     end
   end
 
+  defp handle_event({:text, text}, %{search: %{}} = state),
+    do: {:noreply, search_for(state, state.search.query <> text, :start)}
+
   defp handle_event({:text, _} = event, state), do: type(event, state)
 
-  defp type(event, state) do
-    write(state, Keymap.to_bytes(event, state.input))
-    {:noreply, state}
+  defp type(event, state), do: {:noreply, write(state, Keymap.to_bytes(event, state.input))}
+
+  # Anything sent to the program brings the view back to the live screen.
+  defp write(state, nil), do: state
+  defp write(%{active: nil} = state, _bytes), do: state
+
+  defp write(state, bytes) do
+    if state.scroll > 0 or state.view_moved, do: on_screen(state, &Screen.scroll(&1, :bottom))
+    Pty.write(state.active, bytes)
+    %{state | view_moved: false}
   end
 
-  defp write(_state, nil), do: :ok
-  defp write(%{active: nil}, _bytes), do: :ok
-  defp write(state, bytes), do: Pty.write(state.active, bytes)
+  ## The mouse, when the program doesn't want it
+
+  defp local_mouse({:mouse, :press, 0, col, row, _mods, clicks}, state) do
+    on_screen(state, &Screen.select(&1, {:start, {row, col}, clicks}))
+    %{state | selecting: true}
+  end
+
+  defp local_mouse({:mouse, :motion, 0, col, row, _mods, _}, %{selecting: true} = state) do
+    on_screen(state, &Screen.select(&1, {:extend, {row, col}}))
+    state
+  end
+
+  defp local_mouse({:mouse, :release, 0, _col, _row, _mods, _}, %{selecting: true} = state) do
+    case on_screen(state, &Screen.select(&1, :finish)) do
+      text when is_binary(text) and text != "" ->
+        send_port(state, Protocol.clipboard(:primary, text))
+
+      _ ->
+        :ok
+    end
+
+    %{state | selecting: false}
+  end
+
+  defp local_mouse({:mouse, :press, 1, _col, _row, _mods, _}, state) do
+    send_port(state, Protocol.paste_primary())
+    state
+  end
+
+  # On the alternate screen there's no scrollback: the wheel sends arrow
+  # keys instead, so less, man and git log scroll (xterm's alternateScroll).
+  defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, %{alt_screen: true} = state) do
+    key = if dir == 0, do: Keymap.key(:up), else: Keymap.key(:down)
+    bytes = Keymap.to_bytes({:key, key, 0}, state.input)
+    write(state, :binary.copy(bytes, @wheel_lines))
+  end
+
+  defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, state) do
+    lines = if dir == 0, do: @wheel_lines, else: -@wheel_lines
+    on_screen(state, &Screen.scroll(&1, {:lines, lines}))
+    %{state | view_moved: true}
+  end
+
+  defp local_mouse(_event, state), do: state
+
+  ## Search mode
+
+  defp search_key({:key, key, mods}, state) do
+    cond do
+      key == Keymap.key(:escape) ->
+        on_screen(state, &Screen.end_search/1)
+        update_status(%{state | search: nil})
+
+      key == Keymap.key(:enter) ->
+        search_for(state, state.search.query, if(Keymap.shift?(mods), do: :newer, else: :older))
+
+      key == Keymap.key(:backspace) ->
+        query = state.search.query |> String.graphemes() |> Enum.drop(-1) |> Enum.join()
+        search_for(state, query, :start)
+
+      true ->
+        state
+    end
+  end
+
+  defp search_for(state, query, direction) do
+    found = on_screen(state, &Screen.search(&1, query, direction)) == :found
+
+    update_status(%{
+      state
+      | search: %{query: query, found: found or query == ""},
+        view_moved: true
+    })
+  end
+
+  defp on_screen(%{active: nil}, _fun), do: nil
+  defp on_screen(state, fun), do: catch_exit(fn -> fun.(state.active) end)
 
   ## guiltty's own keys
 
@@ -229,11 +346,63 @@ defmodule Guiltty.Window do
   defp run(:prev_tab, state), do: switch(state, :prev)
   defp run({:go_to_tab, n}, state), do: switch(state, n)
 
+  defp run(action, state)
+       when action in [:scroll_page_up, :scroll_page_down, :scroll_top, :scroll_bottom] do
+    how =
+      %{
+        scroll_page_up: :page_up,
+        scroll_page_down: :page_down,
+        scroll_top: :top,
+        scroll_bottom: :bottom
+      }[action]
+
+    on_screen(state, &Screen.scroll(&1, how))
+    %{state | view_moved: true}
+  end
+
+  defp run(:search, %{search: nil} = state),
+    do: update_status(%{state | search: %{query: "", found: true}})
+
+  defp run(:search, state), do: state
+
+  defp run(:copy, state) do
+    case on_screen(state, &Screen.selection_text/1) do
+      text when is_binary(text) and text != "" ->
+        send_port(state, Protocol.clipboard(:clipboard, text))
+
+      _ ->
+        :ok
+    end
+
+    state
+  end
+
+  defp run(:zoom_in, state), do: zoom(state, state.zoom + 1)
+  defp run(:zoom_out, state), do: zoom(state, state.zoom - 1)
+  defp run(:zoom_reset, state), do: zoom(state, 0)
+
   defp run(_unknown, state), do: state
 
   defp switch(state, to) do
     Tabs.switch(to)
     state
+  end
+
+  # Zoom changes the font size, and so the cell size and the grid: the
+  # renderer works out the new grid and sends a resize.
+  defp zoom(state, steps) do
+    state = %{state | zoom: steps}
+    size = font(state).size
+    state = %{state | zoom: size - state.config.font.size}
+    send_port(state, Protocol.font(font(state)))
+    state
+  end
+
+  defp font(state) do
+    %{
+      state.config.font
+      | size: (state.config.font.size + state.zoom) |> max(@min_font) |> min(@max_font)
+    }
   end
 
   defp parse_bindings(keys) do
@@ -258,7 +427,19 @@ defmodule Guiltty.Window do
   defp switch_view(state, id) do
     if state.active, do: catch_exit(fn -> Screen.unsubscribe(state.active, self()) end)
     if state.screen_ref, do: Process.demonitor(state.screen_ref, [:flush])
-    view(%{state | active: id, screen_ref: nil, pending: false, title: nil}, id)
+    if state.search, do: on_screen(state, &Screen.end_search/1)
+
+    %{
+      state
+      | active: id,
+        screen_ref: nil,
+        pending: false,
+        title: nil,
+        search: nil,
+        selecting: false
+    }
+    |> view(id)
+    |> update_status()
   end
 
   # View the session's Screen and monitor it. It answers with
@@ -290,12 +471,38 @@ defmodule Guiltty.Window do
         if update.title != state.title,
           do: send_port(state, Protocol.title(window_title(update.title)))
 
-        %{state | awaiting_frame: true, pending: false, input: update.input, title: update.title}
+        %{
+          state
+          | awaiting_frame: true,
+            pending: false,
+            input: update.input,
+            title: update.title,
+            alt_screen: update.alt_screen,
+            scroll: update.scroll,
+            scrollback: update.scrollback
+        }
+        |> update_status()
 
       _gone ->
         state
     end
   end
+
+  ## The status line, at the right of the tab bar
+
+  defp update_status(state) do
+    status = status_text(state)
+    if status != state.status, do: send_port(state, Protocol.status(status))
+    %{state | status: status}
+  end
+
+  defp status_text(%{search: %{query: query, found: found}}),
+    do: "find: #{query}" <> if(found, do: "", else: "  (not found)")
+
+  defp status_text(%{scroll: scroll, scrollback: total}) when scroll > 0,
+    do: "scrollback #{scroll}/#{total}"
+
+  defp status_text(_state), do: ""
 
   defp window_title(""), do: "guiltty"
   defp window_title(title), do: title
@@ -309,8 +516,10 @@ defmodule Guiltty.Window do
       if state.active, do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
     end
 
-    if config.font != state.config.font, do: send_port(state, Protocol.font(config.font))
-    %{state | config: config, bindings: parse_bindings(config.keys)}
+    old_font = font(state)
+    state = %{state | config: config, bindings: parse_bindings(config.keys)}
+    if font(state) != old_font, do: send_port(state, Protocol.font(font(state)))
+    state
   end
 
   defp send_port(%{port: port}, message) when is_port(port), do: Port.command(port, message)

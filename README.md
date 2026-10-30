@@ -5,8 +5,10 @@ OpenGL renderer that runs as its own process.
 
 ## Run it
 
-Needs Elixir 1.20, GCC 15+ and the SDL3, FreeType and fontconfig
-development packages.
+Needs Elixir 1.20, GCC 15+ and the SDL3, FreeType, fontconfig and
+HarfBuzz development packages. Fonts come from fontconfig: install a CJK
+font (`noto-sans-cjk-fonts` on openSUSE) to see Chinese and Japanese, and
+an emoji font (Noto Color Emoji) for emoji.
 
 ```sh
 mix deps.get
@@ -22,8 +24,20 @@ _build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a wind
 ```
 
 Run `guiltty` again after closing the window and your tabs are still
-there. Keys: Ctrl+Shift+T new tab, Ctrl+Shift+W close it, Ctrl+PgUp/PgDn
-switch. Copy `priv/config.example.exs` to
+there.
+
+| Keys                          | Action                                   |
+|-------------------------------|------------------------------------------|
+| Ctrl+Shift+T, Ctrl+Shift+W    | new tab, close tab                       |
+| Ctrl+PgUp, Ctrl+PgDn          | previous, next tab                       |
+| Shift+PgUp, Shift+PgDn        | scroll back, forward (or the mouse wheel)|
+| Ctrl+Shift+F                  | search; Enter older, Shift+Enter newer, Escape ends |
+| select with the mouse         | copies to the primary selection          |
+| Ctrl+Shift+C, Ctrl+Shift+V    | copy, paste (middle click pastes the selection) |
+| Ctrl+=, Ctrl+-, Ctrl+0        | zoom in, out, reset                      |
+
+Hold Shift to select in programs that use the mouse (vim, htop). Copy
+`priv/config.example.exs` to
 `~/.config/guiltty/config.exs` to change the theme, font and keys; saving
 it applies them to the open window.
 

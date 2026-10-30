@@ -113,12 +113,12 @@ defmodule Guiltty.TerminalTest do
   end
 
   describe "line drawing" do
-    test "ESC ( 0 maps to ASCII lookalikes, ESC ( B goes back" do
-      assert first_line("\e(0lqqk\e(B ok") == "+--+ ok"
+    test "ESC ( 0 maps to box drawing, ESC ( B goes back" do
+      assert first_line("\e(0lqqk\e(B ok") == "┌──┐ ok"
     end
 
     test "SO and SI switch between G0 and G1" do
-      assert first_line("\e)0x\x0Ex\x0Fx") == "x|x"
+      assert first_line("\e)0x\x0Ex\x0Fx") == "x│x"
     end
   end
 

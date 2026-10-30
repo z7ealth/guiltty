@@ -15,6 +15,8 @@ defmodule Guiltty.Config do
     * `:theme` - a `Guiltty.Theme`
     * `:font` - `%{family: "monospace", size: 18}`
     * `:keys` - `%{action => [key]}`, see `Guiltty.Keymap.parse_key/1`
+    * `:scrollback` - rows each tab keeps (applies to tabs opened after a
+      change)
   """
 
   use GenServer
@@ -29,8 +31,19 @@ defmodule Guiltty.Config do
     new_tab: ["ctrl+shift+t"],
     close_tab: ["ctrl+shift+w"],
     next_tab: ["ctrl+page_down", "ctrl+tab"],
-    prev_tab: ["ctrl+page_up", "ctrl+shift+tab"]
+    prev_tab: ["ctrl+page_up", "ctrl+shift+tab"],
+    scroll_page_up: ["shift+page_up"],
+    scroll_page_down: ["shift+page_down"],
+    scroll_top: ["shift+home"],
+    scroll_bottom: ["shift+end"],
+    search: ["ctrl+shift+f"],
+    copy: ["ctrl+shift+c"],
+    zoom_in: ["ctrl+=", "ctrl+shift+="],
+    zoom_out: ["ctrl+-"],
+    zoom_reset: ["ctrl+0"]
   }
+
+  @max_scrollback 1_000_000
 
   def start_link(opts) do
     case Keyword.get(opts, :name, __MODULE__) do
@@ -40,8 +53,14 @@ defmodule Guiltty.Config do
   end
 
   @doc "The defaults, used for anything the file doesn't set."
-  def defaults,
-    do: %{theme: Theme.default(), font: %{family: "monospace", size: 18}, keys: @default_keys}
+  def defaults do
+    %{
+      theme: Theme.default(),
+      font: %{family: "monospace", size: 18},
+      keys: @default_keys,
+      scrollback: 10_000
+    }
+  end
 
   @doc "The current config (the defaults if guiltty's config process isn't running)."
   def get do
@@ -139,10 +158,16 @@ defmodule Guiltty.Config do
 
     with {:ok, theme} <- theme(Keyword.get(settings, :theme, []), defaults.theme),
          {:ok, font} <- font(Keyword.get(settings, :font, []), defaults.font),
-         {:ok, keys} <- keys(Keyword.get(settings, :keys, []), defaults.keys) do
-      {:ok, %{theme: theme, font: font, keys: keys}}
+         {:ok, keys} <- keys(Keyword.get(settings, :keys, []), defaults.keys),
+         {:ok, scrollback} <- scrollback(Keyword.get(settings, :scrollback, defaults.scrollback)) do
+      {:ok, %{theme: theme, font: font, keys: keys, scrollback: scrollback}}
     end
   end
+
+  defp scrollback(n) when is_integer(n) and n in 0..@max_scrollback, do: {:ok, n}
+
+  defp scrollback(_),
+    do: {:error, "scrollback: expected a number of rows from 0 to #{@max_scrollback}"}
 
   defp theme(opts, default) do
     with {:ok, fg} <- color(opts[:fg], default.fg),

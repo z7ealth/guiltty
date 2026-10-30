@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 4;
+constexpr uint16_t protocol_version = 5;
 
 // Largest message we accept; anything bigger is a protocol error.
 constexpr uint32_t max_message_size = 1u << 24;
@@ -24,8 +24,10 @@ enum msg_tag : uint8_t {
     // u16 pixel size and the family name (the rest of the message).
     MSG_SETUP = 2,
     // Elixir -> renderer: u16 cols, u16 rows (the grid this describes),
-    // u16 cursor_row, u16 cursor_col, u8 cursor_visible, u16 count, then
-    // count times: u16 row, then cols cells of wire_cell_size bytes.
+    // u16 cursor_row, u16 cursor_col, u8 cursor_visible; u16 nclusters, then
+    // nclusters times: u32 id, u8 len, len bytes of UTF-8 (the clusters
+    // these rows use that weren't sent before); u16 count, then count
+    // times: u16 row, then cols cells of wire_cell_size bytes.
     MSG_ROWS = 3,
     // renderer -> Elixir: UTF-8 text typed by the user
     MSG_TEXT = 4,
@@ -39,7 +41,7 @@ enum msg_tag : uint8_t {
     MSG_PASTE = 8,
     // renderer -> Elixir: u8 kind (mouse_kind), u8 button (0 left, 1 middle,
     // 2 right, 3 none; for the wheel 0 up, 1 down), u16 col, u16 row (cells,
-    // 0-based), u16 SDL modifiers
+    // 0-based), u16 SDL modifiers, u8 clicks (2 = double click, 3 = triple)
     MSG_MOUSE = 9,
     // Elixir -> renderer: a new theme, the same 259 colors as the setup
     MSG_THEME = 10,
@@ -56,14 +58,27 @@ enum msg_tag : uint8_t {
     MSG_FRAME = 15,
     // renderer -> Elixir: the user clicked a tab: u8 index
     MSG_TAB_CLICK = 16,
+    // Elixir -> renderer: status text for the right of the tab bar, UTF-8
+    // (empty hides it)
+    MSG_STATUS = 17,
+    // Elixir -> renderer: u8 target (0 clipboard, 1 primary selection),
+    // then the text to put there, UTF-8
+    MSG_CLIPBOARD = 18,
+    // Elixir -> renderer: paste the primary selection (answered with a PASTE)
+    MSG_PASTE_PRIMARY = 19,
 };
 enum mouse_kind : uint8_t { MOUSE_PRESS = 0, MOUSE_RELEASE = 1, MOUSE_MOTION = 2, MOUSE_WHEEL = 3 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");
 
 // One cell on the wire, exactly as Guiltty.Grid stores it:
-// u8 char, u8 attrs, u32 fg, u32 bg. A color's top byte says how to read
+// u32 glyph, u16 attrs, u32 fg, u32 bg. The glyph is a codepoint, a
+// cluster id (first_cluster and up, defined in a ROWS message), or 0 in
+// the right half of a wide character. A color's top byte says how to read
 // the rest: 0 = default, 1 = palette index in the low byte, 2 = 0xRRGGBB.
-constexpr size_t wire_cell_size = 10;
+constexpr size_t wire_cell_size = 14;
+constexpr uint32_t first_cluster = 0x110000;
+constexpr uint32_t max_clusters = 65536;
+constexpr size_t max_cluster_bytes = 64;
 enum color_kind : uint8_t { COLOR_DEFAULT = 0, COLOR_INDEXED = 1, COLOR_RGB = 2 };
 
 constexpr size_t palette_size = 256;
@@ -73,11 +88,12 @@ constexpr size_t setup_colors = palette_size + 3;
 constexpr size_t frame_header_size = sizeof(uint32_t);
 constexpr size_t theme_size = 3 * setup_colors;
 constexpr size_t setup_fixed_size = 1 + 2 * sizeof(uint16_t) + theme_size + sizeof(uint16_t);
+// Up to the cluster count; the row count follows the clusters.
 constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 1 + sizeof(uint16_t);
 constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
 constexpr size_t resize_message_size = 1 + 2 * sizeof(uint16_t);
-constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t);
-static_assert(mouse_message_size == 9);
+constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t) + 1;
+static_assert(mouse_message_size == 10);
 static_assert(setup_fixed_size == 784);
 static_assert(rows_header_size == 12);
 static_assert(key_message_size == 7);

@@ -100,8 +100,23 @@ defmodule Guiltty.ParserTest do
     end
   end
 
-  test "each UTF-8 character becomes one ?" do
-    assert parse("señor ✓") == [{:print, "se"}, {:print, "?"}, {:print, "or "}, {:print, "?"}]
+  describe "UTF-8" do
+    test "text prints as is" do
+      assert parse("señor ✓ 日本 😀") == [{:print, "señor ✓ 日本 😀"}]
+    end
+
+    test "a character split across two reads waits for the rest" do
+      <<first::binary-size(2), rest::binary>> = "日本"
+      {p, cmds} = Parser.feed(Parser.new(), "a" <> first)
+      assert cmds == [{:print, "a"}]
+      assert {_p, [{:print, "日本"}]} = Parser.feed(p, rest)
+    end
+
+    test "invalid bytes become U+FFFD and decoding goes on" do
+      assert parse(<<"a", 0xFF, "b">>) == [{:print, "a"}, {:print, "\uFFFD"}, {:print, "b"}]
+      # cut short by an escape sequence, not by the end of the read
+      assert parse(<<0xE6, 0x97, "\e[m">>) == [{:print, "\uFFFD"}, {:csi, nil, [], "", ?m}]
+    end
   end
 
   test "the openSUSE prompt" do
