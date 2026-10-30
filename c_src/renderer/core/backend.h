@@ -24,9 +24,14 @@ enum cell_attr : uint16_t {
     ATTR_SPACER = 0x200, // the right half
     ATTR_MATCH = 0x400, // a search match (Guiltty.View)
     ATTR_CURRENT_MATCH = 0x800, // the match the search is on
-    // Not on the wire: set by the core when the glyph has its own colors
-    // (emoji), so the backend draws it as is instead of in the fg color.
+    // Not on the wire, set by the core. The glyph has its own colors
+    // (emoji): draw it as is instead of in the fg color.
     CELL_COLOR_GLYPH = 0x8000,
+    // The background is the theme's default: with a translucent window,
+    // only these cells let the desktop show through.
+    CELL_DEFAULT_BG = 0x4000,
+    // Draw the accent line along the bottom (the active tab).
+    CELL_ACCENT = 0x2000,
 };
 
 // A cell ready to draw: the core has already applied the theme, inverse,
@@ -53,6 +58,9 @@ struct frame {
     uint16_t cursor_row, cursor_col;
     bool cursor_visible;
     bool cursor_wide; // the cursor is on a wide character: draw it two cells wide
+    uint8_t cursor_shape; // enum cursor_shape (protocol.h)
+    uint8_t accent_rgb[3]; // the line under the active tab
+    float opacity; // of cells with CELL_DEFAULT_BG and of the padding; 1 = opaque
     uint8_t cursor_rgb[3];
     uint8_t clear_rgb[3]; // the padding around the grid
     int origin_x, origin_y; // padding from the window's top-left, in pixels

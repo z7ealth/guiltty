@@ -383,3 +383,43 @@ rounded), shades, quadrants and eighths joins with no gaps.
 
 - Double box lines (═ ║ ╔) and dashed ones still come from the font;
   powerline separators (U+E0B0 to U+E0BF) too.
+
+## 2026-10-30 — MVP 6: The window and the config
+
+_Draft: agent, awaiting user_
+
+**Tried.** You asked for Ghostty-style window controls, then chose
+something smaller: keep KDE's title bar, keep keybinds instead of buttons,
+and make the tabs look better. Tabs are now flat, with thin separators
+and a blue accent line under the active one; long titles end in `…`.
+Ctrl+, opens the config file in your editor, creating it from the example
+first. The renderer does that with `SDL_OpenURL`, since it runs in your
+desktop session. The config grew:
+- named themes (Dracula, Gruvbox, Solarized, Catppuccin);
+- cursor style and blink, which programs can change with DECSCUSR, plus a
+  hollow cursor when the window isn't focused;
+- window padding, starting size and background opacity;
+- which shell to run, and new tabs starting in the current tab's
+  directory (`/proc/<pid>/cwd`, then `chdir` in the NIF between fork and
+  exec);
+- copy-on-select, wheel lines, bold-is-bright.
+
+Protocol version 6.
+
+**Broke.** Little. The hollow cursor didn't show at first on the test X
+server: with no window manager, the window never got a "focus lost"
+event, because it never had focus. Moving focus away by hand showed it
+works. My first book draft said plain vim changes the cursor shape out
+of the box. It doesn't; neovim does.
+
+**Clicked.** On a private X server: three tabs in the new style, tabs 2
+and 3 opened in the directory tab 1 had `cd`'d into. Changing padding in
+the config re-laid out the open window. A program's DECSCUSR turned the
+cursor into an underline. A translucent window starts and draws (Xvfb has
+no compositor, so the transparency itself is yours to see).
+
+### Later
+
+- OSC 7 (the shell reporting its directory), so `:inherit` follows a
+  program that changes directory, not just the shell.
+- Opacity changes without reopening the window.

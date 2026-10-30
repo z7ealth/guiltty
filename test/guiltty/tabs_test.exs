@@ -3,6 +3,7 @@ defmodule Guiltty.TabsTest do
   use ExUnit.Case, async: false
 
   alias Guiltty.{Session, Tabs}
+  alias Guiltty.Session.Pty
 
   setup do
     start_supervised!({DynamicSupervisor, name: Guiltty.Sessions, strategy: :one_for_one})
@@ -113,6 +114,15 @@ defmodule Guiltty.TabsTest do
 
     Process.sleep(200)
     assert ids() == [id]
+  end
+
+  test "a new tab starts in the active tab's directory" do
+    [first] = ids()
+    Session.write(first, "cd /usr/share\r")
+    assert eventually(fn -> Pty.cwd(first) == "/usr/share" end)
+    {:ok, second} = Tabs.new_tab()
+    Session.write(second, "pwd\r")
+    assert eventually(fn -> Session.dump(second) =~ ~r/^\/usr\/share$/m end)
   end
 
   test "resize applies to every tab and to new ones" do

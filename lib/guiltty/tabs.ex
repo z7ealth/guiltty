@@ -23,7 +23,8 @@ defmodule Guiltty.Tabs do
 
   require Logger
 
-  alias Guiltty.Session
+  alias Guiltty.{Config, Session}
+  alias Guiltty.Session.Pty
 
   @sessions Guiltty.Sessions
 
@@ -57,7 +58,7 @@ defmodule Guiltty.Tabs do
       titles: %{},
       active: nil,
       next_id: 1,
-      size: {80, 24},
+      size: {Config.get().window.columns, Config.get().window.rows},
       windows: MapSet.new(),
       # monitor ref => session id
       monitors: %{},
@@ -176,10 +177,34 @@ defmodule Guiltty.Tabs do
     end
   end
 
+  defp config_opts(state) do
+    config = Config.get()
+
+    shell =
+      if config.shell.command,
+        do: [shell: config.shell.command, args: config.shell.args],
+        else: []
+
+    shell ++ [cwd: start_dir(config.working_directory, state.active)]
+  end
+
+  # :inherit: where the active tab's shell is now, as a new tab in a
+  # browser opens next to the current one. The first tab has none to
+  # follow, and starts where guiltty was started.
+  defp start_dir(:inherit, nil), do: nil
+  defp start_dir(:inherit, active), do: try(do: Pty.cwd(active), catch: (:exit, _ -> nil))
+  defp start_dir(:home, _active), do: System.user_home()
+  defp start_dir(dir, _active), do: dir
+
   defp open_tab(state) do
     id = state.next_id
     {cols, rows} = state.size
-    opts = [id: id, cols: cols, rows: rows, owner: self()] ++ state.session_opts
+    # The config says which shell and where; the session_opts given at
+    # start (tests use them) win over it.
+    opts =
+      [id: id, cols: cols, rows: rows, owner: self()]
+      |> Keyword.merge(config_opts(state))
+      |> Keyword.merge(state.session_opts)
 
     case DynamicSupervisor.start_child(@sessions, {Session.Supervisor, opts}) do
       {:ok, pid} ->

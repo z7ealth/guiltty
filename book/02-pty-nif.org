@@ -21,7 +21,7 @@ two rules matter:
 
 | Elixir                                 | Does                                  |
 |----------------------------------------+---------------------------------------|
-| =PtyNif.open(path, argv, env, c, r)=   | openpty, fork, exec; ={:ok, pty, pid}= |
+| =PtyNif.open(path, argv, env, c, r, cwd)= | openpty, fork, chdir, exec; ={:ok, pty, pid}= |
 | =PtyNif.read(pty)=                     | one non-blocking read                 |
 | =PtyNif.write(pty, bytes)=             | one non-blocking write                |
 | =PtyNif.select_read(pty)=              | "tell me when it's readable"          |
@@ -115,6 +115,9 @@ Three more things the child does because it's forked from the BEAM:
   with, for example, SIGPIPE ignored. A test checks bash's =SigIgn= is zero.
 - *Closes every other fd* with =close_range(3, ~0U, 0)=, so bash doesn't
   inherit the BEAM's sockets or another tab's PTY.
+- *Changes directory* with =chdir(2)= (async-signal-safe) when given one,
+  so a new tab starts where the current tab's shell is (chapter 16). If
+  the directory is gone, the shell starts where the BEAM is.
 - The parent marks both PTY fds close-on-exec, so no other program the BEAM
   starts inherits them. A stray copy of the slave would keep the master from
   ever reporting the end (see [[file:01-pseudoterminals.org][chapter 1]], "The end").

@@ -67,7 +67,11 @@ struct renderer {
     char font_family[256];
     int font_size; // in points: the pixel size is font_size * scale
     float scale; // the display's content scale (2.0 on a HiDPI screen)
-    int padding; // pixels around the grid
+    int padding_option; // pixels around the grid at scale 1, from the config
+    int padding; // pixels around the grid: padding_option * scale
+    uint8_t opacity; // the default background's, in percent
+    bool transparent; // the window was created able to show what's behind it
+    bool bold_is_bright;
     int cell_w, cell_h;
     // The terminal grid is cols x rows. The cell mirror has one more row on
     // top, the tab bar, so grid row i is cells row i + 1.
@@ -79,6 +83,10 @@ struct renderer {
     int dirty_first, dirty_last; // cell rows changed since the last draw
     uint16_t cursor_row, cursor_col; // in grid rows
     bool cursor_visible;
+    uint8_t cursor_style; // enum cursor_shape, | cursor_blinks
+    bool blink_off; // in the dark half of a blink
+    Uint64 blink_next; // SDL ticks of the next blink change; 0 = not blinking
+    bool focused;
     struct theme theme;
     struct tab tabs[max_tabs];
     int tab_count, active_tab;
@@ -350,7 +358,7 @@ static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
     struct cell *out = &r->cells[idx];
     *out = (struct cell){.attrs = attrs};
     r->glyphs[idx] = glyph;
-    resolve(t, fg, t->fg, attrs & ATTR_BOLD, out->fg);
+    resolve(t, fg, t->fg, (attrs & ATTR_BOLD) && r->bold_is_bright, out->fg);
     resolve(t, bg, t->bg, false, out->bg);
 
     if (attrs & ATTR_INVERSE) {
@@ -372,11 +380,14 @@ static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
     }
     if (attrs & ATTR_HIDDEN)
         out->attrs &= (uint16_t)~(ATTR_UNDERLINE | ATTR_STRIKE);
+    constexpr uint16_t recolored = ATTR_INVERSE | ATTR_MATCH | ATTR_CURRENT_MATCH;
+    if ((bg >> 24) == COLOR_DEFAULT && !(attrs & recolored))
+        out->attrs |= CELL_DEFAULT_BG;
     find_slot(r, idx);
 }
 
 static struct cell blank_cell(const struct theme *t) {
-    struct cell c = {};
+    struct cell c = {.attrs = CELL_DEFAULT_BG};
     memcpy(c.fg, t->fg, 3);
     memcpy(c.bg, t->bg, 3);
     return c;
@@ -431,13 +442,23 @@ static int text_columns(const char *text) {
     return cols;
 }
 
-// Draw the tab bar into cells row 0: " 1 title " per tab, the active one
-// in the theme's blue, the rest dimmer on a bar slightly lighter than the
-// background. The status (search, scrollback) sits at the right end.
+// Like bar_text, but if the text doesn't fit before `limit`, it ends in "…".
+static int bar_text_cut(struct renderer *r, int col, const char *text, struct cell look, int limit) {
+    if (col + text_columns(text) <= limit)
+        return bar_text(r, col, text, look, limit);
+    int end = bar_text(r, col, text, look, limit - 1);
+    return bar_text(r, end, "…", look, limit);
+}
+
+// Draw the tab bar into cells row 0. Flat tabs, " 1 title ", with thin
+// separators between them, on a bar a little lighter than the background.
+// The active tab is lighter still, in the full text color, with an accent
+// line along its bottom in the theme's blue; the others are muted. The
+// status (search, scrollback) sits at the right end.
 static void build_tab_bar(struct renderer *r) {
     struct cell bar = {};
-    mix(r->theme.bg, r->theme.fg, 12, bar.bg);
-    memcpy(bar.fg, r->theme.palette[7], 3);
+    mix(r->theme.bg, r->theme.fg, 8, bar.bg);
+    mix(r->theme.bg, r->theme.fg, 55, bar.fg);
     for (int c = 0; c < r->cols; c++) {
         r->cells[c] = bar;
         r->glyphs[c] = ' ';
@@ -458,23 +479,25 @@ static void build_tab_bar(struct renderer *r) {
         limit = start - 1;
     }
 
+    struct cell separator = bar;
+    mix(r->theme.bg, r->theme.fg, 25, separator.fg);
     int col = 0;
     for (int i = 0; i < r->tab_count && col < limit; i++) {
         struct cell look = bar;
         if (i == r->active_tab) {
-            memcpy(look.fg, r->theme.bg, 3);
-            memcpy(look.bg, r->theme.palette[4], 3);
-            look.attrs = ATTR_BOLD;
+            mix(r->theme.bg, r->theme.fg, 16, look.bg);
+            memcpy(look.fg, r->theme.fg, 3);
+            look.attrs = ATTR_BOLD | CELL_ACCENT;
         }
         char number[16];
         snprintf(number, sizeof number, " %d ", i + 1);
         r->tabs[i].start = col;
         col = bar_text(r, col, number, look, limit);
         int title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
-        col = bar_text(r, col, r->tabs[i].title, look, title_end);
+        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
         col = bar_text(r, col, " ", look, limit);
         r->tabs[i].end = col;
-        col++; // a gap between tabs
+        col = bar_text(r, col, "│", separator, limit);
     }
     mark_row(r, 0);
     r->dirty = true;
@@ -582,7 +605,21 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     return true;
 }
 
-// The first message from Elixir must be the setup: grid size, theme, font.
+// u16 padding, u8 opacity percent, u8 flags.
+[[nodiscard]] static bool read_options(struct reader *rd, struct renderer *r) {
+    uint16_t padding;
+    uint8_t opacity, flags;
+    if (!rd_u16(rd, &padding) || !rd_u8(rd, &opacity) || !rd_u8(rd, &flags) || padding > 100 ||
+        opacity < 10 || opacity > 100)
+        return false;
+    r->padding_option = padding;
+    r->opacity = opacity;
+    r->bold_is_bright = flags & OPTION_BOLD_IS_BRIGHT;
+    return true;
+}
+
+// The first message from Elixir must be the setup: grid size, theme,
+// options, font.
 [[nodiscard]] static enum read_result read_setup(struct renderer *r) {
     uint8_t *msg;
     uint32_t len;
@@ -594,7 +631,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     bool ok = len > setup_fixed_size && rd_u8(&rd, &tag) && tag == MSG_SETUP &&
               rd_u16(&rd, &r->cols) && rd_u16(&rd, &r->rows) && r->cols > 0 && r->rows > 0 &&
               r->cols <= max_grid && r->rows <= max_grid && read_theme(&rd, &r->theme) &&
-              read_font(&rd, r);
+              read_options(&rd, r) && read_font(&rd, r);
     free(msg);
     return ok ? READ_OK : READ_ERROR;
 }
@@ -619,7 +656,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     r->atlas = atlas;
     r->cell_w = fonts.cell_w;
     r->cell_h = fonts.cell_h;
-    r->padding = (int)lroundf((float)padding_px * r->scale);
+    r->padding = (int)lroundf((float)r->padding_option * r->scale);
     return true;
 }
 
@@ -647,6 +684,17 @@ static void set_minimum_size(struct renderer *r) {
     return on_pixel_size(r, w, h);
 }
 
+constexpr Uint64 blink_ms = 600;
+
+// The cursor shows solid right after it moves or you type, then blinks
+// (if its style says so, and only while the window has the focus).
+static void restart_blink(struct renderer *r) {
+    r->blink_off = false;
+    bool blinks = (r->cursor_style & cursor_blinks) && r->focused;
+    r->blink_next = blinks ? SDL_GetTicks() + blink_ms : 0;
+    r->dirty = true;
+}
+
 // Where the input method should show its candidates: at the cursor, in
 // window coordinates.
 static void update_text_area(struct renderer *r) {
@@ -666,9 +714,9 @@ static void update_text_area(struct renderer *r) {
 
 [[nodiscard]] static bool apply_rows(struct renderer *r, struct reader *rd) {
     uint16_t cols, rows, crow, ccol, nclusters, count;
-    uint8_t visible;
+    uint8_t visible, style;
     if (!rd_u16(rd, &cols) || !rd_u16(rd, &rows) || !rd_u16(rd, &crow) || !rd_u16(rd, &ccol) ||
-        !rd_u8(rd, &visible) || !rd_u16(rd, &nclusters))
+        !rd_u8(rd, &visible) || !rd_u8(rd, &style) || !rd_u16(rd, &nclusters))
         return false;
     // Elixir waits for a frame report before sending the next update.
     r->frame_owed = true;
@@ -700,12 +748,15 @@ static void update_text_area(struct renderer *r) {
         widen_icons(r, first);
         mark_row(r, row + 1);
     }
-    bool moved = r->cursor_row != crow || r->cursor_col != ccol;
+    bool moved = r->cursor_row != crow || r->cursor_col != ccol || r->cursor_style != style;
+    r->cursor_style = style;
     r->cursor_row = crow < rows ? crow : rows - 1;
     r->cursor_col = ccol < cols ? ccol : cols - 1;
     r->cursor_visible = visible != 0;
-    if (moved)
+    if (moved) {
         update_text_area(r);
+        restart_blink(r);
+    }
     r->dirty = true;
     return true;
 }
@@ -757,6 +808,36 @@ static void set_clipboard(struct reader *rd) {
     case MSG_CLIPBOARD:
         set_clipboard(&rd);
         return true;
+    case MSG_OPTIONS: {
+        int padding = r->padding_option;
+        if (!read_options(&rd, r))
+            return false;
+        if (r->opacity < 100 && !r->transparent)
+            fprintf(stderr, "renderer: opacity applies to windows opened from now on\n");
+        // Elixir sends every row again (bold may have changed colors). New
+        // padding means a new grid for the same window.
+        if (padding != r->padding_option) {
+            r->padding = (int)lroundf((float)r->padding_option * r->scale);
+            set_minimum_size(r);
+            int w, h;
+            SDL_GetWindowSizeInPixels(r->window, &w, &h);
+            r->cols = 0;
+            return on_pixel_size(r, w, h);
+        }
+        r->dirty = true;
+        return true;
+    }
+    case MSG_OPEN_URL: {
+        char *url = malloc(rd.left + 1);
+        if (url == nullptr)
+            return true;
+        memcpy(url, rd.p, rd.left);
+        url[rd.left] = '\0';
+        if (!SDL_OpenURL(url))
+            fprintf(stderr, "renderer: can't open %s: %s\n", url, SDL_GetError());
+        free(url);
+        return true;
+    }
     case MSG_PASTE_PRIMARY: {
         char *text = SDL_GetPrimarySelectionText();
         if (text != nullptr)
@@ -945,12 +1026,16 @@ static void draw(struct renderer *r) {
         .dirty_last = r->dirty_last,
         .cursor_row = (uint16_t)(r->cursor_row + 1),
         .cursor_col = r->cursor_col,
-        .cursor_visible = r->cursor_visible && preedit_row < 0,
+        .cursor_visible = r->cursor_visible && preedit_row < 0 && !r->blink_off,
+        // Without the focus, a hollow block: typing wouldn't go here.
+        .cursor_shape = r->focused ? (uint8_t)(r->cursor_style & 0x3) : CURSOR_HOLLOW,
+        .opacity = r->transparent ? (float)r->opacity / 100.0f : 1.0f,
         .cursor_wide = (r->cells[cursor].attrs & ATTR_WIDE) != 0 && r->cursor_col + 1 < r->cols,
         .origin_x = r->padding,
         .origin_y = r->padding,
     };
     memcpy(frame.cursor_rgb, r->theme.cursor, 3);
+    memcpy(frame.accent_rgb, r->theme.palette[4], 3);
     // The halo is the padding around the grid, lit up for a moment.
     memcpy(frame.clear_rgb, halo_on(r) ? r->halo_rgb : r->theme.bg, 3);
 
@@ -1114,7 +1199,7 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
     case SDL_EVENT_TEXT_INPUT:
         // A finished composition (é after a dead key) arrives here.
         r->preedit[0] = '\0';
-        r->dirty = true;
+        restart_blink(r);
         if (!r->demo)
             send_text(ev->text.text);
         break;
@@ -1125,6 +1210,7 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
         r->dirty = true;
         break;
     case SDL_EVENT_KEY_DOWN:
+        restart_blink(r);
         // In --demo, stdout is the terminal you started it from: send nothing.
         if (r->demo)
             break;
@@ -1159,23 +1245,39 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
     case SDL_EVENT_WINDOW_EXPOSED:
         r->dirty = true;
         break;
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+        r->focused = ev->type == SDL_EVENT_WINDOW_FOCUS_GAINED;
+        restart_blink(r);
+        break;
     default:
         break;
     }
     return true;
 }
 
-// Sleep until an event arrives, or until the halo should go out.
+// Sleep until an event arrives, or until something on a timer changes:
+// the halo going out, the cursor blinking. Returns false for a timer.
 static bool wait_event(struct renderer *r, SDL_Event *ev) {
-    if (r->halo_until == 0)
+    Uint64 deadline = r->halo_until;
+    if (r->blink_next != 0 && (deadline == 0 || r->blink_next < deadline))
+        deadline = r->blink_next;
+    if (deadline == 0)
         return SDL_WaitEvent(ev);
     Uint64 now = SDL_GetTicks();
-    if (now >= r->halo_until || !SDL_WaitEventTimeout(ev, (Sint32)(r->halo_until - now))) {
+    if (now < deadline && SDL_WaitEventTimeout(ev, (Sint32)(deadline - now)))
+        return true;
+    now = SDL_GetTicks();
+    if (r->halo_until != 0 && now >= r->halo_until) {
         r->halo_until = 0;
         r->dirty = true;
-        return false;
     }
-    return true;
+    if (r->blink_next != 0 && now >= r->blink_next) {
+        r->blink_off = !r->blink_off;
+        r->blink_next = now + blink_ms;
+        r->dirty = true;
+    }
+    return false;
 }
 
 int main(int argc, char *argv[]) {
@@ -1184,6 +1286,10 @@ int main(int argc, char *argv[]) {
         .font_family = "monospace",
         .font_size = default_font_size,
         .scale = 1.0f,
+        .padding_option = padding_px,
+        .opacity = 100,
+        .bold_is_bright = true,
+        .focused = true,
         .cursor_visible = true,
         .dirty_first = INT_MAX,
         .dirty_last = -1,
@@ -1233,10 +1339,14 @@ int main(int argc, char *argv[]) {
     if (!renderer_backend.configure())
         goto out_font;
     // HIGH_PIXEL_DENSITY: on a HiDPI screen, draw at full resolution instead
-    // of being scaled up blurry.
+    // of being scaled up blurry. TRANSPARENT: a window with an alpha
+    // channel, which the compositor blends with what's behind it. It can
+    // only be chosen now, so a later change of opacity needs a new window.
+    r.transparent = r.opacity < 100;
     r.window = SDL_CreateWindow("guiltty", width, height,
                                 renderer_backend.window_flags | SDL_WINDOW_RESIZABLE |
-                                    SDL_WINDOW_HIGH_PIXEL_DENSITY);
+                                    SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                    (r.transparent ? SDL_WINDOW_TRANSPARENT : 0));
     if (r.window == nullptr) {
         fprintf(stderr, "renderer: SDL_CreateWindow: %s\n", SDL_GetError());
         goto out_font;

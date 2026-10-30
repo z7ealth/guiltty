@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 5;
+constexpr uint16_t protocol_version = 6;
 
 // Largest message we accept; anything bigger is a protocol error.
 constexpr uint32_t max_message_size = 1u << 24;
@@ -20,11 +20,13 @@ enum msg_tag : uint8_t {
     MSG_HELLO = 1,
     // Elixir -> renderer, once after the hello: u16 cols, u16 rows, then
     // 259 colors of 3 bytes (r, g, b): the 256-color palette, then the
-    // default foreground, default background and cursor; then the font:
-    // u16 pixel size and the family name (the rest of the message).
+    // default foreground, default background and cursor; then the window
+    // options (as in MSG_OPTIONS); then the font: u16 pixel size and the
+    // family name (the rest of the message).
     MSG_SETUP = 2,
     // Elixir -> renderer: u16 cols, u16 rows (the grid this describes),
-    // u16 cursor_row, u16 cursor_col, u8 cursor_visible; u16 nclusters, then
+    // u16 cursor_row, u16 cursor_col, u8 cursor_visible, u8 cursor_style
+    // (bits 0-1: enum cursor_shape, bit 2: blinking); u16 nclusters, then
     // nclusters times: u32 id, u8 len, len bytes of UTF-8 (the clusters
     // these rows use that weren't sent before); u16 count, then count
     // times: u16 row, then cols cells of wire_cell_size bytes.
@@ -66,7 +68,16 @@ enum msg_tag : uint8_t {
     MSG_CLIPBOARD = 18,
     // Elixir -> renderer: paste the primary selection (answered with a PASTE)
     MSG_PASTE_PRIMARY = 19,
+    // Elixir -> renderer: window options: u16 padding (pixels at scale 1),
+    // u8 background opacity (percent), u8 flags (option_flag)
+    MSG_OPTIONS = 20,
+    // Elixir -> renderer: open a URL with the desktop's app for it, UTF-8
+    MSG_OPEN_URL = 21,
 };
+enum cursor_shape : uint8_t { CURSOR_BLOCK = 0, CURSOR_UNDERLINE = 1, CURSOR_BAR = 2, CURSOR_HOLLOW = 3 };
+constexpr uint8_t cursor_blinks = 0x04;
+enum option_flag : uint8_t { OPTION_BOLD_IS_BRIGHT = 0x01 };
+constexpr size_t options_size = sizeof(uint16_t) + 2;
 enum mouse_kind : uint8_t { MOUSE_PRESS = 0, MOUSE_RELEASE = 1, MOUSE_MOTION = 2, MOUSE_WHEEL = 3 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");
 
@@ -87,15 +98,16 @@ constexpr size_t setup_colors = palette_size + 3;
 // Fixed-size parts of messages, in bytes.
 constexpr size_t frame_header_size = sizeof(uint32_t);
 constexpr size_t theme_size = 3 * setup_colors;
-constexpr size_t setup_fixed_size = 1 + 2 * sizeof(uint16_t) + theme_size + sizeof(uint16_t);
+constexpr size_t setup_fixed_size =
+    1 + 2 * sizeof(uint16_t) + theme_size + options_size + sizeof(uint16_t);
 // Up to the cluster count; the row count follows the clusters.
-constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 1 + sizeof(uint16_t);
+constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 2 + sizeof(uint16_t);
 constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
 constexpr size_t resize_message_size = 1 + 2 * sizeof(uint16_t);
 constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t) + 1;
 static_assert(mouse_message_size == 10);
-static_assert(setup_fixed_size == 784);
-static_assert(rows_header_size == 12);
+static_assert(setup_fixed_size == 788);
+static_assert(rows_header_size == 13);
 static_assert(key_message_size == 7);
 
 enum read_result { READ_OK, READ_EOF, READ_ERROR };

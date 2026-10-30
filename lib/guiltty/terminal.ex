@@ -24,6 +24,7 @@ defmodule Guiltty.Terminal do
   | `CSI c`, `CSI > c`       | DA1, DA2    | answer: what kind of terminal this is   |
   | `CSI 5 n`, `CSI 6 n`     | DSR, CPR    | answer: status OK, cursor position      |
   | `CSI ! p`                | DECSTR      | soft reset                              |
+  | `CSI n SP q`             | DECSCUSR    | cursor shape: 1-2 block, 3-4 underline, 5-6 bar (odd blinks); 0 the user's |
   | `CSI ? n h/l`            | DECSET/RST  | private modes, see `dec_mode/3`         |
   | `ESC 7`, `ESC 8`         | DECSC/DECRC | save / restore the cursor               |
   | `ESC D`, `ESC E`, `ESC M`| IND/NEL/RI  | index, next line, reverse index         |
@@ -65,6 +66,9 @@ defmodule Guiltty.Terminal do
     do: Grid.respond(grid, @da2)
 
   defp command({:csi, nil, [], "!", ?p}, grid), do: Grid.soft_reset(grid)
+
+  defp command({:csi, nil, params, " ", ?q}, grid),
+    do: Grid.set_cursor_style(grid, cursor_style(value(params, 0, 0)))
 
   defp command({:esc, "", ?7}, grid), do: Grid.save_cursor(grid)
   defp command({:esc, "", ?8}, grid), do: Grid.restore_cursor(grid)
@@ -171,6 +175,13 @@ defmodule Guiltty.Terminal do
   defp dec_mode(1006, on?, grid), do: Grid.set_input(grid, :mouse_sgr, on?)
   defp dec_mode(2004, on?, grid), do: Grid.set_input(grid, :bracketed_paste, on?)
   defp dec_mode(_mode, _on?, grid), do: grid
+
+  ## Cursor shapes
+
+  defp cursor_style(n) when n in 1..6,
+    do: {Enum.at([:block, :underline, :bar], div(n - 1, 2)), rem(n, 2) == 1}
+
+  defp cursor_style(_n), do: nil
 
   ## Character sets
 

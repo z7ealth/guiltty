@@ -4,13 +4,17 @@ defmodule Guiltty.Window.ProtocolTest do
   alias Guiltty.{Grid, Theme}
   alias Guiltty.Window.Protocol
 
-  test "setup carries the size, 259 colors and the font" do
+  @options %{padding: 6, opacity: 0.9, bold_is_bright: true}
+
+  test "setup carries the size, 259 colors, the options and the font" do
     bin =
       IO.iodata_to_binary(
-        Protocol.setup(80, 24, Theme.default(), %{family: "monospace", size: 18})
+        Protocol.setup(80, 24, Theme.default(), %{family: "monospace", size: 18}, @options)
       )
 
-    assert <<2, 80::16, 24::16, colors::binary-size(777), 18::16, "monospace">> = bin
+    assert <<2, 80::16, 24::16, colors::binary-size(777), 6::16, 90, 1, 18::16, "monospace">> =
+             bin
+
     # palette 196 is pure red in the cube
     assert binary_part(colors, 196 * 3, 3) == <<255, 0, 0>>
     # the last three are fg, bg and cursor
@@ -25,12 +29,14 @@ defmodule Guiltty.Window.ProtocolTest do
       rows: [{0, row}],
       clusters: [{0x110000, "🇯🇵"}],
       cursor: {0, 1},
-      cursor_visible: false
+      cursor_visible: false,
+      cursor_style: {:bar, true}
     }
 
     bin = IO.iodata_to_binary(Protocol.rows(update))
 
-    assert <<3, 2::16, 1::16, 0::16, 1::16, 0, 1::16, 0x110000::32, 8, "🇯🇵", 1::16, 0::16,
+    # cursor style 6: bar (2) + blinking (4)
+    assert <<3, 2::16, 1::16, 0::16, 1::16, 0, 6, 1::16, 0x110000::32, 8, "🇯🇵", 1::16, 0::16,
              cells::binary>> = bin
 
     assert cells == row
@@ -38,7 +44,7 @@ defmodule Guiltty.Window.ProtocolTest do
   end
 
   test "decodes renderer events" do
-    assert Protocol.decode(<<1, 0, 5, 2, "gl">>) == {:ok, {:hello, 5, "gl"}}
+    assert Protocol.decode(<<1, 0, 6, 2, "gl">>) == {:ok, {:hello, 6, "gl"}}
     assert Protocol.decode(<<15, 1234::32>>) == {:ok, {:frame, 1234}}
     assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
@@ -55,6 +61,13 @@ defmodule Guiltty.Window.ProtocolTest do
              {:ok, {:mouse, :wheel, 1, 0, 0, 0, 1}}
 
     assert {:error, {:bad_message, _}} = Protocol.decode(<<9, 7, 0, 0::16, 0::16, 0::16, 1>>)
+  end
+
+  test "encodes live options and URLs to open" do
+    assert IO.iodata_to_binary(Protocol.options(%{@options | bold_is_bright: false})) ==
+             <<20, 6::16, 90, 0>>
+
+    assert Protocol.open_url("file:///tmp/x.exs") == <<21, "file:///tmp/x.exs">>
   end
 
   test "encodes the title" do

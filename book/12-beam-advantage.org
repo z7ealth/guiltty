@@ -136,7 +136,8 @@ sends ={:config, config}= to the Window:
 - keys: the Window re-reads its bindings.
 
 A broken file is logged and ignored; the previous config stays. The
-example is [[file:../priv/config.example.exs][priv/config.example.exs]].
+example is [[file:../priv/config.example.exs][priv/config.example.exs]]. Every setting, and how each one
+reaches the shell or the pixels, is in [[file:16-config.org][the configuration chapter]].
 
 * Telemetry
 

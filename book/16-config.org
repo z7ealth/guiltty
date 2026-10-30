@@ -1,0 +1,192 @@
+#+TITLE: Configuration: every setting, from file to pixels
+#+STARTUP: overview
+
+* One file, plain Elixir
+
+=~/.config/guiltty/config.exs= (or =$GUILTTY_CONFIG=) is an Elixir file
+whose last expression is a keyword list. Anything it leaves out keeps its
+default. guiltty checks the file every second and applies changes to the
+open window (how, and why the evaluation can't crash anything, is in
+[[file:12-beam-advantage.org][chapter 12]]). Ctrl+, opens it in your editor, creating it from
+[[file:../priv/config.example.exs][the example]] first; the example lists every setting with a comment.
+
+#+begin_src elixir
+[
+  font: [family: "JetBrainsMono Nerd Font Mono", size: 16],
+  theme: "gruvbox-dark",
+  cursor: [style: :bar, blink: true],
+  window: [padding: 10, columns: 120, rows: 36, opacity: 0.95],
+  working_directory: :inherit,
+  copy_on_select: :clipboard
+]
+#+end_src
+
+* Where each setting goes
+
+Settings don't all travel the same way. Some stay in Elixir, some go to
+the renderer, some reach the shell's process:
+
+| Setting                        | Lives in        | Applies                       |
+|--------------------------------+-----------------+-------------------------------|
+| =font=, zoom                   | renderer (FONT) | live: new atlas, new grid     |
+| =theme=                        | renderer (THEME)| live: every row sent again    |
+| =window: padding=              | renderer (OPTIONS) | live: new grid             |
+| =window: opacity=              | renderer        | windows opened after a change |
+| =window: columns, rows=        | Tabs            | the first tab of a new window |
+| =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
+| =cursor=                       | Window, per ROWS | live                         |
+| =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
+| =scrollback=                   | Screen          | tabs opened after a change    |
+| =copy_on_select=, =wheel_lines= | Window         | live                          |
+| =keys=                         | Window          | live                          |
+
+The renderer can't read the config itself: it's a separate program with
+no Elixir in it, and it shouldn't need to know where files are. The
+Window sends what it needs. Here's =padding: 6, opacity: 0.9,
+bold_is_bright: true= as SETUP carries it, and a live change to
+=bold_is_bright: false= as an OPTIONS message (both from the protocol
+tests):
+
+#+begin_example
+  SETUP:   ... 777 bytes of colors ...  00 06  5a  01  00 12 "monospace"
+                                        |      |   |   font size 18
+                                        |      |   flags: bold is bright
+                                        |      opacity 90 %
+                                        padding 6
+  OPTIONS: 14  00 06  5a  00
+#+end_example
+
+The options ride in SETUP too because the renderer needs them *before* it
+creates the window: its size depends on the padding, and whether it can
+be translucent has to be decided at creation.
+
+* Themes
+
+A theme is the default foreground, background and cursor colors plus the
+16 ANSI colors; the other 240 of the 256-color palette are xterm's fixed
+cube and grays ([[file:08-colors.org][chapter 8]]). Five come built in, from their published
+palettes: =tomorrow-night= (the default), =dracula=, =gruvbox-dark=,
+=solarized-dark=, =catppuccin-mocha= ([[file:../lib/guiltty/theme.ex][Guiltty.Theme]]). A theme can be a
+name, a list of colors, or both: =[name: "dracula", bg: "#000000"]= is
+Dracula on pure black. An unknown name is an error that lists the known
+ones.
+
+* The cursor
+
+Three shapes, block, underline and bar, each steady or blinking. The
+config picks yours; programs can change it while they run with DECSCUSR,
+=CSI Ps SP q=:
+
+| Ps   | Shape      |
+|------+------------|
+| 0    | yours (from the config) |
+| 1, 2 | block, blinking / steady |
+| 3, 4 | underline, blinking / steady |
+| 5, 6 | bar, blinking / steady |
+
+neovim sends =CSI 6 SP q= (or 5) entering insert mode and =CSI 2 SP q=
+leaving it, out of the box (its =guicursor= option). Plain vim does too
+once you set =t_SI= and =t_EI= in your vimrc, and so do zsh vi-mode
+plugins. The grid keeps the program's
+choice (=cursor_style=, nil for "yours"), and the Window picks the
+program's or yours for each ROWS message, as one byte: bits 0-1 the shape,
+bit 2 blinking.
+
+The renderer draws a block in pass 0 (the cell's background becomes the
+cursor color, and its text the background color). Underline, bar, and the
+*hollow* block it shows when the window isn't focused (typing wouldn't go
+there) are drawn in pass 1, over the text, from the pixel's position in
+the cell.
+
+Blinking is the renderer's own timer: 600 ms on, 600 ms off. It stays
+solid while you type or the cursor moves, the way most terminals do, so
+it doesn't vanish just when you look for it. The main loop sleeps until
+the next event or the next timer (the halo, the blink), whichever comes
+first; no timer, no wakeups.
+
+* Opacity: premultiplied alpha
+
+=opacity: 0.9= makes the default background 90 % opaque, so the desktop
+shows through a little; text, colored backgrounds, the tab bar and the
+cursor stay solid. It needs three things:
+
+1. A window with an alpha channel: =SDL_WINDOW_TRANSPARENT=, which on X11
+   picks a 32-bit visual. It can only be chosen when the window is
+   created, so changing opacity from 1.0 needs a new window (closing and
+   reopening it is enough with the release).
+2. A compositor (KDE has one) that blends the window with what's behind.
+3. The right colors. Compositors expect *premultiplied* alpha: each color
+   already multiplied by its opacity. So pass 0 writes =(bg x a, a)=, the
+   clear color is premultiplied too, and pass 1 blends with
+   =glBlendFuncSeparate=: colors with the usual "over", alpha with =ONE,
+   ONE_MINUS_SRC_ALPHA=, so a glyph makes its pixels more opaque, never
+   less.
+
+Cells whose background is the theme's default carry =CELL_DEFAULT_BG=;
+only those (and the padding) get the opacity. A program's colored
+background (a status bar, a selection) stays solid.
+
+* Shell and working directory
+
+=shell: [command: "/usr/bin/zsh", args: ["-l"]]= picks what each new tab
+runs; without it, your login shell ([[file:../lib/guiltty/session/pty.ex][Pty.user_shell/0]]).
+
+=working_directory: :inherit= (the default) opens a new tab where the
+current tab's shell is, like most terminals. How does guiltty know where
+that is? The kernel keeps every process's current directory, and shows
+it as a symlink: =/proc/<pid>/cwd=. =Pty.cwd/1= reads it for the shell's
+pid, so it works with any shell, without the shell having to report it.
+The new tab's Pty passes the directory to the NIF, which =chdir(2)='s into
+it between =fork= and =execve= ([[file:02-pty-nif.org][chapter 2]]), and sets =PWD= to match.
+=:home= or a path work too.
+
+(Following the shell's directory is approximate: if you run =vim= and it
+changes directory, /proc shows the shell's, not vim's. Terminals that ask
+shells to report their directory with OSC 7 do better; that's in the
+devlog's "Later".)
+
+* The tab bar
+
+Flat tabs on a bar a little lighter than the background, separated by
+thin lines. The active one is lighter still, in bold, with a line in the
+theme's blue along its bottom; the others are muted. Long titles end in
+=…=. All of it is cells (row 0 of the renderer's mirror, [[file:06-renderer.org][chapter 6]]), plus
+one bit, =CELL_ACCENT=, for the line.
+
+* Loot
+
+- =proc_pid_cwd(5)= (or =proc(5)=, "/proc/pid/cwd"); =chdir(2)=.
+- xterm ctlseqs: DECSCUSR, =CSI Ps SP q=.
+- "Premultiplied alpha": the Wikipedia article on alpha compositing, and
+  the OpenGL wiki's "Blending" (=glBlendFuncSeparate=).
+- SDL3 wiki: =SDL_WINDOW_TRANSPARENT=, =SDL_OpenURL=,
+  =SDL_EVENT_WINDOW_FOCUS_LOST=.
+- =xdg-open(1)=: what =SDL_OpenURL= runs on Linux.
+
+* Questions
+
+1. Why does SETUP carry the window options, when there's an OPTIONS
+   message too?
+2. How does guiltty know which directory the current tab is in?
+3. neovim switches to a bar cursor in insert mode. What does it send, and
+   where does guiltty keep it?
+4. Why must the colors be premultiplied when the window is translucent?
+5. Why does changing =opacity= from 1.0 need a new window?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The renderer needs them before it creates the window: the window's
+   size depends on the padding, and translucency is chosen at creation.
+   OPTIONS is for changes afterwards.
+2. It reads the symlink =/proc/<shell pid>/cwd=, which the kernel keeps
+   for every process.
+3. =CSI 6 SP q= (DECSCUSR 6, steady bar). The grid's =cursor_style= keeps
+   it, and every ROWS message carries it to the renderer.
+4. The compositor blends assuming each color is already multiplied by its
+   alpha; straight colors would come out too bright where the window is
+   see-through.
+5. The window's alpha channel (its X11 visual) is picked when it's
+   created; an opaque window can't become translucent.

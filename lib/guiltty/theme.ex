@@ -10,7 +10,8 @@ defmodule Guiltty.Theme do
     * 16-231: a 6x6x6 color cube
     * 232-255: a ramp of 24 grays
 
-  Live themes from a config file come in MVP 4.
+  Besides the default, a few well-known themes come built in by name (see
+  `named/1`); the config can start from one and change single colors.
   """
 
   defstruct [:fg, :bg, :cursor, :ansi]
@@ -46,6 +47,46 @@ defmodule Guiltty.Theme do
         {0xEA, 0xEA, 0xEA}
       ]
     }
+  end
+
+  # The published terminal palettes of each theme: fg, bg, cursor, then the
+  # 16 ANSI colors (8 normal, 8 bright).
+  @named %{
+    "dracula" =>
+      {"#f8f8f2", "#282a36", "#f8f8f2",
+       ~w(#21222c #ff5555 #50fa7b #f1fa8c #bd93f9 #ff79c6 #8be9fd #f8f8f2
+          #6272a4 #ff6e6e #69ff94 #ffffa5 #d6acff #ff92df #a4ffff #ffffff)},
+    "gruvbox-dark" =>
+      {"#ebdbb2", "#282828", "#ebdbb2",
+       ~w(#282828 #cc241d #98971a #d79921 #458588 #b16286 #689d6a #a89984
+          #928374 #fb4934 #b8bb26 #fabd2f #83a598 #d3869b #8ec07c #ebdbb2)},
+    "solarized-dark" =>
+      {"#839496", "#002b36", "#93a1a1",
+       ~w(#073642 #dc322f #859900 #b58900 #268bd2 #d33682 #2aa198 #eee8d5
+          #002b36 #cb4b16 #586e75 #657b83 #839496 #6c71c4 #93a1a1 #fdf6e3)},
+    "catppuccin-mocha" =>
+      {"#cdd6f4", "#1e1e2e", "#f5e0dc",
+       ~w(#45475a #f38ba8 #a6e3a1 #f9e2af #89b4fa #f5c2e7 #94e2d5 #bac2de
+          #585b70 #f38ba8 #a6e3a1 #f9e2af #89b4fa #f5c2e7 #94e2d5 #a6adc8)}
+  }
+
+  @doc "The names `named/1` knows."
+  def names, do: ["tomorrow-night" | Map.keys(@named)] |> Enum.sort()
+
+  @doc "A built-in theme by name, or `:error`."
+  @spec named(binary()) :: {:ok, t()} | :error
+  def named("tomorrow-night"), do: {:ok, default()}
+
+  def named(name) do
+    with {:ok, {fg, bg, cursor, ansi}} <- Map.fetch(@named, name) do
+      {:ok,
+       %__MODULE__{fg: rgb(fg), bg: rgb(bg), cursor: rgb(cursor), ansi: Enum.map(ansi, &rgb/1)}}
+    end
+  end
+
+  defp rgb("#" <> hex) do
+    <<r, g, b>> = Base.decode16!(hex, case: :lower)
+    {r, g, b}
   end
 
   @doc "All 256 palette colors."

@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 5
+  @version 6
 
   @hello 1
   @setup 2
@@ -30,6 +30,8 @@ defmodule Guiltty.Window.Protocol do
   @status 17
   @clipboard 18
   @paste_primary 19
+  @options 20
+  @open_url 21
 
   @max_tab_title 255
 
@@ -47,11 +49,32 @@ defmodule Guiltty.Window.Protocol do
   @doc "The protocol version this side speaks."
   def version, do: @version
 
-  @doc "Initial grid size, the theme's 259 colors, then the font (u16 size, family)."
-  @spec setup(pos_integer(), pos_integer(), Theme.t(), map()) :: iodata()
-  def setup(cols, rows, theme, font) do
-    [<<@setup, cols::16, rows::16>>, colors(theme), <<font.size::16>>, font.family]
+  @doc """
+  Initial grid size, the theme's 259 colors, the window options (see
+  `options/1`), then the font (u16 size, family).
+  """
+  @spec setup(pos_integer(), pos_integer(), Theme.t(), map(), map()) :: iodata()
+  def setup(cols, rows, theme, font, options) do
+    [
+      <<@setup, cols::16, rows::16>>,
+      colors(theme),
+      option_bytes(options),
+      <<font.size::16>>,
+      font.family
+    ]
   end
+
+  @doc """
+  Window options, live: u16 padding (pixels at scale 1), u8 opacity
+  (percent), u8 flags (bit 0: bold is bright).
+  """
+  def options(options), do: [<<@options>>, option_bytes(options)]
+
+  defp option_bytes(%{padding: padding, opacity: opacity, bold_is_bright: bright}),
+    do: <<padding::16, round(opacity * 100), bool(bright)>>
+
+  @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."
+  def open_url(url), do: <<@open_url, url::binary>>
 
   @doc "A new theme: the same 259 colors as the setup."
   def theme(theme), do: [<<@theme>>, colors(theme)]
@@ -64,17 +87,20 @@ defmodule Guiltty.Window.Protocol do
   end
 
   @doc """
-  A screen update. First the clusters the renderer hasn't seen (u32 id, u8
-  length, UTF-8), then the rows, sent as the grid stores them: `cols`
+  A screen update. After the cursor (position, visible, and a style byte:
+  bits 0-1 block, underline or bar, bit 2 blinking) come the clusters the
+  renderer hasn't seen (u32 id, u8 length, UTF-8), then the rows, sent as the grid stores them: `cols`
   cells of 14 bytes each. The renderer drops updates whose size doesn't
   match its own (they were sent before a resize reached the screen).
   """
   @spec rows(map()) :: iodata()
   def rows(%{size: {cols, rows}, rows: lines, cursor: {crow, ccol}, cursor_visible: visible} = u) do
     clusters = Map.get(u, :clusters, [])
+    style = cursor_byte(Map.get(u, :cursor_style) || {:block, false})
 
     [
-      <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), length(clusters)::16>>,
+      <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), style,
+        length(clusters)::16>>,
       Enum.map(clusters, fn {id, text} -> [<<id::32, byte_size(text)>>, text] end),
       <<length(lines)::16>>
       | Enum.map(lines, fn {index, row} -> [<<index::16>>, row] end)
@@ -136,6 +162,11 @@ defmodule Guiltty.Window.Protocol do
   def decode(<<@frame, us::32>>), do: {:ok, {:frame, us}}
   def decode(<<@tab_click, index>>), do: {:ok, {:tab_click, index}}
   def decode(other), do: {:error, {:bad_message, other}}
+
+  # Bits 0-1 the shape (0 block, 1 underline, 2 bar), bit 2 blinking.
+  defp cursor_byte({shape, blink}) do
+    Map.fetch!(%{block: 0, underline: 1, bar: 2}, shape) + if(blink, do: 4, else: 0)
+  end
 
   defp bool(true), do: 1
   defp bool(false), do: 0

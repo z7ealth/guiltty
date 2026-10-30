@@ -17,6 +17,20 @@ defmodule Guiltty.Config do
     * `:keys` - `%{action => [key]}`, see `Guiltty.Keymap.parse_key/1`
     * `:scrollback` - rows each tab keeps (applies to tabs opened after a
       change)
+    * `:cursor` - `%{style: :block | :bar | :underline, blink: boolean}`
+      (programs can change it while they run, as vim does in insert mode)
+    * `:window` - `%{padding: px, columns: n, rows: n, opacity: 0.1..1.0}`;
+      `columns` and `rows` are the size of a new window, `opacity` the
+      background's (it needs a compositor, and applies to windows opened
+      after a change)
+    * `:shell` - `%{command: path | nil, args: [binary]}`; nil runs your
+      login shell
+    * `:working_directory` - `:inherit` (a new tab starts where the active
+      tab's shell is), `:home`, or a path
+    * `:copy_on_select` - `true` (the primary selection), `:clipboard` (the
+      clipboard too) or `false`
+    * `:wheel_lines` - rows the mouse wheel scrolls per step
+    * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
   """
 
   use GenServer
@@ -40,7 +54,8 @@ defmodule Guiltty.Config do
     copy: ["ctrl+shift+c"],
     zoom_in: ["ctrl+=", "ctrl+shift+="],
     zoom_out: ["ctrl+-"],
-    zoom_reset: ["ctrl+0"]
+    zoom_reset: ["ctrl+0"],
+    open_config: ["ctrl+,"]
   }
 
   @max_scrollback 1_000_000
@@ -58,7 +73,14 @@ defmodule Guiltty.Config do
       theme: Theme.default(),
       font: %{family: "monospace", size: 18},
       keys: @default_keys,
-      scrollback: 10_000
+      scrollback: 10_000,
+      cursor: %{style: :block, blink: false},
+      window: %{padding: 6, columns: 80, rows: 24, opacity: 1.0},
+      shell: %{command: nil, args: []},
+      working_directory: :inherit,
+      copy_on_select: true,
+      wheel_lines: 3,
+      bold_is_bright: true
     }
   end
 
@@ -154,22 +176,131 @@ defmodule Guiltty.Config do
   end
 
   defp build(settings) do
-    defaults = defaults()
+    d = defaults()
+    get = &Keyword.get(settings, &1, &2)
 
-    with {:ok, theme} <- theme(Keyword.get(settings, :theme, []), defaults.theme),
-         {:ok, font} <- font(Keyword.get(settings, :font, []), defaults.font),
-         {:ok, keys} <- keys(Keyword.get(settings, :keys, []), defaults.keys),
-         {:ok, scrollback} <- scrollback(Keyword.get(settings, :scrollback, defaults.scrollback)) do
-      {:ok, %{theme: theme, font: font, keys: keys, scrollback: scrollback}}
+    with {:ok, theme} <- theme(get.(:theme, []), d.theme),
+         {:ok, font} <- font(get.(:font, []), d.font),
+         {:ok, keys} <- keys(get.(:keys, []), d.keys),
+         {:ok, scrollback} <- scrollback(get.(:scrollback, d.scrollback)),
+         {:ok, cursor} <- cursor(get.(:cursor, []), d.cursor),
+         {:ok, window} <- window(get.(:window, []), d.window),
+         {:ok, shell} <- shell(get.(:shell, []), d.shell),
+         {:ok, dir} <- working_directory(get.(:working_directory, d.working_directory)),
+         {:ok, copy} <-
+           one_of(:copy_on_select, get.(:copy_on_select, true), [true, false, :clipboard]),
+         {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
+         {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]) do
+      {:ok,
+       %{
+         theme: theme,
+         font: font,
+         keys: keys,
+         scrollback: scrollback,
+         cursor: cursor,
+         window: window,
+         shell: shell,
+         working_directory: dir,
+         copy_on_select: copy,
+         wheel_lines: wheel,
+         bold_is_bright: bright
+       }}
     end
   end
+
+  defp cursor(opts, d) when is_list(opts) do
+    with {:ok, style} <-
+           one_of(:"cursor style", Keyword.get(opts, :style, d.style), [:block, :bar, :underline]),
+         {:ok, blink} <-
+           one_of(:"cursor blink", Keyword.get(opts, :blink, d.blink), [true, false]) do
+      {:ok, %{style: style, blink: blink}}
+    end
+  end
+
+  defp cursor(_, _), do: {:error, "cursor: expected a keyword list"}
+
+  defp window(opts, d) when is_list(opts) do
+    opacity = Keyword.get(opts, :opacity, d.opacity)
+
+    with {:ok, padding} <-
+           number(:"window padding", Keyword.get(opts, :padding, d.padding), 0..100),
+         {:ok, columns} <-
+           number(:"window columns", Keyword.get(opts, :columns, d.columns), 10..1000),
+         {:ok, rows} <- number(:"window rows", Keyword.get(opts, :rows, d.rows), 3..1000),
+         true <- is_number(opacity) and opacity >= 0.1 and opacity <= 1.0 do
+      {:ok, %{padding: padding, columns: columns, rows: rows, opacity: opacity / 1}}
+    else
+      false -> {:error, "window opacity: expected a number from 0.1 to 1.0"}
+      error -> error
+    end
+  end
+
+  defp window(_, _), do: {:error, "window: expected a keyword list"}
+
+  defp shell(opts, d) when is_list(opts) do
+    command = Keyword.get(opts, :command, d.command)
+    args = Keyword.get(opts, :args, d.args)
+
+    if (command == nil or (is_binary(command) and command != "")) and is_list(args) and
+         Enum.all?(args, &is_binary/1),
+       do: {:ok, %{command: command, args: args}},
+       else: {:error, "shell: expected command: \"/path\" and args: [strings]"}
+  end
+
+  defp shell(_, _), do: {:error, "shell: expected a keyword list"}
+
+  defp working_directory(dir) when dir in [:inherit, :home], do: {:ok, dir}
+  defp working_directory("/" <> _ = dir), do: {:ok, dir}
+  defp working_directory("~" <> _ = dir), do: {:ok, Path.expand(dir)}
+
+  defp working_directory(other),
+    do: {:error, "working_directory: expected :inherit, :home or a path, got #{inspect(other)}"}
+
+  defp one_of(name, value, allowed) do
+    if value in allowed,
+      do: {:ok, value},
+      else: {:error, "#{name}: expected one of #{inspect(allowed)}, got #{inspect(value)}"}
+  end
+
+  defp number(_name, n, range) when is_integer(n) and n >= range.first and n <= range.last,
+    do: {:ok, n}
+
+  defp number(name, n, range),
+    do:
+      {:error,
+       "#{name}: expected a number from #{range.first} to #{range.last}, got #{inspect(n)}"}
 
   defp scrollback(n) when is_integer(n) and n in 0..@max_scrollback, do: {:ok, n}
 
   defp scrollback(_),
     do: {:error, "scrollback: expected a number of rows from 0 to #{@max_scrollback}"}
 
-  defp theme(opts, default) do
+  # A theme is a name ("dracula"), or a keyword list of colors, which may
+  # start from a named theme with `name:`.
+  defp theme(name, _default) when is_binary(name), do: theme([name: name], nil)
+
+  defp theme(opts, default) when is_list(opts) do
+    case Keyword.get(opts, :name) do
+      nil -> colors(opts, default)
+      name -> with {:ok, base} <- named_theme(name), do: colors(opts, base)
+    end
+  end
+
+  defp theme(other, _default),
+    do: {:error, "theme: expected a name or a keyword list, got #{inspect(other)}"}
+
+  defp named_theme(name) do
+    case Theme.named(name) do
+      {:ok, theme} ->
+        {:ok, theme}
+
+      :error ->
+        {:error,
+         "theme: unknown name #{inspect(name)}, try one of #{Enum.join(Theme.names(), ", ")}"}
+    end
+  end
+
+  defp colors(opts, default) do
     with {:ok, fg} <- color(opts[:fg], default.fg),
          {:ok, bg} <- color(opts[:bg], default.bg),
          {:ok, cursor} <- color(opts[:cursor], default.cursor),

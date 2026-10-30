@@ -112,6 +112,12 @@ defmodule Guiltty.TerminalTest do
     end
   end
 
+  test "DECSCUSR sets the cursor shape; 0 gives it back to the user" do
+    assert run("\e[5 q").cursor_style == {:bar, true}
+    assert run("\e[4 q").cursor_style == {:underline, false}
+    assert run("\e[2 q\e[0 q").cursor_style == nil
+  end
+
   describe "line drawing" do
     test "ESC ( 0 maps to box drawing, ESC ( B goes back" do
       assert first_line("\e(0lqqk\e(B ok") == "┌──┐ ok"

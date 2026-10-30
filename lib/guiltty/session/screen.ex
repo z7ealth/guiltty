@@ -324,8 +324,8 @@ defmodule Guiltty.Session.Screen do
   end
 
   defp viewer_state(state, grid) do
-    {Grid.cursor(grid), grid.cursor_visible, grid.title, grid.input, grid.alt?, state.scroll,
-     state.selection, state.search, Grid.scrollback_size(grid)}
+    {Grid.cursor(grid), grid.cursor_visible, grid.cursor_style, grid.title, grid.input, grid.alt?,
+     state.scroll, state.selection, state.search, Grid.scrollback_size(grid)}
   end
 
   defp update(grid, rows, clusters, state) do
@@ -337,6 +337,7 @@ defmodule Guiltty.Session.Screen do
       clusters: clusters,
       cursor: cursor || {0, 0},
       cursor_visible: grid.cursor_visible and cursor != nil,
+      cursor_style: grid.cursor_style,
       title: grid.title,
       input: grid.input,
       alt_screen: grid.alt?,

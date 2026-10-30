@@ -35,6 +35,7 @@ there.
 | select with the mouse         | copies to the primary selection          |
 | Ctrl+Shift+C, Ctrl+Shift+V    | copy, paste (middle click pastes the selection) |
 | Ctrl+=, Ctrl+-, Ctrl+0        | zoom in, out, reset                      |
+| Ctrl+,                        | open the config file in your editor      |
 
 Hold Shift to select in programs that use the mouse (vim, htop). Copy
 `priv/config.example.exs` to

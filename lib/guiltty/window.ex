@@ -48,7 +48,6 @@ defmodule Guiltty.Window do
   @resubscribe_ms 50
   @halo_color {0x81, 0xA2, 0xBE}
   @halo_ms 400
-  @wheel_lines 3
   @min_font 6
   @max_font 96
   @default_input %{
@@ -193,7 +192,8 @@ defmodule Guiltty.Window do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
       {tabs, active} = Tabs.attach_window(self())
       {cols, rows} = Session.size(active)
-      send_port(state, Protocol.setup(cols, rows, state.config.theme, font(state)))
+      setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
+      send_port(state, setup)
       {:noreply, show_tabs(%{state | ready: true, size: {cols, rows}}, tabs, active)}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
@@ -265,9 +265,10 @@ defmodule Guiltty.Window do
   end
 
   defp local_mouse({:mouse, :release, 0, _col, _row, _mods, _}, %{selecting: true} = state) do
-    case on_screen(state, &Screen.select(&1, :finish)) do
-      text when is_binary(text) and text != "" ->
+    case {on_screen(state, &Screen.select(&1, :finish)), state.config.copy_on_select} do
+      {text, copy} when is_binary(text) and text != "" and copy != false ->
         send_port(state, Protocol.clipboard(:primary, text))
+        if copy == :clipboard, do: send_port(state, Protocol.clipboard(:clipboard, text))
 
       _ ->
         :ok
@@ -286,11 +287,11 @@ defmodule Guiltty.Window do
   defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, %{alt_screen: true} = state) do
     key = if dir == 0, do: Keymap.key(:up), else: Keymap.key(:down)
     bytes = Keymap.to_bytes({:key, key, 0}, state.input)
-    write(state, :binary.copy(bytes, @wheel_lines))
+    write(state, :binary.copy(bytes, state.config.wheel_lines))
   end
 
   defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, state) do
-    lines = if dir == 0, do: @wheel_lines, else: -@wheel_lines
+    lines = if dir == 0, do: state.config.wheel_lines, else: -state.config.wheel_lines
     on_screen(state, &Screen.scroll(&1, {:lines, lines}))
     %{state | view_moved: true}
   end
@@ -374,6 +375,21 @@ defmodule Guiltty.Window do
         :ok
     end
 
+    state
+  end
+
+  # Open the config file in the app the desktop uses for it, creating it
+  # from the example first. The renderer opens it (SDL_OpenURL): it runs in
+  # the user's session, with the right display.
+  defp run(:open_config, state) do
+    path = Config.path()
+
+    unless File.exists?(path) do
+      File.mkdir_p!(Path.dirname(path))
+      File.cp!(Path.join(:code.priv_dir(:guiltty), "config.example.exs"), path)
+    end
+
+    send_port(state, Protocol.open_url("file://" <> path))
     state
   end
 
@@ -466,7 +482,9 @@ defmodule Guiltty.Window do
   defp pull(state) do
     case catch_exit(fn -> Screen.take_update(state.active) end) do
       %{} = update ->
-        send_port(state, Protocol.rows(update))
+        # The program's cursor shape if it set one, otherwise the user's.
+        default = {state.config.cursor.style, state.config.cursor.blink}
+        send_port(state, Protocol.rows(%{update | cursor_style: update.cursor_style || default}))
 
         if update.title != state.title,
           do: send_port(state, Protocol.title(window_title(update.title)))
@@ -517,9 +535,27 @@ defmodule Guiltty.Window do
     end
 
     old_font = font(state)
+    old = state.config
     state = %{state | config: config, bindings: parse_bindings(config.keys)}
     if font(state) != old_font, do: send_port(state, Protocol.font(font(state)))
+    if options(config) != options(old), do: send_port(state, Protocol.options(options(config)))
+
+    # A new default cursor shows with the next update, and bold-is-bright
+    # changes the colors of rows the renderer already has: ask for every
+    # row again.
+    if (config.cursor != old.cursor or config.bold_is_bright != old.bold_is_bright) and
+         state.active,
+       do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
+
     state
+  end
+
+  defp options(config) do
+    %{
+      padding: config.window.padding,
+      opacity: config.window.opacity,
+      bold_is_bright: config.bold_is_bright
+    }
   end
 
   defp send_port(%{port: port}, message) when is_port(port), do: Port.command(port, message)

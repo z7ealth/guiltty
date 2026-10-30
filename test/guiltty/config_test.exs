@@ -29,6 +29,55 @@ defmodule Guiltty.ConfigTest do
     assert config.keys.close_tab == ["ctrl+shift+w"]
   end
 
+  test "the window, cursor, shell and behavior settings", %{tmp_dir: dir} do
+    path =
+      write(dir, "more.exs", """
+      [
+        cursor: [style: :bar, blink: true],
+        window: [padding: 10, columns: 120, rows: 40, opacity: 0.85],
+        shell: [command: "/bin/bash", args: ["-l"]],
+        working_directory: "~/src",
+        copy_on_select: :clipboard,
+        wheel_lines: 5,
+        bold_is_bright: false
+      ]
+      """)
+
+    assert {:ok, c} = Config.load(path)
+    assert c.cursor == %{style: :bar, blink: true}
+    assert c.window == %{padding: 10, columns: 120, rows: 40, opacity: 0.85}
+    assert c.shell == %{command: "/bin/bash", args: ["-l"]}
+    assert c.working_directory == Path.expand("~/src")
+    assert {c.copy_on_select, c.wheel_lines, c.bold_is_bright} == {:clipboard, 5, false}
+    assert c.keys.open_config == ["ctrl+,"]
+  end
+
+  test "a named theme, alone or as the base for changes", %{tmp_dir: dir} do
+    assert {:ok, %{theme: dracula}} = Config.load(write(dir, "a.exs", ~s([theme: "dracula"])))
+    assert dracula.bg == {0x28, 0x2A, 0x36}
+
+    assert {:ok, %{theme: theme}} =
+             Config.load(write(dir, "b.exs", ~s([theme: [name: "dracula", bg: "#000000"]])))
+
+    assert theme.bg == {0, 0, 0} and theme.fg == dracula.fg
+    assert {:error, msg} = Config.load(write(dir, "c.exs", ~s([theme: "nope"])))
+    assert msg =~ "gruvbox-dark"
+  end
+
+  test "bad values in the new settings are reported", %{tmp_dir: dir} do
+    for bad <- [
+          "[cursor: [style: :beam]]",
+          "[window: [opacity: 0]]",
+          "[window: [padding: -1]]",
+          "[shell: [command: 42]]",
+          "[working_directory: \"relative\"]",
+          "[wheel_lines: 0]",
+          "[copy_on_select: :maybe]"
+        ] do
+      assert {:error, _} = Config.load(write(dir, "bad.exs", bad)), bad
+    end
+  end
+
   test "the example config is valid" do
     assert {:ok, _config} = Config.load(Path.expand("../../priv/config.example.exs", __DIR__))
   end

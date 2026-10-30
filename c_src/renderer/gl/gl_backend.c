@@ -31,7 +31,8 @@ static const char cell_frag_src[] = {
     X(PFNGLGETERRORPROC, GetError)                                                        \
     X(PFNGLENABLEPROC, Enable)                                                            \
     X(PFNGLDISABLEPROC, Disable)                                                          \
-    X(PFNGLBLENDFUNCPROC, BlendFunc)                                                      \
+    X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate)                                      \
+    X(PFNGLUNIFORM1FPROC, Uniform1f)                                                      \
     X(PFNGLCREATESHADERPROC, CreateShader)                                                \
     X(PFNGLSHADERSOURCEPROC, ShaderSource)                                                \
     X(PFNGLCOMPILESHADERPROC, CompileShader)                                              \
@@ -90,7 +91,7 @@ struct gl {
     int atlas_w, atlas_h;
     struct {
         GLint viewport, origin, cell, cols, atlas_cols, cursor, cursor2, pass, atlas,
-            cursor_color, underline_y, strike_y, line_thickness;
+            cursor_color, underline_y, strike_y, line_thickness, cursor_shape, accent, opacity;
     } u; // uniform locations
 };
 
@@ -159,6 +160,9 @@ struct gl {
     LOC(underline_y, "u_underline_y");
     LOC(strike_y, "u_strike_y");
     LOC(line_thickness, "u_line_thickness");
+    LOC(cursor_shape, "u_cursor_shape");
+    LOC(accent, "u_accent");
+    LOC(opacity, "u_opacity");
 #undef LOC
     return true;
 }
@@ -167,7 +171,9 @@ static bool gl_configure(void) {
     return SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) &&
            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3) &&
            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE) &&
-           SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+           SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1) &&
+           // An alpha channel in the framebuffer, for translucent windows.
+           SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
 }
 
 static void gl_shutdown(void *state);
@@ -268,8 +274,11 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     if (ckd_mul(&bytes, ncells, sizeof(struct cell)))
         return;
 
-    f->ClearColor(unit(frame->clear_rgb[0]), unit(frame->clear_rgb[1]), unit(frame->clear_rgb[2]),
-                  1.0f);
+    // The compositor expects premultiplied alpha: color already scaled by
+    // its opacity.
+    float a = frame->opacity;
+    f->ClearColor(unit(frame->clear_rgb[0]) * a, unit(frame->clear_rgb[1]) * a,
+                  unit(frame->clear_rgb[2]) * a, a);
     f->Clear(GL_COLOR_BUFFER_BIT);
 
     // Damage tracking: the GPU keeps last frame's cells, so upload only the
@@ -308,6 +317,10 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1i(gl->u.underline_y, gl->baseline + 1);
     f->Uniform1i(gl->u.strike_y, gl->baseline - gl->cell_h / 4);
     f->Uniform1i(gl->u.line_thickness, gl->line_thickness);
+    f->Uniform1i(gl->u.cursor_shape, frame->cursor_shape);
+    f->Uniform3f(gl->u.accent, unit(frame->accent_rgb[0]), unit(frame->accent_rgb[1]),
+                 unit(frame->accent_rgb[2]));
+    f->Uniform1f(gl->u.opacity, frame->opacity);
 
     f->BindVertexArray(gl->vao);
     f->ActiveTexture(GL_TEXTURE0);
@@ -318,9 +331,11 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1i(gl->u.pass, 0);
     f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
 
-    // Pass 1: glyphs, blended by coverage (out_color's alpha).
+    // Pass 1: glyphs, blended by coverage (out_color's alpha). Color: the
+    // usual "over". Alpha: the glyph makes its pixels more opaque, never
+    // less, and keeps what's there premultiplied.
     f->Enable(GL_BLEND);
-    f->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    f->BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     f->Uniform1i(gl->u.pass, 1);
     f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
 

@@ -104,12 +104,15 @@ backend grows its buffer when that happens.
 
 ** The tab bar and the halo (MVP 4)
 The cell mirror has one more row than the grid: row 0 is the tab bar,
-built by the core from the TABS message (" 1 title " per tab, the active
-one in the theme's blue), so the backend draws it like any other row. Grid
+built by the core from the TABS message, so the backend draws it like any
+other row. Since MVP 6 the tabs are flat: " 1 title " each, thin =│=
+separators, long titles cut with =…=, the active tab a little lighter, in
+bold, with an accent line in the theme's blue along its bottom (the
+=CELL_ACCENT= bit; the fragment shader draws the line). Grid
 row i is mirror row i + 1; the cursor and mouse rows are shifted to match,
 and a click on row 0 becomes a TAB_CLICK.
 
-The halo is the 6-pixel padding around the grid: while it's lit, the frame
+The halo is the padding around the grid: while it's lit, the frame
 is cleared with the halo color instead of the background. The main loop
 waits with a timeout so it can turn it off.
 

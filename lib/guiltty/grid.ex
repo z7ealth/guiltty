@@ -104,6 +104,9 @@ defmodule Guiltty.Grid do
     top: 0,
     bottom: nil,
     cursor_visible: true,
+    # set by the program (DECSCUSR): {:block | :underline | :bar, blink?},
+    # or nil for the user's choice from the config
+    cursor_style: nil,
     autowrap: true,
     origin: false,
     insert: false,
@@ -545,6 +548,9 @@ defmodule Guiltty.Grid do
   def report_row(grid), do: grid.row
 
   def set_cursor_visible(grid, visible), do: %{grid | cursor_visible: visible}
+
+  @doc "DECSCUSR: the cursor's shape, or nil to go back to the user's."
+  def set_cursor_style(grid, style), do: %{grid | cursor_style: style}
 
   @doc "DECSC: saves the cursor, the pen, origin mode and the character sets."
   def save_cursor(grid) do

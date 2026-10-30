@@ -20,7 +20,7 @@ out vec2 v_local; // position inside the cell, in pixels
 flat out uint v_attrs;
 flat out vec3 v_fg;
 flat out vec3 v_bg;
-flat out int v_is_cursor;
+flat out int v_is_cursor; // 0 no, 1 the cursor's cell, 2 its right half (wide character)
 
 void main() {
     // Strip order: (0,0) (1,0) (0,1) (1,1)
@@ -40,5 +40,5 @@ void main() {
     v_attrs = a_attrs;
     v_fg = a_fg;
     v_bg = a_bg;
-    v_is_cursor = (gl_InstanceID == u_cursor || gl_InstanceID == u_cursor2) ? 1 : 0;
+    v_is_cursor = gl_InstanceID == u_cursor ? 1 : gl_InstanceID == u_cursor2 ? 2 : 0;
 }

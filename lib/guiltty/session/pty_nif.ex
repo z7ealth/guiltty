@@ -12,8 +12,11 @@ defmodule Guiltty.Session.PtyNif do
     |> :erlang.load_nif(0)
   end
 
-  @doc "Opens a PTY and runs `path` on it. Returns `{:ok, pty, os_pid}`."
-  def open(_path, _argv, _envp, _cols, _rows), do: :erlang.nif_error(:not_loaded)
+  @doc """
+  Opens a PTY and runs `path` on it, in directory `cwd` ("" for the BEAM's
+  own). Returns `{:ok, pty, os_pid}`.
+  """
+  def open(_path, _argv, _envp, _cols, _rows, _cwd), do: :erlang.nif_error(:not_loaded)
 
   @doc "Non-blocking read: `{:ok, bytes} | :eagain | :eof | {:error, reason}`."
   def read(_pty), do: :erlang.nif_error(:not_loaded)

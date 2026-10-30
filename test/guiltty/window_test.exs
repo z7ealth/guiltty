@@ -207,7 +207,7 @@ defmodule Guiltty.WindowTest do
     # half of one.
     Port.command(
       port(window),
-      <<3, 80::16, 24::16, 0::16, 0::16, 1, 0::16, 5::16, 0::16, 0::size(560)-unit(8)>>
+      <<3, 80::16, 24::16, 0::16, 0::16, 1, 0, 0::16, 5::16, 0::16, 0::size(560)-unit(8)>>
     )
 
     # The renderer exits with status 2 (protocol error), not a sanitizer crash.

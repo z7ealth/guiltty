@@ -112,6 +112,20 @@ static void free_strings(char **strs) {
     free(strs);
 }
 
+// A binary as a malloc'd C string, or nullptr if it isn't a binary or has a
+// NUL inside (which would cut the string short).
+[[nodiscard]] static char *binary_to_string(ErlNifEnv *env, ERL_NIF_TERM term) {
+    ErlNifBinary bin;
+    size_t size;
+    char *s;
+    if (!enif_inspect_binary(env, term, &bin) || memchr(bin.data, '\0', bin.size) != nullptr ||
+        ckd_add(&size, bin.size, 1) || (s = malloc(size)) == nullptr)
+        return nullptr;
+    memcpy(s, bin.data, bin.size);
+    s[bin.size] = '\0';
+    return s;
+}
+
 // Turn an Elixir list of binaries into a NULL-terminated array of C strings,
 // the shape execve wants for argv and envp. Done before fork: the child may
 // not call malloc.
@@ -146,7 +160,7 @@ static void free_strings(char **strs) {
 // example) stays locked forever in the child. So only async-signal-safe
 // calls from here on (signal-safety(7)).
 [[noreturn]] static void exec_child(int slave, const char *path, char *const argv[],
-                                    char *const envp[]) {
+                                    char *const envp[], const char *cwd) {
     // The BEAM blocks and ignores some signals. Blocked masks and ignored
     // dispositions survive execve, so without this reset bash's children
     // would start with, say, SIGPIPE ignored.
@@ -169,11 +183,18 @@ static void free_strings(char **strs) {
     // Don't leak the BEAM's fds (other sessions' masters, sockets) into bash.
     close_range(STDERR_FILENO + 1, ~0U, 0);
 
+    // Start where the user asked (a new tab opens in the current tab's
+    // directory). chdir(2) is async-signal-safe. If the directory is gone,
+    // the shell just starts where the BEAM is.
+    if (cwd[0] != '\0')
+        (void)chdir(cwd);
+
     execve(path, argv, envp);
     _exit(127);
 }
 
-// open(path, argv, envp, cols, rows) -> {:ok, pty, os_pid} | {:error, reason}
+// open(path, argv, envp, cols, rows, cwd) -> {:ok, pty, os_pid} | {:error, reason}
+// cwd "" means: don't change directory.
 //
 // Runs on a dirty I/O scheduler: forking a big BEAM copies its page tables,
 // which can take long enough to upset a normal scheduler.
@@ -185,16 +206,15 @@ static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
         rows > USHRT_MAX)
         return enif_make_badarg(env);
 
-    char *path = nullptr;
-    size_t path_size;
-    if (!ckd_add(&path_size, path_bin.size, 1) && (path = malloc(path_size)) != nullptr) {
-        memcpy(path, path_bin.data, path_bin.size);
-        path[path_bin.size] = '\0';
-    }
+    // Everything the child needs is copied into C strings now: after fork
+    // it can't call malloc.
+    char *path = binary_to_string(env, argv[0]);
+    char *cwd = binary_to_string(env, argv[5]);
     char **child_argv = list_to_strings(env, argv[1]);
     char **child_envp = list_to_strings(env, argv[2]);
-    if (path == nullptr || child_argv == nullptr || child_envp == nullptr) {
+    if (path == nullptr || cwd == nullptr || child_argv == nullptr || child_envp == nullptr) {
         free(path);
+        free(cwd);
         free_strings(child_argv);
         free_strings(child_envp);
         return enif_make_badarg(env);
@@ -222,7 +242,7 @@ static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
         goto out;
     }
     if (pid == 0)
-        exec_child(slave, path, child_argv, child_envp);
+        exec_child(slave, path, child_argv, child_envp, cwd);
 
     // Our copy of the slave must go, or the master never reports the end.
     close(slave);
@@ -240,6 +260,7 @@ out:
     if (slave >= 0)
         close(slave);
     free(path);
+    free(cwd);
     free_strings(child_argv);
     free_strings(child_envp);
     return result;
@@ -410,7 +431,7 @@ static ERL_NIF_TERM nif_kill(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
 }
 
 static ErlNifFunc funcs[] = {
-    {"open", 5, nif_open, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"open", 6, nif_open, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"read", 1, nif_read, 0},
     {"write", 2, nif_write, 0},
     {"select_read", 1, nif_select_read, 0},

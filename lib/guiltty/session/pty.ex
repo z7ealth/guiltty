@@ -56,6 +56,12 @@ defmodule Guiltty.Session.Pty do
   @doc "Sends SIGWINCH to the foreground job, so full-screen programs redraw."
   def redraw(id), do: GenServer.cast(Session.via(id, :pty), :redraw)
 
+  @doc """
+  The shell's current directory, read from `/proc/<pid>/cwd` (the kernel
+  keeps it for every process), or nil.
+  """
+  def cwd(id), do: GenServer.call(Session.via(id, :pty), :cwd)
+
   @doc "Makes `pid` the receiver of `{:pty_data, bytes}` messages."
   def attach_parser(id, pid), do: GenServer.call(Session.via(id, :pty), {:attach_parser, pid})
 
@@ -69,8 +75,11 @@ defmodule Guiltty.Session.Pty do
     env = opts |> Keyword.get(:env, %{}) |> build_env()
     cols = Keyword.get(opts, :cols, 80)
     rows = Keyword.get(opts, :rows, 24)
+    cwd = Keyword.get(opts, :cwd) || ""
+    # Shells trust PWD when it names their directory; keep it truthful.
+    env = if cwd != "", do: put_env(env, "PWD", cwd), else: env
 
-    case PtyNif.open(shell, argv, env, cols, rows) do
+    case PtyNif.open(shell, argv, env, cols, rows, cwd) do
       {:ok, pty, os_pid} ->
         Logger.debug("pty: started #{shell} as pid #{os_pid}")
 
@@ -154,7 +163,17 @@ defmodule Guiltty.Session.Pty do
     |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
   end
 
+  defp put_env(env, name, value),
+    do: [name <> "=" <> value | Enum.reject(env, &String.starts_with?(&1, name <> "="))]
+
   @impl true
+  def handle_call(:cwd, _from, state) do
+    case File.read_link("/proc/#{state.os_pid}/cwd") do
+      {:ok, dir} -> {:reply, dir, state}
+      {:error, _} -> {:reply, nil, state}
+    end
+  end
+
   def handle_call({:attach_parser, pid}, _from, state) do
     Process.monitor(pid)
 

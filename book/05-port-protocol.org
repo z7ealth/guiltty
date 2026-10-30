@@ -56,8 +56,8 @@ one byte.
 | Tag | Name  | Direction        | Payload                                                       |
 |-----+-------+------------------+---------------------------------------------------------------|
 |   1 | HELLO | renderer->Elixir | u16 version, u8 name length, name                             |
-|   2 | SETUP | Elixir->renderer | u16 cols, u16 rows, then 259 colors of 3 bytes: palette 0-255, fg, bg, cursor |
-|   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u16 cluster count, then per cluster: u32 id, u8 length, UTF-8; u16 row count, then per row: u16 index, cols x 14-byte cells |
+|   2 | SETUP | Elixir->renderer | u16 cols, u16 rows, then 259 colors of 3 bytes: palette 0-255, fg, bg, cursor; the options (as in OPTIONS); u16 font size, family |
+|   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u8 cursor style, u16 cluster count, then per cluster: u32 id, u8 length, UTF-8; u16 row count, then per row: u16 index, cols x 14-byte cells |
 |   4 | TEXT  | renderer->Elixir | UTF-8 text the user typed                                     |
 |   5 | KEY   | renderer->Elixir | u32 SDL keycode, u16 SDL modifier bits                        |
 |   6 | RESIZE| renderer->Elixir | u16 cols, u16 rows that fit the window now                    |
@@ -74,12 +74,15 @@ one byte.
 |  17 | STATUS | Elixir->renderer | UTF-8 text for the right of the tab bar (empty hides it)     |
 |  18 | CLIPBOARD | Elixir->renderer | u8 target (0 clipboard, 1 primary), UTF-8 text         |
 |  19 | PASTE_PRIMARY | Elixir->renderer | (empty): paste the primary selection (answered with PASTE) |
+|  20 | OPTIONS | Elixir->renderer | u16 padding, u8 opacity (percent), u8 flags (bit 0: bold is bright) |
+|  21 | OPEN_URL | Elixir->renderer | a URL to open with the desktop's app (the config file)     |
 
-This is version 5 (MVP 5): cells grew to 14 bytes, ROWS carries cluster
-definitions (chapter 13), MOUSE carries the click count, and STATUS,
-CLIPBOARD and PASTE_PRIMARY are new (chapter 15). Version 1 had no colors
-and no RESIZE; version 2 had no TITLE, PASTE or MOUSE; version 3 had no
-tabs, live config, halo or frame reports; version 4 had ASCII-only cells.
+This is version 6 (MVP 6): SETUP carries the window options, ROWS the
+cursor style (bits 0-1 block, underline or bar; bit 2 blinking), and
+OPTIONS and OPEN_URL are new (chapter 16). Version 1 had no colors and no
+RESIZE; version 2 had no TITLE, PASTE or MOUSE; version 3 had no tabs,
+live config, halo or frame reports; version 4 had ASCII-only cells;
+version 5 had no options or cursor styles.
 
 ROWS carries the grid size it describes, so the renderer can drop updates
 sent before a resize reached the Screen ([[file:09-resize.org][the resize chapter]]). Rows are
