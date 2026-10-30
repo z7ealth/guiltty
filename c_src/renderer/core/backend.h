@@ -6,6 +6,7 @@
 #pragma once
 
 #include <SDL3/SDL.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "atlas.h"
@@ -41,11 +42,14 @@ enum cell_attr : uint16_t {
 struct cell {
     uint16_t slot; // atlas slot; 0 is blank
     uint16_t attrs; // the backend still draws bold, underline, strike, color glyphs
-    uint8_t fg[3];
-    uint8_t bg[3];
-    uint8_t pad[2];
+    // r, g, b and an unused byte each: four bytes keep both colors on a
+    // 4-byte boundary, where Vulkan reads them as R8G8B8A8 (every GPU can
+    // read that format from a vertex buffer; R8G8B8 isn't guaranteed).
+    uint8_t fg[4];
+    uint8_t bg[4];
 };
 static_assert(sizeof(struct cell) == 12, "uploaded as-is, 12 bytes per cell");
+static_assert(offsetof(struct cell, fg) == 4 && offsetof(struct cell, bg) == 8);
 
 // Everything needed to draw one frame. cells holds cols * rows entries,
 // row-major. Only rows dirty_first..dirty_last changed since the previous
@@ -61,6 +65,10 @@ struct frame {
     uint8_t cursor_shape; // enum cursor_shape (protocol.h)
     uint8_t accent_rgb[3]; // the line under the active tab
     float opacity; // of cells with CELL_DEFAULT_BG and of the padding; 1 = opaque
+    // When set, the backend copies the finished frame here before showing
+    // it: width x height pixels (the drawable's size), RGBA, top row first.
+    // For screenshots (--screenshot), not every frame.
+    uint8_t *capture;
     // Draw cells row 0 (the tab bar) below the others instead of above.
     bool first_row_last;
     uint8_t cursor_rgb[3];

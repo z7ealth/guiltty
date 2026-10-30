@@ -117,8 +117,8 @@ guiltty/
 │       │                    # fonts (fontconfig fallback, HarfBuzz, FreeType),
 │       │                    # sprites (box drawing and blocks drawn by guiltty)
 │       ├── gl/              # OpenGL 3.3 core backend (MVP 1)
-│       └── vk/              # Vulkan backend (side quest)
-├── priv/                    # built binaries: guiltty_gl, later guiltty_vk
+│       └── vk/              # Vulkan 1.3 backend (MVP 10, the default)
+├── priv/                    # built binaries: guiltty_vk, guiltty_gl (+ -dbg builds)
 ├── Makefile                 # built through elixir_make
 ├── test/fixtures/           # recorded byte streams
 ├── book/                    # Org-mode guide to how guiltty works (see "The book")
@@ -225,11 +225,15 @@ make width-table            # regenerate the Unicode width table from glibc's wc
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
 ./install.sh                # install for the user into ~/.local (--uninstall to remove)
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir
+./priv/guiltty_vk-dbg --replay test/fixtures/replay/session.msgs --screenshot x.ppm
+                               # replay recorded port messages, save the last frame
 ```
 
 Tests run the `-debug` renderer headless (`SDL_VIDEO_DRIVER=offscreen`).
-Set `config :guiltty, renderer: "guiltty_gl-dbg"` to run the app
-under the sanitizers.
+Set `config :guiltty, renderer: "guiltty_vk-dbg"` (or `"guiltty_gl-dbg"`)
+to run the app under the sanitizers; the Vulkan one also turns on the
+validation layers. With no Vulkan GPU, `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`
+picks lavapipe (Mesa's software Vulkan).
 
 ## Environment
 
@@ -243,6 +247,9 @@ The user's machine is openSUSE (packages via `zypper`), with:
 - Xvfb and Xephyr are installed: use a private display (`Xvfb :77`) for
   tests that need real X key or mouse events, never the user's display
 - SDL3 3.4, an X11 session (`DISPLAY=:0`)
+- AMD RX 6600 (RADV), Vulkan loader 1.4, glslc (shaderc), the Khronos
+  validation layers, vulkan-tools. RADV can't present on Xvfb (no DRI3):
+  Vulkan tests on Xvfb or offscreen run on lavapipe or a headless surface
 - **Not installed yet:** Valgrind, Clang. Ask before installing system
   packages and give the exact `zypper` command.
 

@@ -29,8 +29,9 @@ of function pointers ([[file:../c_src/renderer/core/backend.h][backend.h]]):
 | =shutdown=     | on exit                                               |
 
 =gl_backend.c= defines =renderer_backend=, and the Makefile links core +
-gl into =guiltty_gl=. The Vulkan side quest adds =vk/= and a second
-binary, =guiltty_vk=, without touching the core.
+gl into =guiltty_gl=. =vk/vk_backend.c= defines it too, and core + vk
+link into =guiltty_vk= (the default since v0.10.0), without touching the
+core. [[file:19-vulkan.org][Chapter 19]] is the Vulkan backend.
 
 * The glyph atlas
 

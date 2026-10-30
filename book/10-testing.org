@@ -125,6 +125,16 @@ tmux recordings are fixtures now.
 - *Chunking doesn't matter*: random mixes of real sequences, cut at random
   points, parse to the same commands as when fed whole.
 
+* Renderer replay (MVP 10)
+
+The renderer can be tested without Elixir too. =GUILTTY_RECORD=file=
+makes the Window save every port message it sends; =--replay file
+--screenshot out.ppm= plays them into a renderer and saves the last
+frame. [[file:../test/fixtures/replay/session.msgs][session.msgs]] is one such recording, and
+[[file:../test/guiltty/renderer_replay_test.exs][renderer_replay_test.exs]] replays it through both backends, under the
+sanitizers (and Vulkan's validation layers), and checks that OpenGL and
+Vulkan draw the same pixels. Details in [[file:19-vulkan.org][chapter 19]].
+
 * Loot
 
 - =script(1)= from util-linux.

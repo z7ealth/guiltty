@@ -74,19 +74,11 @@ defmodule Guiltty.Window do
 
   @impl true
   def init(opts) do
-    renderer = Keyword.get(opts, :renderer, Application.get_env(:guiltty, :renderer))
-    path = Path.join(:code.priv_dir(:guiltty), renderer)
-
-    port =
-      Port.open({:spawn_executable, path}, [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        packet: 4,
-        env: Keyword.get(opts, :env, [])
-      ])
-
     config = Config.get()
+    renderer = Keyword.get(opts, :renderer) || renderer_for(config.renderer)
+    env = Keyword.get(opts, :env, [])
+    port = open_renderer(renderer, env)
+
     if Process.whereis(Config), do: Config.subscribe(self())
 
     # Flash the border when a parser comes back from a crash.
@@ -101,6 +93,13 @@ defmodule Guiltty.Window do
 
     state = %{
       port: port,
+      # the renderer binary, and its environment (for a fallback)
+      renderer: renderer,
+      env: env,
+      # a warning to show once the renderer says hello, and whether this
+      # renderer has drawn a frame yet
+      notice: nil,
+      drawn: false,
       handler: handler,
       ready: false,
       # the session being shown, and a monitor on its Screen
@@ -139,12 +138,67 @@ defmodule Guiltty.Window do
       flash: nil,
       # the tab waiting for a second Ctrl+Shift+B to join as a local tab
       confirm_local: nil,
+      # GUILTTY_RECORD's file, or nil
+      recording: open_recording(),
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
       cheatsheet: nil
     }
 
     {:ok, state, @hello_timeout}
   end
+
+  # The binary for the `renderer` setting. An explicit `config :guiltty,
+  # renderer: "..."` (the tests' sanitizer builds) wins. Once Vulkan has
+  # failed to start, later windows go straight to OpenGL.
+  defp renderer_for(setting) do
+    cond do
+      binary = Application.get_env(:guiltty, :renderer) -> to_string(binary)
+      setting == :gl or Application.get_env(:guiltty, :vulkan_failed, false) -> "guiltty_gl"
+      true -> "guiltty_vk"
+    end
+  end
+
+  defp open_renderer(renderer, env) do
+    Port.open({:spawn_executable, Path.join(:code.priv_dir(:guiltty), renderer)}, [
+      :binary,
+      :exit_status,
+      :use_stdio,
+      packet: 4,
+      env: env
+    ])
+  end
+
+  # Vulkan died before drawing anything: no driver, or no GPU that can
+  # show this window. (Its hello comes before it even makes a window, so
+  # "before the first frame" is the sign, not "before the hello".) Draw
+  # with OpenGL instead, in this same Window: forget the handshake and the
+  # tab being shown, so the new renderer's hello does both again. Later
+  # windows go straight to OpenGL, until guiltty restarts.
+  defp fall_back(%{renderer: "guiltty_vk" <> build, drawn: false} = state, why) do
+    Logger.warning("window: the Vulkan renderer #{why}; drawing with OpenGL")
+    Application.put_env(:guiltty, :vulkan_failed, true)
+    if why == "didn't say hello", do: Port.close(state.port)
+    if state.active, do: catch_exit(fn -> Screen.unsubscribe(state.active, self()) end)
+    if state.screen_ref, do: Process.demonitor(state.screen_ref, [:flush])
+    renderer = "guiltty_gl" <> build
+
+    {:noreply,
+     %{
+       state
+       | port: open_renderer(renderer, state.env),
+         renderer: renderer,
+         notice: "Vulkan couldn't start: drawing with OpenGL (see the log)",
+         ready: false,
+         active: nil,
+         screen_ref: nil,
+         tabs: [],
+         awaiting_frame: false,
+         pending: false,
+         status: {:normal, ""}
+     }, @hello_timeout}
+  end
+
+  defp fall_back(_state, _why), do: :no_fallback
 
   @doc false
   def forward_restart(_event, _measurements, %{session: id}, pid),
@@ -171,10 +225,18 @@ defmodule Guiltty.Window do
   end
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    {:stop, {:renderer_exited, status}, %{state | port: nil}}
+    case fall_back(state, "exited with status #{status}") do
+      :no_fallback -> {:stop, {:renderer_exited, status}, %{state | port: nil}}
+      fallen_back -> fallen_back
+    end
   end
 
-  def handle_info(:timeout, state), do: {:stop, :no_hello_from_renderer, state}
+  def handle_info(:timeout, state) do
+    case fall_back(state, "didn't say hello") do
+      :no_fallback -> {:stop, :no_hello_from_renderer, state}
+      fallen_back -> fallen_back
+    end
+  end
 
   ## Screen and tabs
 
@@ -222,7 +284,11 @@ defmodule Guiltty.Window do
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
       state = show_tabs(%{state | ready: true, size: {cols, rows}}, info)
-      # Anything that waited for the handshake (a config error) goes now.
+      # Anything that waited for the handshake (a config error, a fallback
+      # notice) goes now.
+      state =
+        if state.notice, do: flash(%{state | notice: nil}, state.notice, 10_000), else: state
+
       {:noreply, update_status(state)}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
@@ -231,7 +297,7 @@ defmodule Guiltty.Window do
 
   defp handle_event({:frame, us}, state) do
     :telemetry.execute([:guiltty, :renderer, :frame], %{duration: us}, %{})
-    state = %{state | awaiting_frame: false}
+    state = %{state | awaiting_frame: false, drawn: true}
     {:noreply, if(state.pending, do: pull(state), else: state)}
   end
 
@@ -688,8 +754,8 @@ defmodule Guiltty.Window do
   ## The status line, at the right of the tab bar
 
   # A warning that goes away by itself after a few seconds.
-  defp flash(state, text) do
-    Process.send_after(self(), :flash_over, 3_000)
+  defp flash(state, text, ms \\ 3_000) do
+    Process.send_after(self(), :flash_over, ms)
     update_status(%{state | flash: text})
   end
 
@@ -777,8 +843,28 @@ defmodule Guiltty.Window do
     }
   end
 
-  defp send_port(%{port: port}, message) when is_port(port), do: Port.command(port, message)
+  defp send_port(%{port: port} = state, message) when is_port(port) do
+    record(state, message)
+    Port.command(port, message)
+  end
+
   defp send_port(_state, _message), do: :ok
+
+  # With GUILTTY_RECORD=path, every message to the renderer is also written
+  # there, framed as on the port (a 4-byte length, then the message), for
+  # `guiltty_gl --replay path`: the renderer tested with no Elixir at all.
+  defp open_recording do
+    case System.get_env("GUILTTY_RECORD") do
+      nil -> nil
+      "" -> nil
+      path -> File.open!(path, [:write, :binary])
+    end
+  end
+
+  defp record(%{recording: nil}, _message), do: :ok
+
+  defp record(%{recording: file}, message),
+    do: IO.binwrite(file, [<<IO.iodata_length(message)::32>>, message])
 
   defp catch_exit(fun) do
     fun.()
@@ -789,6 +875,7 @@ defmodule Guiltty.Window do
   @impl true
   def terminate(_reason, state) do
     :telemetry.detach(state.handler)
+    if state.recording, do: File.close(state.recording)
     # Closing stdin tells the renderer to quit.
     if is_port(state.port) and Port.info(state.port), do: Port.close(state.port)
     :ok

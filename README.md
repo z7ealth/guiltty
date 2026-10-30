@@ -4,8 +4,8 @@
 
 # guiltty
 
-A GPU terminal emulator in Elixir, with a little C: a PTY NIF and an
-OpenGL renderer that runs as its own process.
+A GPU terminal emulator in Elixir, with a little C: a PTY NIF and a
+renderer (Vulkan, or OpenGL) that runs as its own process.
 
 ## Install it
 
@@ -20,8 +20,10 @@ development files below.
 
 ## Run it
 
-Needs Elixir 1.20, GCC 15+ and the SDL3, FreeType, fontconfig and
-HarfBuzz development packages. Fonts come from fontconfig: install a CJK
+Needs Elixir 1.20, GCC 15+, glslc (shaderc) and the SDL3, FreeType,
+fontconfig, HarfBuzz and Vulkan development packages. guiltty draws with
+Vulkan 1.3; without it (an old GPU, no driver) it switches to OpenGL by
+itself and says so. `renderer: :gl` in the config picks OpenGL always. Fonts come from fontconfig: install a CJK
 font (`noto-sans-cjk-fonts` on openSUSE) to see Chinese and Japanese, and
 an emoji font (Noto Color Emoji) for emoji.
 

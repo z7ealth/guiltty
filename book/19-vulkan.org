@@ -1,0 +1,310 @@
+#+TITLE: Vulkan: the same picture, with nothing hidden
+#+STARTUP: overview
+
+* Why a second backend
+
+The OpenGL backend ([[file:06-renderer.org][chapter 6]]) works. Vulkan draws exactly the same
+picture, pixel for pixel. What changes is who does the bookkeeping. OpenGL
+is a big state machine with a driver behind it that guesses what you
+meant: when a texture is safe to overwrite, when a frame is done, where
+memory lives. Vulkan guesses nothing. Each of those is a line of code in
+[[file:../c_src/renderer/vk/vk_backend.c][vk_backend.c]], so the file reads as a list of what a GPU driver really does.
+
+Since v0.10.0 Vulkan is the default. OpenGL stays as the fallback.
+
+* The seam held
+
+The core never learned that Vulkan exists. =vk_backend.c= fills in the
+same struct of function pointers as =gl_backend.c= ([[file:../c_src/renderer/core/backend.h][backend.h]]):
+
+#+begin_example
+  const struct backend renderer_backend = {
+      .name = "vulkan",                   -> the hello: "renderer vulkan speaks protocol 8"
+      .window_flags = SDL_WINDOW_VULKAN,  -> SDL makes a window Vulkan can draw into
+      .init, .upload_atlas, .draw_frame, .resize, .shutdown
+  };
+#+end_example
+
+The Makefile links the same core files with one backend or the other:
+
+#+begin_example
+  core/*.c + gl/gl_backend.c                 -> priv/guiltty_gl    (+ -dbg)
+  core/*.c + vk/vk_backend.c + *.spv         -> priv/guiltty_vk    (+ -dbg, validation on)
+#+end_example
+
+Three things in the core changed, and all three helped both backends:
+=struct cell= now carries colors as =fg[4]=, =bg[4]= bytes (a layout Vulkan
+reads directly as =R8G8B8A8_UNORM=); the frame has a =capture= pointer for
+screenshots; and the renderer can replay recorded port messages (see
+"Testing" below).
+
+* The objects, bottom up
+
+#+begin_example
+  VkInstance            "I am guiltty, and I use Vulkan 1.3"      (+ validation layer in -dbg)
+    |-- VkSurfaceKHR    the window, as Vulkan sees it            (SDL_Vulkan_CreateSurface)
+    `-- VkPhysicalDevice   a GPU: RADV (your RX 6600), or lavapipe (software)
+          `-- VkDevice  our connection to it, with one VkQueue (draw + present)
+                |-- VkSwapchainKHR   2-3 images the window shows in turns
+                |-- VkPipeline x2    backgrounds; glyphs (blended)
+                |-- VkImage          the glyph atlas, in GPU-only memory
+                |-- VkBuffer         staging (atlas uploads), cells x2, readback
+                `-- per frame in flight (2): command buffer, fence, semaphore
+#+end_example
+
+** Instance and device
+=create_instance= asks SDL which extensions a surface needs (on X11:
+=VK_KHR_surface= and =VK_KHR_xlib_surface=). =pick_gpu= goes through every
+GPU and keeps those that have Vulkan 1.3 with the three features we use
+(dynamic rendering, synchronization2 and demote-to-helper, see "Bumps"),
+the swapchain extension, and a queue that can both draw and *present to
+this surface*. A discrete GPU wins over an integrated one, and that wins
+over software. =GUILTTY_VK_DEVICE=lavapipe= picks by name.
+
+That last check, "can present to this surface", matters. On Xvfb, RADV
+says no (it needs DRI3, which Xvfb doesn't have) and lavapipe says yes,
+so tests on Xvfb run on lavapipe without being told.
+
+** The swapchain
+A window doesn't have "a framebuffer". It has a /swapchain/: a few images
+the compositor shows one after another. Each frame we /acquire/ one, draw
+into it, and /present/ it. Its size is fixed, so when the window changes
+size =vk_resize= only sets =stale=, and the next frame makes a new
+swapchain. Presenting can also answer =VK_ERROR_OUT_OF_DATE_KHR= (the
+window changed under us), which has the same effect.
+
+Choices: 8-bit =B8G8R8A8_UNORM= (not sRGB, so the color math matches GL);
+=FIFO= present mode (vsync, and the only one every driver must support);
+and composite alpha =PRE_MULTIPLIED= when the window is translucent, so the
+compositor gets the same premultiplied pixels the GL backend gives it.
+
+** Pipelines
+OpenGL lets you change blending and shaders whenever you like, and
+re-checks everything at each draw. Vulkan bakes it all into a
+=VkPipeline= once, at startup. We need two, identical except for blending:
+
+| Pipeline    | Blend                                             |
+|-------------+---------------------------------------------------|
+| backgrounds | none: each cell paints its rectangle              |
+| glyphs      | color: src·α + dst·(1−α); alpha: src + dst·(1−α) |
+
+/Dynamic rendering/ (Vulkan 1.3) means no render-pass objects: the
+pipeline only needs the color format, and a frame says "draw into this
+image" with =vkCmdBeginRendering=.
+
+** Shaders: SPIR-V, baked in
+The shaders are GLSL, like OpenGL's, in [[file:../c_src/renderer/vk/shaders/][vk/shaders/]]. =glslc= compiles
+them to SPIR-V (a binary format of 32-bit words) at build time, and
+=#embed= puts the bytes into the binary. They're the GL shaders with
+three changes:
+
+- no flip of y: Vulkan's y axis points down, like pixel rows;
+- =gl_VertexIndex= / =gl_InstanceIndex= instead of =gl_VertexID= /
+  =gl_InstanceID=;
+- the uniforms become one block of /push constants/
+  ([[file:../c_src/renderer/vk/shaders/frame.glsl][frame.glsl]]): 112 bytes recorded straight into the command buffer
+  with each draw. No uniform buffer and no descriptor needed. Vulkan
+  promises at least 128 bytes of them.
+
+#+begin_example
+  struct push (C) == layout(push_constant, std430) Frame (GLSL), 112 bytes
+   0 viewport.xy   8 origin.xy  16 cell.xy  24 opacity  28 pass
+  32 cols  36 atlas_cols  40 cursor  44 cursor2  48 rows  52 first_row_last
+  56 underline_y  60 strike_y  64 line_thickness  68 cursor_shape  72 (pad)
+  80 cursor_color.rgba        96 accent.rgba
+#+end_example
+
+=static_assert(sizeof(struct push) == 112 && offsetof(..., cursor_color) == 80)=
+pins the C side. A =vec4= in std430 starts on a 16-byte boundary, which is
+why there's a gap at 72.
+
+The cells go in as an /instanced/ vertex buffer: one =struct cell= (12
+bytes) per instance, four vertices per instance as a triangle strip,
+1920 instances for 80×24. Same method as GL.
+
+** The atlas
+The atlas lives in /device-local/ memory: fastest for the GPU to sample,
+and invisible to the CPU. New glyphs reach it in three steps: =memcpy=
+into a host-visible /staging buffer/, a =vkCmdCopyBufferToImage= of only
+the dirty rows, and /barriers/ that change the image's layout around the
+copy:
+
+#+begin_example
+  SHADER_READ_ONLY --barrier--> TRANSFER_DST --copy--> --barrier--> SHADER_READ_ONLY
+     (sampled by the                (being                (sampled again,
+      last frames)                   written)              after the copy)
+#+end_example
+
+New glyphs are rare (the first screen of text, then nearly never), so the
+upload just waits for the GPU to go idle first (=vkDeviceWaitIdle=).
+That's simple, and correct.
+
+* A frame, and why two are in flight
+
+The CPU prepares frame N+1 while the GPU is still drawing frame N. Each of
+the two /frames in flight/ has its own command buffer, its own copy of
+the cells, a fence and a semaphore, so neither overwrites what the GPU is
+still reading.
+
+#+begin_example
+  CPU (draw_frame)                         GPU
+  ---------------------------------------  ----------------------------------
+  wait slot's fence    (GPU done with it?)
+  acquire image i  --signals "acquired"-->
+  memcpy cells into slot's buffer
+  record: barrier UNDEFINED->COLOR_ATTACHMENT
+          begin rendering (clear)
+          push constants, bind backgrounds, draw 4 x cells
+          push pass=1,   bind glyphs,      draw 4 x cells
+          end rendering
+          barrier ->PRESENT_SRC (or ->TRANSFER_SRC + copy, for a screenshot)
+  submit  (wait "acquired")  ------------> runs the commands
+                                           signals "rendered[i]", the slot's fence
+  present i (wait "rendered[i]") --------> compositor shows image i
+  next slot
+#+end_example
+
+- A *fence* is for the CPU to wait on the GPU ("is slot 0 free?").
+- A *semaphore* is for the GPU to wait on itself ("draw only once the
+  image is ours", "present only once it's drawn"). The CPU never sees it.
+- There's one "rendered" semaphore per swapchain *image*, not per slot,
+  because presenting holds on to it until that image comes back.
+
+* Choosing, and falling back
+
+#+begin_example
+  config renderer:  :vulkan (default)  -> priv/guiltty_vk
+                    :gl                -> priv/guiltty_gl
+  config :guiltty, renderer: "..."     -> that binary (tests, sanitizers)
+#+end_example
+
+If Vulkan can't work here (no driver, no GPU that can present to the
+window), the Vulkan renderer exits with status 1. The Window
+([[file:../lib/guiltty/window.ex][window.ex]], =fall_back/2=) watches for that:
+
+#+begin_example
+  Window                 guiltty_vk                         guiltty_gl
+    |--- spawn ---------->|
+    |<-- HELLO "vulkan" --|   (the hello comes before the window exists)
+    |--- SETUP, ROWS ---->|
+    |                     | SDL_CreateWindow / vkCreateInstance fails
+    |<-- exit_status 1 ---x   no FRAME was ever drawn
+    | log a warning, remember :vulkan_failed
+    |--- spawn ----------------------------------------------->|
+    |<-- HELLO "gl" -------------------------------------------|
+    |--- SETUP, TABS, every row ------------------------------>|
+    |    status: "Vulkan couldn't start: drawing with OpenGL"  (10 s)
+#+end_example
+
+The sign is "exited before its first FRAME", not "before its hello": the
+renderer says hello before it makes its window, because SETUP carries the
+font and size it needs to do that. A renderer that crashes /after/ it has
+drawn is a real crash, and the Window restarts as before (chapter 12).
+
+It all happens inside the same Window process: the tabs don't notice.
+=:vulkan_failed= lives in the application environment, so the next
+windows go straight to OpenGL until guiltty restarts.
+
+The test runs it for real: =VK_ICD_FILENAMES=/nonexistent.json= leaves
+the loader with no drivers. The renderer prints
+=SDL_CreateWindow: Installed Vulkan doesn't implement the VK_KHR_surface extension=,
+exits 1, and the Window ends up on =guiltty_gl-dbg=.
+
+* Testing: replay, screenshots, parity
+
+=GUILTTY_RECORD=file= makes the Window write every message it sends to
+the renderer, each as =<<length::32, message>>=, the same framing as the
+port. =--replay file= feeds a file like that into the renderer instead of
+a port, and =--screenshot out.ppm= saves the last frame:
+
+#+begin_src sh
+SDL_VIDEO_DRIVER=offscreen ASAN_OPTIONS=detect_leaks=0 \
+  ./priv/guiltty_vk-dbg --replay test/fixtures/replay/session.msgs --screenshot vk.ppm
+#+end_src
+
+The fixture is 41 KB: a bash session with SGR colors, 256 colors and
+truecolor, two kanji (tofu boxes here: no CJK font yet) and emoji, box
+drawing, blocks and a cursor. On this
+machine, comparing the two renderers' frames gave:
+
+| Vulkan on                        | Pixels that differ from OpenGL |
+|----------------------------------+-------------------------------|
+| RADV (RX 6600), offscreen        | 0 of 359 476                  |
+| lavapipe, offscreen              | 0 of 359 476                  |
+| lavapipe, a real X11 window      | 0 of 359 476                  |
+
+[[file:../test/guiltty/renderer_replay_test.exs][renderer_replay_test.exs]] runs this comparison, allowing 1 pixel in
+1000, and fails on any validation message or sanitizer report. Tests
+tagged =:vulkan= are skipped on machines where =vulkaninfo= fails.
+
+* Bumps along the way
+
+- *Demote to helper invocation.* The first validation run reported one
+  error: glslc, targeting Vulkan 1.3, compiles =discard= into
+  =OpDemoteToHelperInvocation=, a capability that has to be enabled on
+  the device, even though 1.3 requires every GPU to have it. One line in
+  =create_device=.
+- *RADV on Xvfb.* "No DRI3 support detected": the GPU driver can't hand
+  frames to an X server with no GPU. Not a bug; it's the case the
+  fallback and lavapipe are for.
+- *Alignment.* SPIR-V is read as 32-bit words, and =#embed= gives bytes:
+  =alignas(4)= on the arrays.
+
+* Loot
+
+- The Vulkan objects: instance, physical device, logical device, queue
+  families. vulkan-tutorial.com "Setup" and "Presentation".
+- Swapchains: present modes, =VK_ERROR_OUT_OF_DATE_KHR=, recreation.
+  Spec chapter "Window System Integration (WSI)".
+- Synchronization: fences vs semaphores, pipeline barriers, image layouts.
+  Spec "Synchronization and Cache Control"; the Khronos wiki page
+  "Synchronization Examples".
+- Memory types: =DEVICE_LOCAL= vs =HOST_VISIBLE | HOST_COHERENT=, staging
+  buffers. vkguide.dev "Memory".
+- Vulkan 1.3: dynamic rendering, synchronization2 (=vkCmdPipelineBarrier2=,
+  =vkQueueSubmit2=).
+- Push constants and std430 layout. GLSL spec, "Memory Layout".
+- SPIR-V and =glslc=; C23 =#embed=.
+- Validation layers: =VK_LAYER_KHRONOS_validation=, =VK_EXT_debug_utils=.
+- The Vulkan loader and ICDs: =VK_ICD_FILENAMES=, =vulkaninfo --summary=;
+  lavapipe.
+
+* Questions
+
+1. Why does the Vulkan backend have two pipelines, when the GL backend
+   has one program?
+2. What's the difference between a fence and a semaphore, and where does
+   each one appear in a frame?
+3. Why two frames in flight, each with its own cell buffer?
+4. Why does the Window wait for "no frame drawn" rather than "no hello"
+   before falling back?
+5. A glyph shows up for the first time. List what happens between the
+   atlas bitmap on the CPU and the shader sampling it.
+6. Why is there a 4-byte gap at offset 72 of the push constants?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Blending is part of a Vulkan pipeline, baked in when it's made. GL
+   changes it with a call between the two draws; Vulkan switches
+   pipelines.
+2. A fence is signaled by the GPU and waited on by the CPU: =draw_frame=
+   waits on the slot's fence before reusing its buffers. A semaphore is
+   signaled and waited on by the GPU: the submit waits on "acquired", and
+   the present waits on "rendered".
+3. So the CPU can fill frame N+1 while the GPU still reads frame N. With
+   one buffer, the CPU would overwrite cells the GPU is still drawing, or
+   wait for every frame to finish.
+4. The renderer says hello before it creates its window and its Vulkan
+   device, so a Vulkan failure comes after the hello. No frame drawn
+   means it never worked; a crash after drawing is a crash.
+5. =atlas_lookup= draws it into the CPU bitmap and marks the rows dirty;
+   =vk_upload_atlas= waits for the GPU to go idle and copies those rows
+   into the staging buffer; a one-shot command buffer runs a barrier to
+   =TRANSFER_DST=, the buffer-to-image copy and a barrier back to
+   =SHADER_READ_ONLY=; the next frame samples it through the descriptor
+   set's combined image sampler.
+6. =cursor_color= is a =vec4=, and std430 aligns a =vec4= to 16 bytes:
+   after =cursor_shape= ends at 72, the next 16-byte boundary is 80.

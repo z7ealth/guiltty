@@ -37,6 +37,8 @@ defmodule Guiltty.Config do
     * `:tab_bar` - `:top` or `:bottom`
     * `:broadcast_programs` - what a tab must be running to join the
       broadcast group (Ctrl+Shift+B): `["ssh", "mosh-client"]`
+    * `:renderer` - `:vulkan` or `:gl`, for windows opened after a change;
+      Vulkan falls back to OpenGL by itself when it can't start
   """
 
   use GenServer
@@ -91,7 +93,8 @@ defmodule Guiltty.Config do
       wheel_lines: 3,
       bold_is_bright: true,
       tab_bar: :top,
-      broadcast_programs: ["ssh", "mosh-client"]
+      broadcast_programs: ["ssh", "mosh-client"],
+      renderer: :vulkan
     }
   end
 
@@ -314,7 +317,8 @@ defmodule Guiltty.Config do
          {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
          {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]),
          {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
-         {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)) do
+         {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
+         {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]) do
       {:ok,
        %{
          theme: theme,
@@ -329,7 +333,8 @@ defmodule Guiltty.Config do
          wheel_lines: wheel,
          bold_is_bright: bright,
          tab_bar: tab_bar,
-         broadcast_programs: programs
+         broadcast_programs: programs,
+         renderer: renderer
        }}
     end
   end

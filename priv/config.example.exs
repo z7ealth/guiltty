@@ -69,6 +69,11 @@
   # Where the tabs go: :top or :bottom.
   tab_bar: :top,
 
+  # How guiltty draws: :vulkan, or :gl (OpenGL). If Vulkan can't start
+  # (no driver, no GPU that can show the window), guiltty says so and
+  # draws with OpenGL. Applies to windows opened after a change.
+  renderer: :vulkan,
+
   # Rows of output each tab keeps for scrolling back (new tabs only).
   scrollback: 10_000,
 

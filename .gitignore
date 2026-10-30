@@ -28,3 +28,6 @@ guiltty-*.tar
 /priv/*.so
 /priv/guiltty_gl*
 /priv/guiltty_vk*
+
+# SPIR-V compiled from the Vulkan shaders
+/c_src/renderer/vk/shaders/*.spv

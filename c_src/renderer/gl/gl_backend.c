@@ -10,6 +10,7 @@
 #include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../core/backend.h"
 
@@ -70,7 +71,8 @@ static const char cell_frag_src[] = {
     X(PFNGLTEXPARAMETERIPROC, TexParameteri)                                              \
     X(PFNGLPIXELSTOREIPROC, PixelStorei)                                                  \
     X(PFNGLDELETETEXTURESPROC, DeleteTextures)                                            \
-    X(PFNGLDRAWARRAYSINSTANCEDPROC, DrawArraysInstanced)
+    X(PFNGLDRAWARRAYSINSTANCEDPROC, DrawArraysInstanced)                                  \
+    X(PFNGLREADPIXELSPROC, ReadPixels)
 
 struct gl_funcs {
 #define X(type, name) type name;
@@ -269,6 +271,22 @@ static void gl_resize(void *state, int width_px, int height_px) {
 
 static float unit(uint8_t v) { return (float)v / 255.0f; }
 
+// Read the frame just drawn (still in the back buffer). GL numbers rows
+// from the bottom; the capture wants the top row first.
+static void capture(struct gl *gl, uint8_t *out) {
+    size_t row = (size_t)gl->width * 4;
+    gl->f.ReadPixels(0, 0, gl->width, gl->height, GL_RGBA, GL_UNSIGNED_BYTE, out);
+    uint8_t *tmp = malloc(row);
+    if (tmp == nullptr)
+        return;
+    for (int top = 0, bottom = gl->height - 1; top < bottom; top++, bottom--) {
+        memcpy(tmp, out + (size_t)top * row, row);
+        memcpy(out + (size_t)top * row, out + (size_t)bottom * row, row);
+        memcpy(out + (size_t)bottom * row, tmp, row);
+    }
+    free(tmp);
+}
+
 static void gl_draw_frame(void *state, const struct frame *frame) {
     struct gl *gl = state;
     struct gl_funcs *f = &gl->f;
@@ -344,6 +362,8 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1i(gl->u.pass, 1);
     f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
 
+    if (frame->capture != nullptr)
+        capture(gl, frame->capture);
     SDL_GL_SwapWindow(gl->window);
 }
 

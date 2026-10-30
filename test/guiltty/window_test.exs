@@ -397,6 +397,35 @@ defmodule Guiltty.WindowTest do
     assert Port.info(port(window))
   end
 
+  test "a Vulkan renderer that can't start falls back to OpenGL, and says so", %{
+    window: window
+  } do
+    GenServer.stop(window)
+    on_exit(fn -> Application.delete_env(:guiltty, :vulkan_failed) end)
+
+    # No Vulkan driver at all: vkCreateInstance fails, the renderer exits 1
+    # before its hello.
+    env = [
+      {~c"VK_ICD_FILENAMES", ~c"/nonexistent.json"},
+      {~c"VK_DRIVER_FILES", ~c"/nonexistent.json"} | @env
+    ]
+
+    opts = [name: false, env: env, renderer: "guiltty_vk-dbg"]
+    spec = Supervisor.child_spec({Window, opts}, restart: :temporary, id: :vulkan)
+    window = start_supervised!(spec)
+
+    # It says hello before it fails (the hello comes before its window):
+    # wait for the second handshake, with OpenGL.
+    assert eventually(fn ->
+             state = :sys.get_state(window)
+             state.renderer == "guiltty_gl-dbg" and state.ready and state.drawn
+           end),
+           "no fallback"
+
+    assert {:warning, "Vulkan couldn't start" <> _} = :sys.get_state(window).status
+    assert Application.get_env(:guiltty, :vulkan_failed)
+  end
+
   test "a config error shows as a warning until a config loads", %{window: window} do
     send(window, {:config_error, "config.exs:4: theme: unknown name"})
 

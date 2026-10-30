@@ -86,6 +86,7 @@ the renderer, some reach the shell's process:
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
 | =tab_bar= (=:top=, =:bottom=)  | renderer (OPTIONS) | live                       |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
+| =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19) |
 | =cursor=                       | Window, per ROWS | live                         |
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |

@@ -8,6 +8,9 @@
 // font the first time (fonts.c).
 //
 //   guiltty_gl           port mode: talks the protocol on stdin/stdout
+//   guiltty_gl --replay FILE [--screenshot OUT.ppm]
+//                        plays back messages a Window recorded
+//                        (GUILTTY_RECORD=FILE), and saves the last frame
 //   guiltty_gl --demo    standalone: draws a fixed screen, no port
 //
 // stdout belongs to the protocol. Diagnostics go to stderr only.
@@ -15,6 +18,7 @@
 #define _GNU_SOURCE
 
 #include <SDL3/SDL.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
@@ -104,6 +108,12 @@ struct renderer {
     bool frame_owed; // a ROWS message arrived: report the frame that shows it
     bool demo;
     bool dirty;
+    // --replay: messages come from a recording, and at its end the last
+    // frame may be saved (--screenshot).
+    bool replay;
+    bool replay_done;
+    const char *screenshot;
+    uint8_t *capture; // set for the one draw that's saved
 };
 
 // Reader thread: blocks on stdin and hands each message to the main thread
@@ -1068,6 +1078,7 @@ static void draw(struct renderer *r) {
         // Without the focus, a hollow block: typing wouldn't go here.
         .cursor_shape = r->focused ? (uint8_t)(r->cursor_style & 0x3) : CURSOR_HOLLOW,
         .opacity = r->transparent ? (float)r->opacity / 100.0f : 1.0f,
+        .capture = r->capture,
         .first_row_last = r->tab_bar_bottom,
         .cursor_wide = (r->cells[cursor].attrs & ATTR_WIDE) != 0 && r->cursor_col + 1 < r->cols,
         .origin_x = r->padding,
@@ -1224,8 +1235,11 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
 [[nodiscard]] static bool handle_event(struct renderer *r, const SDL_Event *ev, int *status) {
     if (ev->type == r->port_event) {
         uint8_t *msg = ev->user.data1;
-        if (msg == nullptr)
-            return false; // stdin closed: Elixir is done with us
+        if (msg == nullptr) {
+            // stdin closed: Elixir is done with us, or the recording ended.
+            r->replay_done = r->replay;
+            return false;
+        }
         bool ok = apply_message(r, msg, (uint32_t)ev->user.code);
         free(msg);
         if (!ok) {
@@ -1322,6 +1336,45 @@ static bool wait_event(struct renderer *r, SDL_Event *ev) {
     return false;
 }
 
+// The last frame of a replay, as a PPM file: the simplest image format, a
+// short text header and then the RGB bytes.
+[[nodiscard]] static bool save_screenshot(struct renderer *r) {
+    int w, h;
+    SDL_GetWindowSizeInPixels(r->window, &w, &h);
+    size_t bytes;
+    if (w <= 0 || h <= 0 || ckd_mul(&bytes, (size_t)w * (size_t)h, (size_t)4))
+        return false;
+    r->capture = calloc(bytes, 1);
+    if (r->capture == nullptr)
+        return false;
+    r->dirty = true;
+    draw(r);
+    FILE *out = fopen(r->screenshot, "wb");
+    bool ok = out != nullptr;
+    if (ok) {
+        fprintf(out, "P6\n%d %d\n255\n", w, h);
+        for (size_t i = 0; i < (size_t)w * (size_t)h; i++)
+            ok = ok && fwrite(r->capture + i * 4, 1, 3, out) == 3;
+        ok = fclose(out) == 0 && ok;
+    }
+    free(r->capture);
+    r->capture = nullptr;
+    return ok;
+}
+
+// --replay FILE: the recording takes stdin's place, and what would go to
+// Elixir goes nowhere. Everything else runs as in port mode.
+[[nodiscard]] static bool open_replay(const char *path) {
+    int in = open(path, O_RDONLY | O_CLOEXEC);
+    int out = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    bool ok = in >= 0 && out >= 0 && dup2(in, STDIN_FILENO) >= 0 && dup2(out, STDOUT_FILENO) >= 0;
+    if (in >= 0)
+        close(in);
+    if (out >= 0)
+        close(out);
+    return ok;
+}
+
 int main(int argc, char *argv[]) {
     struct renderer r = {
         .demo = argc > 1 && strcmp(argv[1], "--demo") == 0,
@@ -1343,6 +1396,18 @@ int main(int argc, char *argv[]) {
     signal(SIGPIPE, SIG_IGN);
     // wcwidth(3) needs a UTF-8 locale to know how wide characters are.
     setlocale(LC_CTYPE, "C.UTF-8");
+
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--replay") == 0) {
+            r.replay = true;
+            if (!open_replay(argv[++i])) {
+                fprintf(stderr, "renderer: can't replay %s\n", argv[i]);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--screenshot") == 0) {
+            r.screenshot = argv[++i];
+        }
+    }
 
     if (r.demo) {
         r.cols = default_cols;
@@ -1447,6 +1512,10 @@ int main(int argc, char *argv[]) {
             send_frame(0);
             r.frame_owed = false;
         }
+    }
+    if (r.replay_done && r.screenshot != nullptr && !save_screenshot(&r)) {
+        fprintf(stderr, "renderer: can't save %s\n", r.screenshot);
+        status = 1;
     }
 
 out_backend:

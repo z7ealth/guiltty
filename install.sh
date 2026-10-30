@@ -63,15 +63,16 @@ if $uninstall; then
     exit 0
 fi
 
-# What building needs: Elixir, a C compiler, and the renderer's libraries.
+# What building needs: Elixir, a C compiler, the renderers' libraries, and
+# glslc (from shaderc) to compile the Vulkan shaders.
 missing=()
-for tool in mix gcc pkg-config make; do command -v "$tool" >/dev/null || missing+=("$tool"); done
-for lib in sdl3 freetype2 fontconfig harfbuzz; do
+for tool in mix gcc pkg-config make glslc; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+for lib in sdl3 freetype2 fontconfig harfbuzz vulkan; do
     pkg-config --exists "$lib" 2>/dev/null || missing+=("$lib (development files)")
 done
 if [ ${#missing[@]} -gt 0 ]; then
     echo "can't build guiltty, missing: ${missing[*]}" >&2
-    echo "on openSUSE: sudo zypper install SDL3-devel freetype2-devel fontconfig-devel harfbuzz-devel" >&2
+    echo "on openSUSE: sudo zypper install SDL3-devel freetype2-devel fontconfig-devel harfbuzz-devel vulkan-devel shaderc" >&2
     exit 1
 fi
 

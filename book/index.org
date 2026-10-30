@@ -23,3 +23,4 @@ the loot (what to read next) and a few questions to check yourself.
 17. [[file:16-config.org][Configuration: every setting, from file to pixels]]
 18. [[file:17-installing.org][Installing: the release, the menu entry, the icon]]
 19. [[file:18-broadcast.org][Broadcast: typing into many servers, safely]]
+20. [[file:19-vulkan.org][Vulkan: the same picture, with nothing hidden]]

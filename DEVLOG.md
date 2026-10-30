@@ -593,3 +593,37 @@ local, a second within three seconds adds it, marked 🏠. It isn't
 checked, because there's no connection to lose and every local command
 takes the foreground. The second press is what keeps a tab whose ssh just
 died from slipping in as "local".
+
+## 2026-10-30 — MVP 10: Vulkan
+
+_Draft: agent, awaiting user_
+
+**Tried.** A second backend behind the seam that's been waiting since
+MVP 1: same cells, same two instanced draws, same shaders (ported to
+Vulkan's GLSL, compiled to SPIR-V by glslc, baked in with `#embed`). What
+GL's driver does quietly is code now: picking a GPU that can present to
+this window, a swapchain rebuilt when the window resizes, two frames in
+flight with fences and semaphores, the atlas uploaded through a staging
+buffer with layout barriers around the copy. Vulkan is the default; if it
+can't start, the Window starts the OpenGL renderer in its place and says
+so in the bar. To test it without a screen, the renderer learned to
+replay recorded port messages and save a screenshot.
+
+**Broke.** The first run under the validation layers found one error:
+`discard` compiles to "demote to helper invocation" for Vulkan 1.3, which
+must be switched on even though every 1.3 GPU has it. The fallback first
+watched for "died before its hello", which never happens: the renderer
+says hello before it makes its window. The real sign is "died before
+drawing a frame". RADV can't present on Xvfb (no DRI3), so live tests
+there run on lavapipe, and RADV was tested on an offscreen surface.
+
+**Clicked.** OpenGL and Vulkan, from the same recording: 0 of 359,476
+pixels differ, on the RX 6600 and on lavapipe. Four live resizes under the
+validation layers: not one message.
+
+### Later
+
+- Only redraw dirty rows into each frame's cell buffer (today every frame
+  copies all cells: a few hundred KB, not worth the bookkeeping yet).
+- MAILBOX present mode for lower latency where the driver has it.
+- A Wayland run (only X11 has been tried).
