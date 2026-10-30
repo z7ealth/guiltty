@@ -130,8 +130,15 @@ defmodule Guiltty.Window do
       status: {:normal, ""},
       # the config file's error, one line, until it loads again
       config_error: nil,
-      # tabs that stay when the window closes (Tabs owns the set)
+      # tabs that stay when the window closes, the broadcast group
+      # (id => host) and its lost tabs; Tabs owns all three
       locked: MapSet.new(),
+      group: %{},
+      lost: [],
+      # a short-lived warning in the status
+      flash: nil,
+      # the tab waiting for a second Ctrl+Shift+B to join as a local tab
+      confirm_local: nil,
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
       cheatsheet: nil
     }
@@ -174,8 +181,10 @@ defmodule Guiltty.Window do
   def handle_info({:screen_dirty, id}, %{active: id} = state), do: {:noreply, pull(state)}
   def handle_info({:screen_dirty, _other}, state), do: {:noreply, state}
 
-  def handle_info({:tabs, tabs, active, locked}, state),
-    do: {:noreply, show_tabs(%{state | locked: locked}, tabs, active)}
+  def handle_info({:tabs, info}, state), do: {:noreply, show_tabs(state, info)}
+
+  def handle_info(:flash_over, state),
+    do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil})}
 
   # The active Screen restarted (it crashed, or its session did). The new
   # one doesn't know about us, so view it again.
@@ -208,11 +217,11 @@ defmodule Guiltty.Window do
   defp handle_event({:hello, version, backend}, state) do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
-      {tabs, active, locked} = Tabs.attach_window(self())
-      {cols, rows} = Session.size(active)
+      info = Tabs.attach_window(self())
+      {cols, rows} = Session.size(info.active)
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
-      state = show_tabs(%{state | ready: true, size: {cols, rows}, locked: locked}, tabs, active)
+      state = show_tabs(%{state | ready: true, size: {cols, rows}}, info)
       # Anything that waited for the handshake (a config error) goes now.
       {:noreply, update_status(state)}
     else
@@ -266,7 +275,7 @@ defmodule Guiltty.Window do
   end
 
   defp handle_event({:paste, text}, state) do
-    {:noreply, write(state, Keymap.paste(text, state.input))}
+    {:noreply, input(state, Keymap.paste(text, state.input))}
   end
 
   defp handle_event({:mouse, _kind, _button, _col, _row, mods, _clicks} = event, state) do
@@ -288,7 +297,24 @@ defmodule Guiltty.Window do
 
   defp handle_event({:text, _} = event, state), do: type(event, state)
 
-  defp type(event, state), do: {:noreply, write(state, Keymap.to_bytes(event, state.input))}
+  defp type(event, state), do: {:noreply, input(state, Keymap.to_bytes(event, state.input))}
+
+  # What you type or paste: in a broadcast group it goes to every tab in
+  # the group, through Tabs, which checks first that none lost its
+  # connection (see Guiltty.Tabs, "Broadcast"). Mouse reports and the like
+  # use write/2: they only make sense for the tab you're looking at.
+  defp input(state, nil), do: state
+  defp input(%{active: nil} = state, _bytes), do: state
+
+  defp input(state, bytes) do
+    if Map.has_key?(state.group, state.active) do
+      if state.scroll > 0 or state.view_moved, do: on_screen(state, &Screen.scroll(&1, :bottom))
+      catch_exit(fn -> Tabs.send_input(state.active, bytes) end)
+      %{state | view_moved: false}
+    else
+      write(state, bytes)
+    end
+  end
 
   # Anything sent to the program brings the view back to the live screen.
   defp write(state, nil), do: state
@@ -443,6 +469,25 @@ defmodule Guiltty.Window do
 
   defp run(:cheatsheet, state), do: open_cheatsheet(state, 0)
 
+  defp run(:broadcast, %{active: nil} = state), do: state
+
+  # A tab running ssh joins at once. A local one only on a second press:
+  # joining a local tab must be on purpose, so a tab whose ssh just died
+  # can't slip in by accident.
+  defp run(:broadcast, state) do
+    programs = state.config.broadcast_programs
+    local? = state.confirm_local == state.active
+
+    case catch_exit(fn -> Tabs.toggle_broadcast(state.active, programs, local: local?) end) do
+      {:error, {:not_allowed, program}} ->
+        state = %{state | confirm_local: state.active}
+        flash(state, "this tab is local (#{program}): Ctrl+Shift+B again adds it as a local tab")
+
+      _ ->
+        update_status(%{state | confirm_local: nil, flash: nil})
+    end
+  end
+
   defp run(:lock_tab, state) do
     if state.active, do: catch_exit(fn -> Tabs.toggle_lock(state.active) end)
     state
@@ -548,17 +593,27 @@ defmodule Guiltty.Window do
   ## Showing a tab
 
   # A locked tab shows a lock before its title.
-  defp show_tabs(state, tabs, active) do
+  defp show_tabs(state, %{list: tabs, active: active} = info) do
+    state = %{state | locked: info.locked, group: info.group, lost: MapSet.to_list(info.lost)}
+
     titles =
       Enum.map(tabs, fn {id, title} ->
         title = if title == "", do: "shell", else: title
-        if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
+        title = if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
+
+        cond do
+          id in state.lost -> "⚠ " <> title
+          state.group[id] == :local -> "🏠 " <> title
+          Map.has_key?(state.group, id) -> "📡 " <> title
+          true -> title
+        end
       end)
 
     index = Enum.find_index(tabs, fn {id, _} -> id == active end) || 0
     send_port(state, Protocol.tabs(titles, index))
     state = %{state | tabs: tabs}
-    if active != state.active, do: switch_view(state, active), else: state
+    state = if active != state.active, do: switch_view(state, active), else: state
+    update_status(state)
   end
 
   defp switch_view(state, id) do
@@ -632,6 +687,12 @@ defmodule Guiltty.Window do
 
   ## The status line, at the right of the tab bar
 
+  # A warning that goes away by itself after a few seconds.
+  defp flash(state, text) do
+    Process.send_after(self(), :flash_over, 3_000)
+    update_status(%{state | flash: text})
+  end
+
   # Shown, most important first: the search you're typing, a broken config
   # (in red, until the file loads again), where you are in the scrollback.
   # Before the handshake the renderer accepts nothing but the setup; the
@@ -647,8 +708,31 @@ defmodule Guiltty.Window do
   defp status_text(%{search: %{query: query, found: found}}),
     do: {:normal, "find: #{query}" <> if(found, do: "", else: "  (not found)")}
 
+  defp status_text(%{flash: flash}) when is_binary(flash), do: {:warning, flash}
+
   defp status_text(%{config_error: error}) when is_binary(error),
     do: {:warning, "⚠ " <> error}
+
+  # A lost connection in the broadcast group: say which. Typing goes
+  # nowhere until that tab leaves the group (Ctrl+Shift+B on it) or closes.
+  defp status_text(%{lost: [_ | _] = lost} = state) do
+    names =
+      Enum.map_join(lost, ", ", fn id ->
+        index = Enum.find_index(state.tabs, fn {tab, _} -> tab == id end)
+        host = state.group[id]
+        "tab #{(index || 0) + 1}" <> if(host, do: " (#{host})", else: "")
+      end)
+
+    # Short, so the tabs stay visible; how to go on is on the cheatsheet.
+    {:warning, "⚠ broadcast paused: #{names} disconnected"}
+  end
+
+  defp status_text(%{group: group, active: active}) when is_map_key(group, active) do
+    count = map_size(group)
+    local = Enum.count(group, fn {_id, host} -> host == :local end)
+    tabs = "#{count} tab#{if count == 1, do: "", else: "s"}"
+    {:normal, "📡 broadcast: #{tabs}" <> if(local > 0, do: " (#{local} local)", else: "")}
+  end
 
   defp status_text(%{scroll: scroll, scrollback: total}) when scroll > 0,
     do: {:normal, "scrollback #{scroll}/#{total}"}

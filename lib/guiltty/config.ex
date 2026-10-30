@@ -35,6 +35,8 @@ defmodule Guiltty.Config do
     * `:wheel_lines` - rows the mouse wheel scrolls per step
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
     * `:tab_bar` - `:top` or `:bottom`
+    * `:broadcast_programs` - what a tab must be running to join the
+      broadcast group (Ctrl+Shift+B): `["ssh", "mosh-client"]`
   """
 
   use GenServer
@@ -61,7 +63,8 @@ defmodule Guiltty.Config do
     zoom_reset: ["ctrl+0"],
     open_config: ["ctrl+,"],
     cheatsheet: ["ctrl+shift+/"],
-    lock_tab: ["ctrl+shift+l"]
+    lock_tab: ["ctrl+shift+l"],
+    broadcast: ["ctrl+shift+b"]
   }
 
   @max_scrollback 1_000_000
@@ -87,7 +90,8 @@ defmodule Guiltty.Config do
       copy_on_select: true,
       wheel_lines: 3,
       bold_is_bright: true,
-      tab_bar: :top
+      tab_bar: :top,
+      broadcast_programs: ["ssh", "mosh-client"]
     }
   end
 
@@ -309,7 +313,8 @@ defmodule Guiltty.Config do
            one_of(:copy_on_select, get.(:copy_on_select, true), [true, false, :clipboard]),
          {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
          {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]),
-         {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]) do
+         {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
+         {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)) do
       {:ok,
        %{
          theme: theme,
@@ -323,7 +328,8 @@ defmodule Guiltty.Config do
          copy_on_select: copy,
          wheel_lines: wheel,
          bold_is_bright: bright,
-         tab_bar: tab_bar
+         tab_bar: tab_bar,
+         broadcast_programs: programs
        }}
     end
   end
@@ -375,6 +381,15 @@ defmodule Guiltty.Config do
 
   defp working_directory(other),
     do: {:error, "working_directory: expected :inherit, :home or a path, got #{inspect(other)}"}
+
+  # Program names as /proc shows them (at most 15 characters: comm(5)).
+  defp programs([_ | _] = names) do
+    if Enum.all?(names, &(is_binary(&1) and &1 != "")),
+      do: {:ok, names},
+      else: {:error, "broadcast_programs: expected program names, like [\"ssh\"]"}
+  end
+
+  defp programs(_), do: {:error, "broadcast_programs: expected a list of program names"}
 
   defp one_of(name, value, allowed) do
     if value in allowed,

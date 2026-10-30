@@ -29,11 +29,11 @@ defmodule Guiltty.CheatsheetTest do
   test "cards sit in a centered grid: balanced rows, tops and bottoms lined up" do
     sheet = Config.defaults() |> Cheatsheet.render(230) |> text(230) |> String.split("\n")
 
-    # Room for 5 per row, but 6 cards: two rows of 3.
+    # Room for 5 per row, but 7 cards: rows of 4 and 3, not 5 and 2.
     tops = Enum.filter(sheet, &String.contains?(&1, "╭─"))
     bottoms = Enum.filter(sheet, &String.contains?(&1, "╰─"))
-    assert Enum.map(tops, &length(String.split(&1, "╭─"))) == [4, 4]
-    assert Enum.map(bottoms, &length(String.split(&1, "╰─"))) == [4, 4]
+    assert Enum.map(tops, &length(String.split(&1, "╭─"))) == [5, 4]
+    assert Enum.map(bottoms, &length(String.split(&1, "╰─"))) == [5, 4]
 
     # Centered: as much room on the left as on the right (give or take one).
     [first | _] = tops

@@ -61,6 +61,12 @@ defmodule Guiltty.Cheatsheet do
          {"Paste the selection", "middle click"},
          {"Select in vim, htop...", "hold Shift"}
        ]},
+      {"Broadcast",
+       [
+         {"Join / leave (ssh tabs)", k.(:broadcast)},
+         {"Add a local tab", "press it twice"},
+         {"Paused? Leave lost tab", k.(:broadcast)}
+       ]},
       {"Zoom",
        [
          {"Zoom in", k.(:zoom_in)},

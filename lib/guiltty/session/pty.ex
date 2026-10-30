@@ -62,6 +62,13 @@ defmodule Guiltty.Session.Pty do
   """
   def cwd(id), do: GenServer.call(Session.via(id, :pty), :cwd)
 
+  @doc """
+  What's in the terminal's foreground right now, the job that gets what's
+  typed: `{pgid, name}` (the name from `/proc/<pgid>/comm`, like "ssh"), or
+  nil.
+  """
+  def foreground(id), do: GenServer.call(Session.via(id, :pty), :foreground)
+
   @doc "Makes `pid` the receiver of `{:pty_data, bytes}` messages."
   def attach_parser(id, pid), do: GenServer.call(Session.via(id, :pty), {:attach_parser, pid})
 
@@ -167,6 +174,15 @@ defmodule Guiltty.Session.Pty do
     do: [name <> "=" <> value | Enum.reject(env, &String.starts_with?(&1, name <> "="))]
 
   @impl true
+  def handle_call(:foreground, _from, state) do
+    with {:ok, pgid} <- PtyNif.foreground(state.pty),
+         {:ok, comm} <- File.read("/proc/#{pgid}/comm") do
+      {:reply, {pgid, String.trim(comm)}, state}
+    else
+      _ -> {:reply, nil, state}
+    end
+  end
+
   def handle_call(:cwd, _from, state) do
     case File.read_link("/proc/#{state.os_pid}/cwd") do
       {:ok, dir} -> {:reply, dir, state}

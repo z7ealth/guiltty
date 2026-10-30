@@ -61,6 +61,15 @@ defmodule Guiltty.Session.PtyNifTest do
     assert_raise ArgumentError, fn -> PtyNif.open("/bin/pwd", ["pwd"], [], 80, 24, "/t\0mp") end
   end
 
+  test "foreground tells which process group the terminal is running" do
+    {:ok, pty, os_pid} = PtyNif.open("/bin/sh", ["sh", "-c", "sleep 2"], [], 80, 24, "")
+    # sh is the session leader and its group is in the foreground, once it
+    # has claimed the terminal (until then the kernel answers EIO).
+    assert Enum.any?(1..100, fn _ ->
+             PtyNif.foreground(pty) == {:ok, os_pid} or (Process.sleep(10) && false)
+           end)
+  end
+
   test "the child starts in the directory it's given" do
     {:ok, pty, _} = PtyNif.open("/bin/pwd", ["pwd"], [], 80, 24, "/usr/share")
     assert read_all(pty) =~ "/usr/share\r\n"

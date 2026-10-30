@@ -1,0 +1,144 @@
+#+TITLE: Broadcast: typing into many servers, safely
+#+STARTUP: overview
+
+* The idea
+
+You have to make the same change on five servers. Open five tabs, =ssh=
+into one server in each, put the tabs in a *broadcast group* (Ctrl+Shift+B
+in each), and what you type in one goes to all five. tmux calls this
+synchronize-panes; ClusterSSH is built around it.
+
+The danger is quiet: if one connection drops, its tab is back at *your*
+shell, and the next =rm= meant for the server runs on your machine.
+guiltty is built so that can't happen.
+
+* What the kernel knows: the foreground job
+
+Every terminal has one *foreground process group*, the job that gets what
+you type ([[file:01-pseudoterminals.org][chapter 1]] on sessions and process groups). While =ssh= runs,
+its group is in the foreground; when it exits, the shell takes the
+foreground back. The kernel answers "who's in the foreground?" with
+=tcgetpgrp(3)= on the terminal, and the PTY NIF has had that call since the
+SIGWINCH work. Now =PtyNif.foreground/1= returns it, and =Pty.foreground/1=
+adds the program's name from =/proc/<pgid>/comm=:
+
+#+begin_example
+  tab running ssh:       Pty.foreground(id) -> {88412, "ssh"}
+  after ssh exits:       Pty.foreground(id) -> {88301, "bash"}   a different group
+#+end_example
+
+* The guard
+
+#+begin_example
+  Ctrl+Shift+B in a tab   Tabs: is its foreground program allowed? (ssh, mosh-client)
+                            no  -> "⚠ this tab runs bash, not ssh or mosh-client"
+                            yes -> remember that process group: group[id] = {pgid, host}
+
+  you type a key          Window -> Tabs.send_input(active, bytes)
+                            active not in a group of 2+   -> that tab alone
+                            otherwise, for every tab in the group:
+                              foreground still the remembered pgid?
+                                all yes -> Pty.write to each of them
+                                any no  -> nobody gets it; broadcast paused
+
+  every second            the same check, so a lost tab is marked before you type
+#+end_example
+
+When the check fails, *nothing* is sent, not even to the tab you typed in:
+your commands probably assume all the servers get them. The lost tab shows
+=⚠= in the tab bar, and the status says which:
+
+#+begin_example
+   1 📡 hsalinas@hs-suse:~/P…   2 ⚠ h…   ⚠ broadcast paused: tab 2 disconnected
+#+end_example
+
+That's the real tab bar from a test with two tabs, after the second one's
+"ssh" ended. While broadcasting, the status reads =📡 broadcast: 2 tabs=.
+
+To go on: Ctrl+Shift+B on the lost tab takes it out of the group (or close
+it), and the rest broadcast again. If you =ssh= again in that tab, take it
+out and put it back in, so the new ssh process is the one remembered.
+
+A hung connection is safe too: =ssh= stays in the foreground, so keys
+wait in its buffer; nothing runs locally.
+
+* Your own machine, on purpose
+
+Sometimes your own machine is one of the ones to change. Its tab runs
+your shell, not ssh, so Ctrl+Shift+B first says
+=this tab is local (zsh): Ctrl+Shift+B again adds it as a local tab=, and
+a second press within three seconds adds it. It shows 🏠 instead of 📡, and
+the status counts it: =📡 broadcast: 3 tabs (1 local)=.
+
+A local tab isn't checked. There's no connection to lose, and the check
+couldn't work anyway: in a local tab every command you run (=vim=, even
+=ls= for a moment) takes the foreground. Remote tabs keep their check, and
+a dropped ssh never turns into a "local tab": it pauses the group, as
+before. That's why joining as local takes the second press: a tab whose
+ssh has just died, joined by habit, would otherwise slip in as local.
+
+** Where the host names come from
+
+The kernel keeps each process's command line in =/proc/<pid>/cmdline=, its
+arguments separated by NUL bytes. =ssh -p 2222 admin@web-02= gives
+=web-02=: =Tabs.ssh_host/1= skips the options (and the values of those that
+take one) and keeps the part after the =@=. That's the =(web-02)= in the
+messages.
+
+* Who does what
+
+[[file:../lib/guiltty/tabs.ex][Tabs]] owns the group, like it owns the tab list and the locks: which tabs,
+what each joined with, which are lost. It does the check and the writes,
+so they happen in one place, one keystroke at a time. The Window decides
+what's typed input (keys, text, paste: broadcast) and what isn't (mouse
+reports: only the tab you're looking at), and draws the markers.
+
+* An honest limit
+
+The check and the write are two steps. If an =ssh= exits in the
+microseconds between them, that one keystroke reaches the local shell.
+The kernel has no "write only if this job is still in the foreground", so
+no terminal can close that gap completely. In practice a connection
+drops while you're reading the output, and the once-a-second check has
+paused the group before your next key.
+
+* Loot
+
+- =tcgetpgrp(3)=; =credentials(7)= (process groups and sessions).
+- =proc_pid_comm(5)=, =proc_pid_cmdline(5)=: what =/proc= says about a
+  process.
+- =ssh(1)=: which options take a value.
+- tmux's =synchronize-panes=, ClusterSSH (=cssh=), and for config changes
+  across a fleet, Ansible's =lineinfile=.
+
+* Questions
+
+1. How does guiltty know a tab's ssh connection is gone?
+2. Why does a failed check send the keystroke to nobody, not just skip
+   the lost tab?
+3. You reconnected in the lost tab. Why do you have to take it out of the
+   group and put it back in?
+4. Which keystroke could still reach a local shell, and why can't that be
+   fixed completely?
+5. Why does a local tab take two presses to join, and why isn't it
+   checked?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Its terminal's foreground process group (=tcgetpgrp=) is no longer the
+   one it joined with: the shell got the foreground back when ssh exited.
+2. The commands you broadcast usually assume every server gets them; doing
+   them on some and not others is how fleets drift. Better to stop and let
+   you decide.
+3. The group remembers the process group of the old ssh. The new ssh is a
+   different process, so the check would keep failing until it's
+   remembered.
+4. One typed in the microseconds between the check and the write, if ssh
+   exits exactly then. There's no system call that writes only if a given
+   job is still in the foreground.
+5. So a remote tab whose ssh just died can't join as "local" by accident.
+   It isn't checked because it has no connection to lose, and every local
+   command takes the foreground, which would pause the group constantly.

@@ -553,3 +553,43 @@ caught the example config still saying `on_close`. And the 🔒 came out as
 a plain white lock: Source Code Pro has its own, and guiltty used any open
 font that covered a character before asking for an emoji font. Now emoji
 look for an emoji font first.
+
+## 2026-10-30 — MVP 9: Broadcast
+
+_Draft: agent, awaiting user_
+
+**Tried.** Your idea, typing once into many SSH tabs, with the risk you
+spotted: a dropped connection quietly turns a tab into your local shell.
+The answer was already in the kernel: every terminal has a foreground
+process group (`tcgetpgrp`), and when ssh exits the shell takes it back.
+A tab joins the group (Ctrl+Shift+B) only while ssh or mosh-client is in
+its foreground, and that process is remembered. Before every keystroke,
+and once a second, every tab is checked; if one changed, nothing is sent
+anywhere and the bar says `⚠ broadcast paused: tab 2 disconnected`. Host
+names come from ssh's command line in /proc. Tabs owns the group, next to
+the tab list and the locks.
+
+**Broke.** No sshd here, so the live test used a copy of `cat` named
+`ssh` (the kernel names a process after its file), which "drops" on
+Ctrl+D. My first live run looked like a failure: a keystroke meant for
+nowhere went through. My own script had pressed Ctrl+Shift+B once too
+often and taken the tab out of the group. The test for the race between
+the check and the write isn't possible: the gap is real but microseconds,
+and it's written down in chapter 18 instead.
+
+**Clicked.** Two tabs broadcasting, a third left alone; one tab's "ssh"
+ends; the next keystroke goes to nobody; the bar turns red with ⚠ on the
+lost tab.
+
+### Later
+
+- A tiled view of the group, to watch every server's output at once.
+- Flag tabs whose output differs from the others (a failed command on one
+  server).
+
+Later: you had to `ssh localhost` to put your own machine in the group.
+Now a local tab can join on purpose: the first Ctrl+Shift+B says it's
+local, a second within three seconds adds it, marked 🏠. It isn't
+checked, because there's no connection to lose and every local command
+takes the foreground. The second press is what keeps a tab whose ssh just
+died from slipping in as "local".

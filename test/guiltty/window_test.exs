@@ -204,6 +204,23 @@ defmodule Guiltty.WindowTest do
     assert_receive {:DOWN, ^ref, :process, ^tabs, {:shutdown, :last_tab_closed}}, 5000
   end
 
+  test "Ctrl+Shift+B on a local tab asks first; pressing again adds it as local", %{
+    id: id,
+    window: window
+  } do
+    key(window, ?b, @ctrl ||| @shift)
+
+    assert eventually(fn ->
+             match?({:warning, "this tab is local (bash)" <> _}, :sys.get_state(window).status)
+           end)
+
+    assert :sys.get_state(window).group == %{}
+
+    key(window, ?b, @ctrl ||| @shift)
+    assert eventually(fn -> :sys.get_state(window).group == %{id => :local} end)
+    assert :sys.get_state(window).status == {:normal, "📡 broadcast: 1 tab (1 local)"}
+  end
+
   test "Ctrl+Shift+L locks a tab: it shows a lock, and outlives the window", %{
     id: id,
     window: window

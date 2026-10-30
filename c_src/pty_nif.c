@@ -374,6 +374,21 @@ static ERL_NIF_TERM nif_winch(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     return kill(-pgrp, SIGWINCH) < 0 ? make_errno_error(env, errno) : atom_ok;
 }
 
+// foreground(pty) -> {:ok, pgid} | {:error, reason}: the process group in
+// the terminal's foreground, the job that gets what's typed (tcgetpgrp(3)).
+// When ssh is running, it's ssh's; when ssh exits, it's the shell's again.
+static ERL_NIF_TERM nif_foreground(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
+    struct pty *pty;
+    if (!get_pty(env, argv[0], &pty))
+        return enif_make_badarg(env);
+    if (pty->fd < 0)
+        return make_errno_error(env, EBADF);
+    pid_t pgrp = tcgetpgrp(pty->fd);
+    if (pgrp <= 0)
+        return make_errno_error(env, errno);
+    return enif_make_tuple2(env, atom_ok, enif_make_int(env, pgrp));
+}
+
 // close(pty) -> :ok. Closing the master hangs up the terminal: the kernel
 // sends SIGHUP to the session, which is how bash learns the window is gone.
 static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
@@ -438,6 +453,7 @@ static ErlNifFunc funcs[] = {
     {"select_write", 1, nif_select_write, 0},
     {"resize", 3, nif_resize, 0},
     {"winch", 1, nif_winch, 0},
+    {"foreground", 1, nif_foreground, 0},
     {"close", 1, nif_close, 0},
     {"wait", 1, nif_wait, 0},
     {"kill", 2, nif_kill, 0},

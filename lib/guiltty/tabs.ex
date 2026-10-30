@@ -8,10 +8,32 @@ defmodule Guiltty.Tabs do
   belong to a window: closing the window leaves them running, and the next
   window shows them again. That's detach and reattach.
 
-  A window registers with `attach_window/1` and then gets
-  `{:tabs, [{id, title}], active_id, locked}` whenever something changes;
-  `locked` is the set of tabs that stay when the window closes (see
-  `toggle_lock/1`).
+  A window registers with `attach_window/1` and then gets `{:tabs, info}`
+  whenever something changes. `info` is a map:
+
+    * `:list` - `[{id, title}]`, in order
+    * `:active` - the active tab's id
+    * `:locked` - the tabs that stay when the window closes (`toggle_lock/1`)
+    * `:group` - the broadcast group, `%{id => host}`, or `:local` for a
+      local tab (`toggle_broadcast/3`)
+    * `:lost` - group tabs whose connection is gone (broadcast is paused)
+
+  ## Broadcast
+
+  Typing in one tab of the broadcast group goes to every tab in it, to do
+  the same thing on several servers at once. A tab joins only while it's
+  running one of the allowed programs (ssh, by default), and joining
+  records that program's process. Before any keystroke goes out, every
+  tab is checked: is that same process still in its terminal's
+  foreground? If an ssh has exited, its tab's foreground is the local
+  shell again, and the keystroke goes *nowhere*: the broadcast pauses
+  until the lost tab leaves the group (or closes). The same check runs
+  every second, so the tab is marked before you type.
+
+  Your own machine can be in the group too, as a *local* tab: joined on
+  purpose (`toggle_broadcast(id, programs, local: true)`), and not
+  checked, since there's no connection to lose. (Checking would not work
+  either: in a local tab every command you run takes the foreground.)
 
   A tab ends when its shell exits (or `close/1`). When the last one ends,
   this process stops; it's significant in the application supervisor, so
@@ -50,6 +72,23 @@ defmodule Guiltty.Tabs do
   """
   def close_unlocked, do: GenServer.call(__MODULE__, :close_unlocked)
 
+  @doc """
+  Puts a tab in the broadcast group, or takes it out. To join, its
+  foreground program must be one of `programs`; with `local: true` it
+  joins as a local tab whatever it runs. Returns `{:ok, :joined}`,
+  `{:ok, :left}` or `{:error, {:not_allowed, program}}`.
+  """
+  def toggle_broadcast(id, programs, opts \\ []),
+    do: GenServer.call(__MODULE__, {:toggle_broadcast, id, programs, opts})
+
+  @doc """
+  Sends typed input from tab `id`. In a broadcast group of two or more, it
+  goes to every tab in the group, but only if every one still runs what it
+  joined with; otherwise to nobody, and `{:paused, lost_ids}` comes back.
+  Outside a group it goes to that tab alone.
+  """
+  def send_input(id, bytes), do: GenServer.call(__MODULE__, {:send_input, id, bytes})
+
   @doc "Switches to `:next`, `:prev`, or the tab at a 0-based index."
   def switch(to), do: GenServer.call(__MODULE__, {:switch, to})
 
@@ -71,6 +110,11 @@ defmodule Guiltty.Tabs do
       tabs: [],
       titles: %{},
       locked: MapSet.new(),
+      # the broadcast group: id => {pgid, host}, the foreground process it
+      # joined with and where that ssh goes
+      group: %{},
+      lost: MapSet.new(),
+      check_scheduled: false,
       active: nil,
       next_id: 1,
       size: {Config.get().window.columns, Config.get().window.rows},
@@ -123,7 +167,7 @@ defmodule Guiltty.Tabs do
   @impl true
   def handle_call(:new_tab, _from, state) do
     case open_tab(state) do
-      {:ok, id, state} -> {:reply, {:ok, id}, broadcast(state)}
+      {:ok, id, state} -> {:reply, {:ok, id}, notify_windows(state)}
       {:error, _} = error -> {:reply, error, state}
     end
   end
@@ -134,7 +178,49 @@ defmodule Guiltty.Tabs do
         do: MapSet.delete(state.locked, id),
         else: MapSet.put(state.locked, id)
 
-    {:reply, :ok, broadcast(%{state | locked: locked})}
+    {:reply, :ok, notify_windows(%{state | locked: locked})}
+  end
+
+  def handle_call({:toggle_broadcast, id, programs, opts}, _from, state) do
+    cond do
+      Map.has_key?(state.group, id) ->
+        {:reply, {:ok, :left}, state |> leave_group(id) |> notify_windows()}
+
+      opts[:local] ->
+        state = %{state | group: Map.put(state.group, id, :local)}
+        {:reply, {:ok, :joined}, notify_windows(state)}
+
+      true ->
+        case safe_foreground(id) do
+          {pgid, program} when is_binary(program) ->
+            if program in programs do
+              group = Map.put(state.group, id, {pgid, host_of(pgid)})
+              state = schedule_check(%{state | group: group})
+              {:reply, {:ok, :joined}, notify_windows(state)}
+            else
+              {:reply, {:error, {:not_allowed, program}}, state}
+            end
+
+          nil ->
+            {:reply, {:error, {:not_allowed, "nothing"}}, state}
+        end
+    end
+  end
+
+  def handle_call({:send_input, id, bytes}, _from, state) do
+    if Map.has_key?(state.group, id) and map_size(state.group) >= 2 do
+      state = check_group(state)
+
+      if MapSet.size(state.lost) == 0 do
+        for {member, _} <- state.group, do: Pty.write(member, bytes)
+        {:reply, :sent, state}
+      else
+        {:reply, {:paused, MapSet.to_list(state.lost)}, state}
+      end
+    else
+      Pty.write(id, bytes)
+      {:reply, :sent, state}
+    end
   end
 
   def handle_call(:close_unlocked, _from, state) do
@@ -155,7 +241,7 @@ defmodule Guiltty.Tabs do
   end
 
   def handle_call({:switch, to}, _from, state) do
-    {:reply, :ok, state |> switch_to(to) |> broadcast()}
+    {:reply, :ok, state |> switch_to(to) |> notify_windows()}
   end
 
   def handle_call(:active, _from, state), do: {:reply, state.active, state}
@@ -169,12 +255,12 @@ defmodule Guiltty.Tabs do
   def handle_call({:attach_window, pid}, _from, state) do
     Process.monitor(pid)
     state = %{state | windows: MapSet.put(state.windows, pid)}
-    {:reply, {tab_list(state), state.active, state.locked}, state}
+    {:reply, info(state), state}
   end
 
   @impl true
   def handle_info({:title, id, title}, state) do
-    {:noreply, %{state | titles: Map.put(state.titles, id, title)} |> broadcast()}
+    {:noreply, %{state | titles: Map.put(state.titles, id, title)} |> notify_windows()}
   end
 
   # A session supervisor went down. If it shut down normally the shell
@@ -195,6 +281,15 @@ defmodule Guiltty.Tabs do
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
     {:noreply, %{state | windows: MapSet.delete(state.windows, pid)}}
+  end
+
+  # The group's check, every second while there's a group: a lost tab is
+  # marked before you type into it.
+  def handle_info(:check_group, state) do
+    state = %{state | check_scheduled: false}
+
+    {:noreply,
+     if(state.group == %{}, do: state, else: state |> check_group() |> schedule_check())}
   end
 
   def handle_info({:find_session, id, tries}, state) do
@@ -266,7 +361,7 @@ defmodule Guiltty.Tabs do
   end
 
   defp remove_tab(state, id) do
-    state = %{state | locked: MapSet.delete(state.locked, id)}
+    state = %{state | locked: MapSet.delete(state.locked, id)} |> leave_group(id)
     index = Enum.find_index(state.tabs, &(&1 == id))
     tabs = List.delete(state.tabs, id)
 
@@ -284,7 +379,7 @@ defmodule Guiltty.Tabs do
       Logger.info("tabs: the last tab closed")
       {:stop, {:shutdown, :last_tab_closed}, state}
     else
-      {:noreply, broadcast(state)}
+      {:noreply, notify_windows(state)}
     end
   end
 
@@ -305,10 +400,80 @@ defmodule Guiltty.Tabs do
     %{state | active: Enum.at(state.tabs, target)}
   end
 
+  ## The broadcast group
+
+  defp leave_group(state, id),
+    do: %{state | group: Map.delete(state.group, id), lost: MapSet.delete(state.lost, id)}
+
+  defp schedule_check(%{check_scheduled: true} = state), do: state
+
+  defp schedule_check(state) do
+    Process.send_after(self(), :check_group, 1_000)
+    %{state | check_scheduled: true}
+  end
+
+  # Which group tabs no longer run what they joined with. Tells windows
+  # when that changes.
+  defp check_group(state) do
+    # Local tabs have no connection to lose: only remote ones are checked.
+    lost =
+      for {id, {pgid, _host}} <- state.group,
+          not match?({^pgid, _}, safe_foreground(id)),
+          into: MapSet.new(),
+          do: id
+
+    if lost == state.lost, do: state, else: notify_windows(%{state | lost: lost})
+  end
+
+  defp safe_foreground(id), do: try(do: Pty.foreground(id), catch: (:exit, _ -> nil))
+
+  # Where an ssh goes, for messages: its destination, from its command line
+  # (`ssh -p 2222 admin@web-02` is "web-02"). nil when it isn't one.
+  @ssh_options_with_values ~w(-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w -B)
+  defp host_of(pgid) do
+    case File.read("/proc/#{pgid}/cmdline") do
+      {:ok, cmdline} -> cmdline |> String.split(<<0>>, trim: true) |> ssh_host()
+      _ -> nil
+    end
+  end
+
+  @doc false
+  # The host an ssh command line goes to: ["ssh", "-p", "2222",
+  # "admin@web-02", "uptime"] is "web-02".
+  def ssh_host([_program | args]) do
+    case destination(args) do
+      nil -> nil
+      dest -> dest |> String.split("@") |> List.last()
+    end
+  end
+
+  def ssh_host(_), do: nil
+
+  defp destination([option, _value | rest]) when option in @ssh_options_with_values,
+    do: destination(rest)
+
+  defp destination(["-" <> _ | rest]), do: destination(rest)
+  defp destination([dest | _]), do: dest
+  defp destination([]), do: nil
+
   defp tab_list(state), do: Enum.map(state.tabs, &{&1, Map.get(state.titles, &1, "")})
 
-  defp broadcast(state) do
-    message = {:tabs, tab_list(state), state.active, state.locked}
+  defp info(state) do
+    %{
+      list: tab_list(state),
+      active: state.active,
+      locked: state.locked,
+      group:
+        Map.new(state.group, fn
+          {id, :local} -> {id, :local}
+          {id, {_pgid, host}} -> {id, host}
+        end),
+      lost: state.lost
+    }
+  end
+
+  defp notify_windows(state) do
+    message = {:tabs, info(state)}
     Enum.each(state.windows, &send(&1, message))
     state
   end

@@ -22,6 +22,7 @@ two rules matter:
 | Elixir                                 | Does                                  |
 |----------------------------------------+---------------------------------------|
 | =PtyNif.open(path, argv, env, c, r, cwd)= | openpty, fork, chdir, exec; ={:ok, pty, pid}= |
+| =PtyNif.foreground(pty)=              | tcgetpgrp: the foreground job's group (chapter 18) |
 | =PtyNif.read(pty)=                     | one non-blocking read                 |
 | =PtyNif.write(pty, bytes)=             | one non-blocking write                |
 | =PtyNif.select_read(pty)=              | "tell me when it's readable"          |

@@ -60,6 +60,12 @@
   # does.
   bold_is_bright: true,
 
+  # Broadcast (Ctrl+Shift+B): a tab may join only while it runs one of
+  # these. If one of them stops (a dropped connection), typing goes nowhere
+  # until that tab leaves the group. A local tab (your own shell) joins on
+  # a second Ctrl+Shift+B, and isn't checked.
+  broadcast_programs: ["ssh", "mosh-client"],
+
   # Where the tabs go: :top or :bottom.
   tab_bar: :top,
 
@@ -90,6 +96,8 @@
     cheatsheet: ["ctrl+shift+/"],
     # Locks the tab: closing the window ends every tab but the locked ones,
     # which keep running; the next guiltty opens them where you left them.
-    lock_tab: ["ctrl+shift+l"]
+    lock_tab: ["ctrl+shift+l"],
+    # Puts the tab in the broadcast group, or takes it out.
+    broadcast: ["ctrl+shift+b"]
   ]
 ]

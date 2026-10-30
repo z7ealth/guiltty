@@ -36,6 +36,9 @@ defmodule Guiltty.Session.PtyNif do
   @doc "Sends SIGWINCH to the foreground job, so full-screen programs redraw."
   def winch(_pty), do: :erlang.nif_error(:not_loaded)
 
+  @doc "The terminal's foreground process group: `{:ok, pgid}` (tcgetpgrp)."
+  def foreground(_pty), do: :erlang.nif_error(:not_loaded)
+
   @doc "Closes the master, which hangs up the child's terminal."
   def close(_pty), do: :erlang.nif_error(:not_loaded)
 

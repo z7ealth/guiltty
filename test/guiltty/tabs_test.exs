@@ -79,11 +79,11 @@ defmodule Guiltty.TabsTest do
   end
 
   test "windows hear about every change" do
-    {tabs, active, locked} = Tabs.attach_window(self())
+    %{list: tabs, active: active, locked: locked} = Tabs.attach_window(self())
     assert [{^active, _}] = tabs
     assert MapSet.size(locked) == 0
     {:ok, second} = Tabs.new_tab()
-    assert_receive {:tabs, [{^active, _}, {^second, _}], ^second, _locked}
+    assert_receive {:tabs, %{list: [{^active, _}, {^second, _}], active: ^second}}
   end
 
   test "the last tab closing stops Tabs (and so guiltty)", %{tabs: tabs} do
@@ -142,6 +142,88 @@ defmodule Guiltty.TabsTest do
     # Unlocking works too.
     :ok = Tabs.toggle_lock(second)
     assert MapSet.size(:sys.get_state(Tabs).locked) == 0
+  end
+
+  describe "broadcast" do
+    # cat stands in for ssh: it's in the foreground until it ends (Ctrl+D),
+    # and then the shell is again, just like after a dropped connection.
+    defp run_cat(id) do
+      Session.write(id, "cat\r")
+      assert eventually(fn -> match?({_, "cat"}, Pty.foreground(id)) end)
+    end
+
+    test "the host of an ssh command line, for messages" do
+      assert Tabs.ssh_host(~w(ssh web-01)) == "web-01"
+      assert Tabs.ssh_host(~w(ssh -p 2222 admin@web-02 uptime)) == "web-02"
+      assert Tabs.ssh_host(~w(ssh -A -i ~/.ssh/id -o StrictHostKeyChecking=no db.lan)) == "db.lan"
+      assert Tabs.ssh_host(~w(ssh)) == nil
+    end
+
+    test "only tabs running an allowed program can join" do
+      [first] = ids()
+      assert eventually(fn -> match?({_, "bash"}, Pty.foreground(first)) end)
+      assert {:error, {:not_allowed, "bash"}} = Tabs.toggle_broadcast(first, ["cat"])
+      run_cat(first)
+      assert {:ok, :joined} = Tabs.toggle_broadcast(first, ["cat"])
+      assert {:ok, :left} = Tabs.toggle_broadcast(first, ["cat"])
+    end
+
+    test "typing in one goes to all; a lost one pauses it, leaving resumes it" do
+      Tabs.attach_window(self())
+      [first] = ids()
+      {:ok, second} = Tabs.new_tab()
+      run_cat(first)
+      run_cat(second)
+      {:ok, :joined} = Tabs.toggle_broadcast(first, ["cat"])
+      {:ok, :joined} = Tabs.toggle_broadcast(second, ["cat"])
+
+      assert :sent = Tabs.send_input(first, "to-both\r")
+      assert eventually(fn -> Session.dump(first) =~ ~r/^to-both$/m end)
+      assert eventually(fn -> Session.dump(second) =~ ~r/^to-both$/m end)
+
+      # The "connection" in the second tab drops: cat ends, bash is back.
+      Session.write(second, <<4>>)
+      assert eventually(fn -> match?({_, "bash"}, Pty.foreground(second)) end)
+
+      # The next keystroke goes nowhere, not even to the tab it was typed in.
+      assert {:paused, [^second]} = Tabs.send_input(first, "nowhere\r")
+      Process.sleep(200)
+      refute Session.dump(first) =~ "nowhere"
+      refute Session.dump(second) =~ "nowhere"
+      assert MapSet.member?(:sys.get_state(Tabs).lost, second)
+
+      # Taking the lost tab out lets the rest go on.
+      {:ok, :left} = Tabs.toggle_broadcast(second, ["cat"])
+      assert :sent = Tabs.send_input(first, "again\r")
+      assert eventually(fn -> Session.dump(first) =~ ~r/^again$/m end)
+    end
+
+    test "a local tab joins only when asked, and isn't checked" do
+      [first] = ids()
+      {:ok, second} = Tabs.new_tab()
+      run_cat(second)
+      {:ok, :joined} = Tabs.toggle_broadcast(first, ["cat"], local: true)
+      {:ok, :joined} = Tabs.toggle_broadcast(second, ["cat"])
+
+      # Running something in the local tab changes its foreground: fine.
+      Session.write(first, "sleep 2\r")
+      assert eventually(fn -> match?({_, "sleep"}, Pty.foreground(first)) end)
+      assert :sent = Tabs.send_input(second, "both\r")
+      assert MapSet.size(:sys.get_state(Tabs).lost) == 0
+    end
+
+    test "the check runs by itself and marks a lost tab before anyone types" do
+      Tabs.attach_window(self())
+      [first] = ids()
+      {:ok, second} = Tabs.new_tab()
+      run_cat(first)
+      run_cat(second)
+      {:ok, :joined} = Tabs.toggle_broadcast(first, ["cat"])
+      {:ok, :joined} = Tabs.toggle_broadcast(second, ["cat"])
+
+      Session.write(first, <<4>>)
+      assert eventually(fn -> MapSet.member?(:sys.get_state(Tabs).lost, first) end)
+    end
   end
 
   test "resize applies to every tab and to new ones" do

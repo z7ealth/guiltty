@@ -54,6 +54,7 @@ with Ctrl+Shift+L (they show a 🔒): those keep running, and the next
 | Ctrl+,                        | open the config file in your editor      |
 | Ctrl+Shift+/                  | the cheatsheet: every key, on one page   |
 | Ctrl+Shift+L                  | lock the tab: it outlives the window     |
+| Ctrl+Shift+B                  | broadcast: type into all tabs in the group (ssh tabs) |
 
 Hold Shift to select in programs that use the mouse (vim, htop). Copy
 `priv/config.example.exs` to
