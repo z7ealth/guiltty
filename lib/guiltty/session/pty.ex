@@ -1,6 +1,7 @@
 defmodule Guiltty.Session.Pty do
   @moduledoc """
-  Owns one pseudoterminal and the shell running on it.
+  Owns one pseudoterminal and the shell running on it: the user's own shell
+  (see `user_shell/0`) unless the `:shell` option says otherwise.
 
   Bytes from the shell go to the attached parser. Reading only starts once a
   parser attaches, so the first prompt is never lost, and stops while there
@@ -8,6 +9,8 @@ defmodule Guiltty.Session.Pty do
   """
 
   use GenServer, restart: :transient
+
+  import Bitwise
 
   require Logger
 
@@ -40,7 +43,7 @@ defmodule Guiltty.Session.Pty do
     # So terminate/2 runs when the supervisor shuts us down.
     Process.flag(:trap_exit, true)
 
-    shell = Keyword.get_lazy(opts, :shell, fn -> System.find_executable("bash") end)
+    shell = Keyword.get_lazy(opts, :shell, &user_shell/0)
     argv = [Path.basename(shell) | Keyword.get(opts, :args, [])]
     env = opts |> Keyword.get(:env, %{}) |> build_env()
     cols = Keyword.get(opts, :cols, 80)
@@ -56,11 +59,62 @@ defmodule Guiltty.Session.Pty do
     end
   end
 
+  @doc """
+  The shell to run: `$SHELL` if it's set, otherwise the login shell from
+  the user database, otherwise bash, otherwise `/bin/sh`. Each must be an
+  executable file to be picked.
+  """
+  def user_shell do
+    Enum.find_value(
+      [
+        fn -> System.get_env("SHELL") end,
+        &passwd_shell/0,
+        fn -> System.find_executable("bash") end,
+        fn -> "/bin/sh" end
+      ],
+      fn candidate -> if executable?(path = candidate.()), do: path end
+    )
+  end
+
+  # The 7th field of the user's passwd entry. getent asks NSS (see
+  # nsswitch.conf(5)), so it also finds users from LDAP or systemd-homed,
+  # not just /etc/passwd.
+  defp passwd_shell do
+    with user when is_binary(user) <- System.get_env("USER"),
+         {entry, 0} <- System.cmd("getent", ["passwd", user], stderr_to_stdout: true) do
+      entry |> String.trim() |> String.split(":") |> Enum.at(6)
+    else
+      _ -> nil
+    end
+  rescue
+    # getent isn't installed
+    ErlangError -> nil
+  end
+
+  defp executable?(path) when is_binary(path) and path != "" do
+    match?(
+      {:ok, %File.Stat{type: :regular, mode: mode}} when (mode &&& 0o111) != 0,
+      File.stat(path)
+    )
+  end
+
+  defp executable?(_), do: false
+
+  defp vm_variable?("RELEASE_" <> _), do: true
+  defp vm_variable?(name), do: name in ~w(BINDIR ROOTDIR EMU PROGNAME)
+
   # The child gets our environment, saying it runs in an xterm-256color
   # terminal with 24-bit color. TERM picks the terminfo entry programs use
   # to know which escape sequences to send.
+  #
+  # Minus the variables that only describe this VM: the Erlang runtime's
+  # (BINDIR, ROOTDIR, EMU, PROGNAME) and the release start script's
+  # (RELEASE_*). A shell must not inherit them: another Mix release started
+  # from it would take RELEASE_NODE as its own node name and collide with
+  # ours, and RELEASE_COOKIE is the key to run code on this node.
   defp build_env(overrides) do
     System.get_env()
+    |> Map.reject(fn {name, _value} -> vm_variable?(name) end)
     |> Map.drop(["TERM_PROGRAM", "TERM_PROGRAM_VERSION"])
     |> Map.merge(%{"TERM" => "xterm-256color", "COLORTERM" => "truecolor"})
     |> Map.merge(overrides)

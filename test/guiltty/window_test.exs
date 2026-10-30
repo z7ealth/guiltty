@@ -16,7 +16,14 @@ defmodule Guiltty.WindowTest do
 
   setup context do
     id = context.test
-    opts = [id: id, args: ["--norc", "--noprofile"], env: %{"PS1" => "$ "}]
+
+    opts = [
+      id: id,
+      shell: System.find_executable("bash"),
+      args: ["--norc", "--noprofile"],
+      env: %{"PS1" => "$ "}
+    ]
+
     start_supervised!({Session.Supervisor, opts})
     window_spec = {Window, session: id, name: false, env: @env}
     window = start_supervised!(Supervisor.child_spec(window_spec, restart: :temporary))

@@ -142,6 +142,16 @@ completely; noted for later.)
 
 [[file:../lib/guiltty/session/pty.ex][Guiltty.Session.Pty]] wraps all of this:
 
+- The shell gets guiltty's environment *minus the VM's own variables*:
+  the Erlang runtime's (=BINDIR=, =ROOTDIR=, =EMU=, =PROGNAME=) and the
+  release start script's (=RELEASE_*=). Two reasons. Another Mix release
+  started from the shell would read =RELEASE_NODE= as its own node name and
+  collide with guiltty's (that's how =extop= failed). And =RELEASE_COOKIE= is
+  the key to run code on guiltty's node: no program in your shell should be
+  able to read it.
+- It runs *your* shell: =$SHELL=, or your login shell from the user
+  database (=getent passwd $USER=, which asks NSS, so LDAP users work too),
+  or bash, or =/bin/sh=, the first that is an executable file.
 - On start it opens the PTY with =TERM=xterm-256color= and
   =COLORTERM=truecolor= (MVP 1 used =TERM=dumb=), but doesn't read yet.
 - =resize/3= calls the NIF's =resize=, an =ioctl(TIOCSWINSZ)= ([[file:09-resize.org][the resize

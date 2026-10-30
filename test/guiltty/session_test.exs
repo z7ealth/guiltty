@@ -8,6 +8,7 @@ defmodule Guiltty.SessionTest do
 
     opts = [
       id: id,
+      shell: System.find_executable("bash"),
       args: ["--norc", "--noprofile"],
       env: %{"PS1" => "$ ", "HISTFILE" => "/dev/null"}
     ]

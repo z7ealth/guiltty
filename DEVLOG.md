@@ -172,3 +172,26 @@ underline, inverse and colors.
 
 - MVP 3: alternate screen (1049), DECSC/DECRC, scroll regions, arrow keys.
 - `less`'s `ESC[22;0;0t` (save the window title) is ignored.
+
+## 2026-10-29 — Your shell, not bash
+
+_Draft: agent, awaiting user_
+
+**Broke.** guiltty always started bash, because `Pty` hard-coded
+`System.find_executable("bash")`. Running zsh with powerlevel10k inside
+also showed the prompt's Unicode as `?` (MVP 5's job), and `extop` failed
+with "the name guiltty@hs-suse seems to be in use".
+
+**Fixed.** The shell is now `$SHELL`, then the login shell from
+`getent passwd`, then bash, then `/bin/sh`.
+
+**Found.** The extop error is guiltty passing its release environment
+(`RELEASE_NAME`, `RELEASE_NODE`, `RELEASE_COOKIE`, `BINDIR`, ...) to the
+shell. Any Mix release started inside guiltty takes `RELEASE_NODE` from it
+and collides; and every program can read the cookie.
+
+**Fixed, too.** The shell no longer gets `RELEASE_*`, `BINDIR`, `ROOTDIR`,
+`EMU` or `PROGNAME`. It matters even more for the cluster idea: a cluster
+cookie opens every node, so it must never reach a shell. Left alone on
+purpose: asdf's `ASDF_INSTALL_*`, `MIX_HOME` and `MIX_ARCHIVES`, which come
+from the tool setup, not from guiltty.
