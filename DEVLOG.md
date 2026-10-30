@@ -423,3 +423,84 @@ no compositor, so the transparency itself is yours to see).
 - OSC 7 (the shell reporting its directory), so `:inherit` follows a
   program that changes directory, not just the shell.
 - Opacity changes without reopening the window.
+
+## 2026-10-30 — The tab bar can go at the bottom
+
+_Draft: agent, awaiting user_
+
+`tab_bar: :bottom` in the config. The renderer keeps the bar as row 0
+of its cell mirror and only changes where it draws it: the vertex shader
+puts row 0 last and the other rows one up, and mouse clicks are mapped
+back the same way. The accent line moves to the tab's top edge. Protocol
+version 7: one more bit in the OPTIONS flags. Checked on a private X
+server: the bar at the bottom, and a real click on tab 1 switched to it.
+My first click script never found the window, so it sent nothing; the
+bug was in the test, not guiltty.
+
+## 2026-10-30 — Config errors show in the window
+
+_Draft: agent, awaiting user_
+
+A broken config used to show up only in the log, so a typo just looked
+like guiltty ignoring you. Now the tab bar shows it in red, as one line
+with the file and line (`⚠ config.exs:3: theme: unknown name "drakula"`),
+until a save loads. Protocol version 8: the status message carries a
+style.
+
+**Broke.** The live test found what the unit tests didn't: start guiltty
+with a broken config and the window never appeared. Config tells a new
+subscriber about the error at once, the Window passed it to the renderer
+before the setup, and the renderer exited on the unexpected first
+message. Since the Window restarts when its renderer dies, it crash-looped.
+Now nothing but the setup goes out before the handshake. A new test
+reproduces it (it fails with the guard removed). Also, the line number
+went missing for errors raised while the file runs, when the config sits
+inside the current directory: stacktraces name it by a relative path.
+
+## 2026-10-30 — Typos in the config, and settings without checks
+
+_Draft: agent, awaiting user_
+
+You asked whether new settings would warn too. Errors in general did, but
+a misspelled name (`curser:`) was silently ignored, and a new setting
+without a check would let any value through. Now unknown names are
+reported, with a suggestion when one is close (`did you mean :cursor?`),
+in every section, `keys:` included. A test feeds every setting a nonsense
+value and expects an error; I checked that it fails for a setting added
+without a check. Odd shapes like `font: :big` used to crash the Config
+process; now they're an error message too. AGENTS.md has a "Config
+options" rule: default, check, example line and book row, together.
+
+## 2026-10-30 — A cheatsheet, NvChad-style
+
+_Draft: agent, awaiting user_
+
+Ctrl+Shift+/ shows every key on one page: cards in columns, colored
+titles, keys on the right, built from the config so rebinding shows. The
+nice part is that it needed no C and no protocol change. Elixir draws it
+the way a program would, with cursor moves, palette colors and box
+characters, through the same parser and terminal into a grid, and the
+Window sends those rows instead of the tab's. Live on a private X server
+in Catppuccin, opened and closed with real key presses. Two glitches
+caught on the way: keys that didn't fit were cut ("Ctrl+Shift+T…" for
+Ctrl+Shift+Tab), so now they get a line of their own; and on a narrow
+window the help text ran into the title, so it's left out there.
+
+Later the same day: you pointed out the sheet looked scattered, and it
+was: cards went into whichever column was shortest. Now they sit in a
+centered grid, rows balanced (6 cards with room for 5 per row are 3 + 3),
+every card in a row as tall as the tallest, so tops and bottoms line up.
+On an 80-column window the cards narrow a little so two fit side by side.
+
+## 2026-10-30 — A selection that outlived its text
+
+_Draft: agent, awaiting user_
+
+You found it: select something, run `clear`, and the highlight stayed, a
+white block over an empty screen. Selections hold row numbers so they
+can follow their text through scrolling, and nothing ever dropped them.
+Now the Screen remembers the selected text when the mouse lets go, and
+drops the selection when the text under it changes, the way Alacritty and
+Ghostty do. Comparing the text rather than the rows keeps a selection
+that only scrolled. A test selects a line, scrolls it away with `seq`
+(still selected), then runs `clear` (gone); it fails without the fix.

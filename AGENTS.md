@@ -184,6 +184,18 @@ Rules that keep the architecture intact:
 - Parser and grid are pure functions where possible, so they can be tested
   without processes.
 
+## Config options
+
+Every new setting in `config.exs` needs all of these, in the same change:
+
+- a default in `Guiltty.Config.defaults/0` (its name is then a known name;
+  anything else is reported as a typo);
+- a check in `Guiltty.Config.build_checked/1` that turns a bad value into
+  `{:error, "name: what was expected"}`, never a crash. The test "every
+  setting rejects a value of the wrong shape" fails until it exists;
+- a commented line in `priv/config.example.exs`;
+- a row in the table in `book/16-config.org`.
+
 ## Testing
 
 - **Byte fixtures:** record real sessions with `script` (util-linux) into

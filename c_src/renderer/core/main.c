@@ -72,6 +72,9 @@ struct renderer {
     uint8_t opacity; // the default background's, in percent
     bool transparent; // the window was created able to show what's behind it
     bool bold_is_bright;
+    // The tab bar is drawn at the bottom. It's still row 0 of the cell
+    // mirror; only where it's drawn (and where clicks land) changes.
+    bool tab_bar_bottom;
     int cell_w, cell_h;
     // The terminal grid is cols x rows. The cell mirror has one more row on
     // top, the tab bar, so grid row i is cells row i + 1.
@@ -91,6 +94,7 @@ struct renderer {
     struct tab tabs[max_tabs];
     int tab_count, active_tab;
     char status[max_short_text]; // shown at the right of the tab bar
+    bool status_warning; // draw it as a warning (a broken config)
     char preedit[max_short_text]; // text being composed in an input method
     uint8_t halo_rgb[3];
     Uint64 halo_until; // SDL ticks (ms); 0 = no halo
@@ -468,13 +472,24 @@ static void build_tab_bar(struct renderer *r) {
     int status_w = text_columns(r->status);
     if (status_w > 0) {
         struct cell look = bar;
-        mix(r->theme.bg, r->theme.fg, 30, look.bg);
-        memcpy(look.fg, r->theme.fg, 3);
+        if (r->status_warning) {
+            // A warning (the config didn't load) in the theme's red.
+            memcpy(look.bg, r->theme.palette[1], 3);
+            memcpy(look.fg, r->theme.bg, 3);
+            look.attrs = ATTR_BOLD;
+        } else {
+            mix(r->theme.bg, r->theme.fg, 30, look.bg);
+            memcpy(look.fg, r->theme.fg, 3);
+        }
+        // At most two thirds of the bar: the tabs stay visible.
+        int room = r->cols * 2 / 3 - 2;
+        if (status_w > room)
+            status_w = room > 1 ? room : 1;
         int start = r->cols - status_w - 2;
         if (start < 0)
             start = 0;
         int end = bar_text(r, start, " ", look, r->cols);
-        end = bar_text(r, end, r->status, look, r->cols);
+        end = bar_text_cut(r, end, r->status, look, end + status_w);
         bar_text(r, end, " ", look, r->cols);
         limit = start - 1;
     }
@@ -615,6 +630,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     r->padding_option = padding;
     r->opacity = opacity;
     r->bold_is_bright = flags & OPTION_BOLD_IS_BRIGHT;
+    r->tab_bar_bottom = flags & OPTION_TAB_BAR_BOTTOM;
     return true;
 }
 
@@ -705,7 +721,8 @@ static void update_text_area(struct renderer *r) {
         density = 1;
     SDL_Rect area = {
         .x = (int)((float)(r->padding + r->cursor_col * r->cell_w) / density),
-        .y = (int)((float)(r->padding + (r->cursor_row + 1) * r->cell_h) / density),
+        .y = (int)((float)(r->padding + (r->cursor_row + (r->tab_bar_bottom ? 0 : 1)) * r->cell_h) /
+                   density),
         .w = (int)((float)r->cell_w / density),
         .h = (int)((float)r->cell_h / density),
     };
@@ -801,10 +818,15 @@ static void set_clipboard(struct reader *rd) {
             return false;
         build_tab_bar(r);
         return true;
-    case MSG_STATUS:
+    case MSG_STATUS: {
+        uint8_t style;
+        if (!rd_u8(&rd, &style))
+            return false;
+        r->status_warning = style == 1;
         clean_text(rd.p, rd.left, r->status, sizeof r->status);
         build_tab_bar(r);
         return true;
+    }
     case MSG_CLIPBOARD:
         set_clipboard(&rd);
         return true;
@@ -812,6 +834,7 @@ static void set_clipboard(struct reader *rd) {
         int padding = r->padding_option;
         if (!read_options(&rd, r))
             return false;
+        update_text_area(r); // the tab bar may have moved
         if (r->opacity < 100 && !r->transparent)
             fprintf(stderr, "renderer: opacity applies to windows opened from now on\n");
         // Elixir sends every row again (bold may have changed colors). New
@@ -1030,6 +1053,7 @@ static void draw(struct renderer *r) {
         // Without the focus, a hollow block: typing wouldn't go here.
         .cursor_shape = r->focused ? (uint8_t)(r->cursor_style & 0x3) : CURSOR_HOLLOW,
         .opacity = r->transparent ? (float)r->opacity / 100.0f : 1.0f,
+        .first_row_last = r->tab_bar_bottom,
         .cursor_wide = (r->cells[cursor].attrs & ATTR_WIDE) != 0 && r->cursor_col + 1 < r->cols,
         .origin_x = r->padding,
         .origin_y = r->padding,
@@ -1082,7 +1106,10 @@ static void cell_at(const struct renderer *r, float x, float y, int *col, int *c
         density = 1;
     int px = (int)(x * density), py = (int)(y * density);
     *col = SDL_clamp((px - r->padding) / r->cell_w, 0, r->cols - 1);
-    *cells_row = SDL_clamp((py - r->padding) / r->cell_h, 0, r->rows);
+    int shown = SDL_clamp((py - r->padding) / r->cell_h, 0, r->rows);
+    // The row on screen to the row in the mirror: with the bar at the
+    // bottom, the last row on screen is mirror row 0.
+    *cells_row = !r->tab_bar_bottom ? shown : shown == r->rows ? 0 : shown + 1;
 }
 
 // SDL numbers buttons 1 left, 2 middle, 3 right; the protocol 0, 1, 2.

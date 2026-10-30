@@ -39,7 +39,8 @@ defmodule Guiltty.ConfigTest do
         working_directory: "~/src",
         copy_on_select: :clipboard,
         wheel_lines: 5,
-        bold_is_bright: false
+        bold_is_bright: false,
+        tab_bar: :bottom
       ]
       """)
 
@@ -49,6 +50,7 @@ defmodule Guiltty.ConfigTest do
     assert c.shell == %{command: "/bin/bash", args: ["-l"]}
     assert c.working_directory == Path.expand("~/src")
     assert {c.copy_on_select, c.wheel_lines, c.bold_is_bright} == {:clipboard, 5, false}
+    assert c.tab_bar == :bottom
     assert c.keys.open_config == ["ctrl+,"]
   end
 
@@ -72,9 +74,33 @@ defmodule Guiltty.ConfigTest do
           "[shell: [command: 42]]",
           "[working_directory: \"relative\"]",
           "[wheel_lines: 0]",
-          "[copy_on_select: :maybe]"
+          "[copy_on_select: :maybe]",
+          "[tab_bar: :left]"
         ] do
       assert {:error, _} = Config.load(write(dir, "bad.exs", bad)), bad
+    end
+  end
+
+  test "a misspelled name is reported, with a suggestion", %{tmp_dir: dir} do
+    assert {:error, "unknown setting :curser (did you mean :cursor?)"} =
+             Config.load(write(dir, "a.exs", "[curser: [style: :bar]]"))
+
+    assert {:error, "window: unknown name :opacty (did you mean :opacity?)"} =
+             Config.load(write(dir, "b.exs", "[window: [opacty: 0.9]]"))
+
+    assert {:error, "keys: unknown name :new_tba (did you mean :new_tab?)"} =
+             Config.load(write(dir, "c.exs", ~s([keys: [new_tba: ["ctrl+t"]]])))
+
+    assert {:error, "unknown setting :zzz"} = Config.load(write(dir, "d.exs", "[zzz: 1]"))
+  end
+
+  # The safety net for new settings: every one must have a check. A setting
+  # added to the defaults without one fails here, instead of letting a bad
+  # value through to whatever uses it.
+  test "every setting rejects a value of the wrong shape", %{tmp_dir: dir} do
+    for {name, _default} <- Config.defaults() do
+      path = write(dir, "#{name}.exs", "[#{name}: {:not, :valid}]")
+      assert {:error, _} = Config.load(path), "#{name} accepted {:not, :valid}"
     end
   end
 
@@ -103,12 +129,35 @@ defmodule Guiltty.ConfigTest do
     assert_receive {:config, %{theme: %{bg: {0, 0, 2}}}}, 3000
   end
 
-  test "a broken edit keeps the previous config", %{tmp_dir: dir} do
+  test "a broken edit keeps the previous config and says why, until it's fixed", %{
+    tmp_dir: dir
+  } do
     path = write(dir, "live.exs", "[theme: [bg: \"#000001\"]]")
     pid = start_supervised!({Config, path: path, name: nil})
-    File.write!(path, "[theme: [bg: ")
+    GenServer.call(pid, {:subscribe, self()})
+
+    File.write!(path, "[\n  theme: \"drakula\"\n]")
     File.touch!(path, System.os_time(:second) + 5)
-    Process.sleep(1500)
+    assert_receive {:config_error, "live.exs: theme: unknown name \"drakula\"" <> _}, 3000
     assert GenServer.call(pid, :get).theme.bg == {0, 0, 1}
+
+    # A window that opens now hears about it right away.
+    GenServer.call(pid, {:subscribe, self()})
+    assert_receive {:config_error, "live.exs: " <> _}
+
+    File.write!(path, "[theme: \"dracula\"]")
+    File.touch!(path, System.os_time(:second) + 10)
+    assert_receive {:config, %{theme: %{bg: {0x28, 0x2A, 0x36}}}}, 3000
+  end
+
+  test "errors in the file say which line", %{tmp_dir: dir} do
+    assert {:error, "/" <> _ = syntax} =
+             Config.load(write(dir, "s.exs", "[\n  font: [size: 16,\n"))
+
+    assert syntax =~ ~r/s\.exs:\d+: /
+
+    runtime = write(dir, "r.exs", "x = 1\n[\n  font: [size: x + \"a\"]\n]\n")
+    assert {:error, message} = Config.load(runtime)
+    assert message =~ "r.exs:3: bad argument in arithmetic expression"
   end
 end

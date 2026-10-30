@@ -135,7 +135,8 @@ sends ={:config, config}= to the Window:
   changes, and a RESIZE goes out;
 - keys: the Window re-reads its bindings.
 
-A broken file is logged and ignored; the previous config stays. The
+A broken file is ignored and the previous config stays; the error goes
+to the log, and a one-line version to the window (chapter 16). The
 example is [[file:../priv/config.example.exs][priv/config.example.exs]]. Every setting, and how each one
 reaches the shell or the pixels, is in [[file:16-config.org][the configuration chapter]].
 
@@ -161,6 +162,9 @@ guiltty work.
 | Ctrl+PgUp, Ctrl+Shift+Tab     | previous tab               |
 | Ctrl+Shift+1 .. 9             | tab 1 .. 9                 |
 | click a tab                   | switch to it               |
+
+Every other key guiltty has is on its cheatsheet (Ctrl+Shift+/,
+[[file:07-input.org][chapter 7]]), which is built from your config.
 
 * Loot
 

@@ -22,6 +22,7 @@ uniform vec3 u_accent; // the line under the active tab
 uniform float u_opacity; // of default backgrounds; 1 = opaque
 uniform vec2 u_cell; // cell size in pixels
 uniform int u_cursor2; // the cursor's right half (wide character), or -1
+uniform int u_first_row_last; // 1: the tab bar is at the bottom
 
 out vec4 out_color;
 
@@ -70,7 +71,10 @@ void main() {
 
     // The accent line under the active tab, then the thin cursors: they go
     // over whatever is in the cell.
-    if ((v_attrs & ACCENT) != 0u && v_local.y >= u_cell.y - 2.0 * float(u_line_thickness)) {
+    // The accent line runs along the tab's edge that faces the terminal.
+    float accent = 2.0 * float(u_line_thickness);
+    bool on_accent = u_first_row_last == 1 ? v_local.y < accent : v_local.y >= u_cell.y - accent;
+    if ((v_attrs & ACCENT) != 0u && on_accent) {
         out_color = vec4(u_accent, 1.0);
         return;
     }

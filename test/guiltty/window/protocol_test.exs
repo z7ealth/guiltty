@@ -44,7 +44,7 @@ defmodule Guiltty.Window.ProtocolTest do
   end
 
   test "decodes renderer events" do
-    assert Protocol.decode(<<1, 0, 6, 2, "gl">>) == {:ok, {:hello, 6, "gl"}}
+    assert Protocol.decode(<<1, 0, 8, 2, "gl">>) == {:ok, {:hello, 8, "gl"}}
     assert Protocol.decode(<<15, 1234::32>>) == {:ok, {:frame, 1234}}
     assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
@@ -67,7 +67,15 @@ defmodule Guiltty.Window.ProtocolTest do
     assert IO.iodata_to_binary(Protocol.options(%{@options | bold_is_bright: false})) ==
              <<20, 6::16, 90, 0>>
 
+    assert IO.iodata_to_binary(Protocol.options(Map.put(@options, :tab_bar, :bottom))) ==
+             <<20, 6::16, 90, 0b11>>
+
     assert Protocol.open_url("file:///tmp/x.exs") == <<21, "file:///tmp/x.exs">>
+  end
+
+  test "encodes the status, normal or a warning" do
+    assert Protocol.status("find: x") == <<17, 0, "find: x">>
+    assert Protocol.status(:warning, "⚠ bad") == <<17, 1, "⚠ bad">>
   end
 
   test "encodes the title" do

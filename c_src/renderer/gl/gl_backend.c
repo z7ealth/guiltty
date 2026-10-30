@@ -91,7 +91,8 @@ struct gl {
     int atlas_w, atlas_h;
     struct {
         GLint viewport, origin, cell, cols, atlas_cols, cursor, cursor2, pass, atlas,
-            cursor_color, underline_y, strike_y, line_thickness, cursor_shape, accent, opacity;
+            cursor_color, underline_y, strike_y, line_thickness, cursor_shape, accent, opacity,
+            rows, first_row_last;
     } u; // uniform locations
 };
 
@@ -163,6 +164,8 @@ struct gl {
     LOC(cursor_shape, "u_cursor_shape");
     LOC(accent, "u_accent");
     LOC(opacity, "u_opacity");
+    LOC(rows, "u_rows");
+    LOC(first_row_last, "u_first_row_last");
 #undef LOC
     return true;
 }
@@ -321,6 +324,8 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform3f(gl->u.accent, unit(frame->accent_rgb[0]), unit(frame->accent_rgb[1]),
                  unit(frame->accent_rgb[2]));
     f->Uniform1f(gl->u.opacity, frame->opacity);
+    f->Uniform1i(gl->u.rows, frame->rows);
+    f->Uniform1i(gl->u.first_row_last, frame->first_row_last ? 1 : 0);
 
     f->BindVertexArray(gl->vao);
     f->ActiveTexture(GL_TEXTURE0);

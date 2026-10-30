@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 6
+  @version 8
 
   @hello 1
   @setup 2
@@ -66,12 +66,15 @@ defmodule Guiltty.Window.Protocol do
 
   @doc """
   Window options, live: u16 padding (pixels at scale 1), u8 opacity
-  (percent), u8 flags (bit 0: bold is bright).
+  (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the
+  bottom).
   """
   def options(options), do: [<<@options>>, option_bytes(options)]
 
-  defp option_bytes(%{padding: padding, opacity: opacity, bold_is_bright: bright}),
-    do: <<padding::16, round(opacity * 100), bool(bright)>>
+  defp option_bytes(%{padding: padding, opacity: opacity, bold_is_bright: bright} = o) do
+    bottom = Map.get(o, :tab_bar, :top) == :bottom
+    <<padding::16, round(opacity * 100), bool(bright) + 2 * bool(bottom)>>
+  end
 
   @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."
   def open_url(url), do: <<@open_url, url::binary>>
@@ -107,8 +110,13 @@ defmodule Guiltty.Window.Protocol do
     ]
   end
 
-  @doc "A line of status shown at the right of the tab bar (search, scrollback); empty hides it."
-  def status(text), do: <<@status, truncate(text, 255)::binary>>
+  @doc """
+  A line of status at the right of the tab bar (search, scrollback, a
+  config error): u8 style (0 normal, 1 warning), then the text. Empty
+  hides it.
+  """
+  def status(style \\ :normal, text),
+    do: <<@status, if(style == :warning, do: 1, else: 0), truncate(text, 255)::binary>>
 
   @doc "Put text on the clipboard (`:clipboard`) or the primary selection (`:primary`)."
   def clipboard(target, text),

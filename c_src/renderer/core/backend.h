@@ -61,6 +61,8 @@ struct frame {
     uint8_t cursor_shape; // enum cursor_shape (protocol.h)
     uint8_t accent_rgb[3]; // the line under the active tab
     float opacity; // of cells with CELL_DEFAULT_BG and of the padding; 1 = opaque
+    // Draw cells row 0 (the tab bar) below the others instead of above.
+    bool first_row_last;
     uint8_t cursor_rgb[3];
     uint8_t clear_rgb[3]; // the padding around the grid
     int origin_x, origin_y; // padding from the window's top-left, in pixels

@@ -14,6 +14,8 @@ uniform int u_cols; // grid columns
 uniform int u_atlas_cols; // slots per atlas row
 uniform int u_cursor; // instance index of the cursor cell, -1 if hidden
 uniform int u_cursor2; // its right half when it's on a wide character, or -1
+uniform int u_rows; // rows of cells, the tab bar's included
+uniform int u_first_row_last; // 1: draw row 0 (the tab bar) at the bottom
 
 out vec2 v_texel; // position in the atlas, in texels
 out vec2 v_local; // position inside the cell, in pixels
@@ -25,7 +27,10 @@ flat out int v_is_cursor; // 0 no, 1 the cursor's cell, 2 its right half (wide c
 void main() {
     // Strip order: (0,0) (1,0) (0,1) (1,1)
     vec2 corner = vec2(gl_VertexID & 1, gl_VertexID >> 1);
-    vec2 cell = vec2(gl_InstanceID % u_cols, gl_InstanceID / u_cols);
+    int row = gl_InstanceID / u_cols;
+    if (u_first_row_last == 1)
+        row = row == 0 ? u_rows - 1 : row - 1;
+    vec2 cell = vec2(gl_InstanceID % u_cols, row);
 
     vec2 px = u_origin + (cell + corner) * u_cell;
     vec2 ndc = px / u_viewport * 2.0 - 1.0;

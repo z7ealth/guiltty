@@ -166,6 +166,40 @@ Tested for real: XTest key events (the same events a keyboard makes) on
 a private X server with this layout typed =´ e=, =~ n=, AltGr+/ and the
 rest, and bash printed =¿Qué tal, señor?=.
 
+* The cheatsheet
+
+Ctrl+Shift+/ (think Ctrl+?) shows every key guiltty has, NvChad-style:
+one card per group, each line an action and its keys. The cards sit in a
+centered grid: rows balanced (6 cards with room for 5 per row make two
+rows of 3), every card in a row as tall as the tallest so their edges
+line up, and a bit narrower on an 80-column window so two still fit. It's
+built from your config each time, so a key you rebind shows up as you
+bound it. Esc, =q= or the same key closes it; arrows, =j=/=k=, PgUp/PgDn and
+the wheel scroll it when it's taller than the window.
+
+How it's drawn is the interesting part: the way a program would draw it.
+[[file:../lib/guiltty/cheatsheet.ex][Guiltty.Cheatsheet]] writes escape sequences, cursor moves (=CSI row;col H=),
+colors (=CSI 38;5;n m=, palette indices, so it follows the theme) and box
+characters (=╭─╮│╰╯=), and feeds them through the same parser and terminal
+code as the shell's output, into a grid as tall as the sheet:
+
+#+begin_example
+  config.keys --> Cheatsheet.render --> "\e[3;2H\e[38;5;8m╭─\e[0m\e[1;38;5;4m Tabs ..."
+                                              |
+                                  Parser.feed + Terminal.apply
+                                              |
+                                              v
+                                  a Grid: rows of 14-byte cells
+                                              |
+  Window: a screenful of rows, instead of the tab's  --ROWS-->  renderer
+#+end_example
+
+The renderer can't tell the difference: it gets ROWS, as always. While
+the sheet is open the Window doesn't take updates from the tab (the shell
+keeps running underneath), and keys, text and the mouse go to the sheet.
+Closing it re-subscribes to the tab's Screen, which sends every row
+again. No C and no protocol change.
+
 * Ctrl+C is not a signal (yet)
 
 guiltty sends only the byte =0x03=. The *kernel* does the rest: the line
@@ -201,6 +235,8 @@ can act like Alt.
 4. What byte does Ctrl+[ produce, and which key does that match?
 5. Who turns =´= then =e= into =é=: the keyboard, the input method, SDL
    or guiltty?
+6. The renderer has no idea the cheatsheet exists. How does it end up on
+   screen?
 
 ** Answers
 :PROPERTIES:
@@ -219,3 +255,6 @@ can act like Alt.
 5. The input method (XIM here; IBus, Fcitx or the Wayland compositor
    elsewhere). SDL passes on the result as text input, and guiltty sends
    that text as is.
+6. Elixir draws it with escape sequences into a grid, through the same
+   parser and terminal code as a program's output, and the Window sends
+   those rows in ROWS messages instead of the tab's.

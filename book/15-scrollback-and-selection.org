@@ -154,6 +154,19 @@ the same cell is just a click: it clears the selection. Selected text has
 trailing spaces removed per row, rows joined by newlines, and never half
 a wide character ([[file:../lib/guiltty/selection.ex][Guiltty.Selection]]).
 
+** When the text under it changes
+
+Because a selection holds row numbers, it follows its text as output
+scrolls it up into the scrollback. But if the text itself changes (you
+run =clear=, a program redraws), the rows still exist and the selection
+would highlight whatever is there now: a block of inverted color over a
+blank screen. So when the mouse lets go, the Screen remembers the text it
+selected, and after every change it compares (=drop_stale_selection/1=):
+same text, the selection stays; different, it goes, and every row is sent
+again without the highlight. Comparing the text, not "did those rows
+change", is what lets a selection survive scrolling, which changes every
+row on screen but not the text it points at.
+
 * Two clipboards (on X11)
 
 X11 has several *selections*; two matter:
@@ -203,6 +216,8 @@ end markers).
 4. What's the difference between PRIMARY and CLIPBOARD?
 5. Why does Elixir own the selection, not the renderer?
 6. Why does sealing 256 rows at a time make guiltty faster?
+7. Why does guiltty compare the selected text instead of checking whether
+   the selected rows changed?
 
 ** Answers
 :PROPERTIES:
@@ -221,3 +236,6 @@ end markers).
    only mirrors visible cells.
 6. A list prepend per row is nearly free; the map update and the memory
    allocation happen once per 256 rows instead of once per row.
+7. Scrolling changes every row on the screen but not the text a selection
+   points at (its row numbers move with it). Only a change to that text
+   should drop the selection.

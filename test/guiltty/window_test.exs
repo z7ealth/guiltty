@@ -254,6 +254,33 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> screen_state(id).scroll == 0 end)
   end
 
+  test "a selection follows its text as it scrolls, and goes when the text changes", %{
+    id: id,
+    window: window
+  } do
+    Session.write(id, "clear; echo keep-me\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^keep-me$/m end)
+    row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 == "keep-me"))
+
+    mouse(window, 0, 0, 0, row)
+    mouse(window, 2, 0, 6, row)
+    mouse(window, 1, 0, 6, row)
+    assert eventually(fn -> Screen.selection_text(id) == "keep-me" end)
+
+    # Output scrolls it up, into the scrollback: same text, still selected.
+    Session.write(id, "seq 1 40\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^40$/m end)
+    assert Screen.selection_text(id) == "keep-me"
+
+    # clear erases it: the selection goes, and with it the highlight.
+    Session.write(id, "clear\r")
+    assert eventually(fn -> Screen.selection_text(id) == nil end)
+
+    assert eventually(fn ->
+             not :sys.get_state(GenServer.whereis(Session.via(id, :screen))).decorated
+           end)
+  end
+
   test "dragging selects text; a plain click clears it", %{id: id, window: window} do
     Session.write(id, "clear; echo select-me\r")
     assert eventually(fn -> Session.dump(id) =~ ~r/^select-me$/m end)
@@ -306,6 +333,63 @@ defmodule Guiltty.WindowTest do
     key(window, 0x1B, 0)
     assert eventually(fn -> screen_state(id).search == nil end)
     assert :sys.get_state(window).search == nil
+  end
+
+  test "a config error that arrives before the handshake waits for it" do
+    # A Window that hears about the error during init, before the renderer
+    # said hello, must not send it early: the renderer would refuse it.
+    spec =
+      Supervisor.child_spec({Window, name: false, env: @env}, restart: :temporary, id: :early)
+
+    window = start_supervised!(spec)
+    send(window, {:config_error, "config.exs: broken"})
+    assert eventually(fn -> :sys.get_state(window).ready end), "no handshake"
+
+    assert eventually(fn ->
+             :sys.get_state(window).status == {:warning, "⚠ config.exs: broken"}
+           end)
+
+    assert Port.info(port(window))
+  end
+
+  test "a config error shows as a warning until a config loads", %{window: window} do
+    send(window, {:config_error, "config.exs:4: theme: unknown name"})
+
+    assert eventually(fn ->
+             :sys.get_state(window).status == {:warning, "⚠ config.exs:4: theme: unknown name"}
+           end)
+
+    send(window, {:config, Config.defaults()})
+    assert eventually(fn -> :sys.get_state(window).status == {:normal, ""} end)
+    assert Port.info(port(window))
+  end
+
+  test "Ctrl+Shift+/ opens the cheatsheet; typing doesn't reach the shell; Esc closes it", %{
+    id: id,
+    window: window
+  } do
+    key(window, ?/, @ctrl ||| @shift)
+
+    assert eventually(fn ->
+             match?(%{lines: [_ | _], top: 0}, :sys.get_state(window).cheatsheet)
+           end)
+
+    renderer(window, <<4, "echo leaked">>)
+    key(window, 0x0D, 0)
+    Process.sleep(200)
+    refute Session.dump(id) =~ "leaked"
+
+    # j scrolls when the sheet is taller than the window (80x24 here).
+    lines = length(:sys.get_state(window).cheatsheet.lines)
+    if lines > 24, do: renderer(window, <<4, "j">>)
+    if lines > 24, do: assert(eventually(fn -> :sys.get_state(window).cheatsheet.top == 1 end))
+
+    key(window, 0x1B, 0)
+    assert eventually(fn -> :sys.get_state(window).cheatsheet == nil end)
+    renderer(window, <<4, "echo back">>)
+    key(window, 0x0D, 0)
+    assert eventually(fn -> Session.dump(id) =~ ~r/^back$/m end)
+    assert Port.info(port(window))
   end
 
   test "Ctrl+= zooms in: bigger cells, fewer of them", %{window: window} do

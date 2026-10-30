@@ -21,6 +21,56 @@ open window (how, and why the evaluation can't crash anything, is in
 ]
 #+end_src
 
+* When the file is broken
+
+A typo shouldn't leave you wondering why nothing changed. When the file
+doesn't load, the previous config stays, and the window shows why at the
+right of the tab bar, in the theme's red:
+
+#+begin_example
+   1 hsalinas@hs-suse:~/Pro…   ⚠ gconfig.exs: theme: unknown name "drakula", try …
+#+end_example
+
+Misspelled names count as errors too. guiltty knows every setting's name
+(they're the keys of =Config.defaults/0=, and of each section), so
+=curser:= or =window: [opacty: 0.9]= isn't silently ignored:
+
+#+begin_example
+  ⚠ config.exs: unknown setting :curser (did you mean :cursor?)
+  ⚠ config.exs: window: unknown name :opacty (did you mean :opacity?)
+#+end_example
+
+The suggestion is the known name closest to the typo by Jaro distance
+(=String.jaro_distance/2=, 0.8 or more). A value of an unexpected shape,
+like =font: :big=, is an error message too, never a crash of the Config
+process.
+
+And so new settings can't skip their check: a test loads every setting in
+the defaults with a nonsense value, ={:not, :valid}=, and expects an
+error. A setting added without a check fails it.
+
+The warning stays until a save loads. It's one line: the file's name, the
+line when there is one, and what's wrong. Syntax errors carry their line;
+for errors raised while the file runs (=x + "a"=), the line comes from the
+stacktrace frame that points into the file. The full error, with the
+stacktrace, still goes to the log.
+
+[[file:../lib/guiltty/config.ex][Config]] remembers the error and sends ={:config_error, message}= to
+its subscribers, and again to every new one, so a window that opens or
+reattaches later sees it too. The Window shows, most important first: a
+search you're typing, then the config error, then the scrollback
+position. The STATUS message carries a style byte (0 normal, 1 warning)
+for the color, and the renderer keeps any status to two thirds of the bar
+so the tabs stay visible.
+
+One bug found on the way: Config tells a new subscriber about an error
+right away, during the Window's start, before the renderer's hello. The
+Window sent the warning at once, before the setup, and the renderer
+(rightly) refused a first message that wasn't SETUP and exited, over and
+over. Now the Window sends nothing but the setup until the handshake is
+done, and the waiting status right after it. A test starts a Window with
+an error waiting, and failed without the fix.
+
 * Where each setting goes
 
 Settings don't all travel the same way. Some stay in Elixir, some go to
@@ -34,6 +84,7 @@ the renderer, some reach the shell's process:
 | =window: opacity=              | renderer        | windows opened after a change |
 | =window: columns, rows=        | Tabs            | the first tab of a new window |
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
+| =tab_bar= (=:top=, =:bottom=)  | renderer (OPTIONS) | live                       |
 | =cursor=                       | Window, per ROWS | live                         |
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |
@@ -153,6 +204,10 @@ theme's blue along its bottom; the others are muted. Long titles end in
 =…=. All of it is cells (row 0 of the renderer's mirror, [[file:06-renderer.org][chapter 6]]), plus
 one bit, =CELL_ACCENT=, for the line.
 
+=tab_bar: :bottom= moves it below the terminal. That's purely a drawing
+change: the shader draws row 0 last, and clicks are mapped back. The grid,
+the Screen and the shell never know.
+
 * Loot
 
 - =proc_pid_cwd(5)= (or =proc(5)=, "/proc/pid/cwd"); =chdir(2)=.
@@ -172,6 +227,8 @@ one bit, =CELL_ACCENT=, for the line.
    where does guiltty keep it?
 4. Why must the colors be premultiplied when the window is translucent?
 5. Why does changing =opacity= from 1.0 need a new window?
+6. A window opens while the config file is broken. How does it learn
+   about the error, and why couldn't it show it at once?
 
 ** Answers
 :PROPERTIES:
@@ -190,3 +247,7 @@ one bit, =CELL_ACCENT=, for the line.
    see-through.
 5. The window's alpha channel (its X11 visual) is picked when it's
    created; an opaque window can't become translucent.
+6. Config sends ={:config_error, message}= to every new subscriber while
+   the file is broken. The Window subscribes during its start, before the
+   renderer's hello, and the renderer accepts nothing but SETUP first; so
+   the warning waits for the handshake.

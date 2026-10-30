@@ -40,7 +40,7 @@ defmodule Guiltty.Window do
 
   require Logger
 
-  alias Guiltty.{Config, Keymap, Session, Tabs}
+  alias Guiltty.{Cheatsheet, Config, Keymap, Session, Tabs}
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.Protocol
 
@@ -125,7 +125,11 @@ defmodule Guiltty.Window do
       scroll: 0,
       view_moved: false,
       scrollback: 0,
-      status: ""
+      status: {:normal, ""},
+      # the config file's error, one line, until it loads again
+      config_error: nil,
+      # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
+      cheatsheet: nil
     }
 
     {:ok, state, @hello_timeout}
@@ -174,14 +178,18 @@ defmodule Guiltty.Window do
   def handle_info({:view, _old}, state), do: {:noreply, state}
 
   def handle_info({:parser_restarted, _id}, state) do
-    send_port(state, Protocol.halo(@halo_color, @halo_ms))
+    if state.ready, do: send_port(state, Protocol.halo(@halo_color, @halo_ms))
     {:noreply, state}
   end
 
-  def handle_info({:config, config}, state), do: {:noreply, apply_config(state, config)}
+  def handle_info({:config, config}, state),
+    do: {:noreply, %{apply_config(state, config) | config_error: nil} |> update_status()}
+
+  def handle_info({:config_error, message}, state),
+    do: {:noreply, update_status(%{state | config_error: message})}
 
   def handle_info(:raise, state) do
-    send_port(state, Protocol.raise_window())
+    if state.ready, do: send_port(state, Protocol.raise_window())
     {:noreply, state}
   end
 
@@ -194,7 +202,9 @@ defmodule Guiltty.Window do
       {cols, rows} = Session.size(active)
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
-      {:noreply, show_tabs(%{state | ready: true, size: {cols, rows}}, tabs, active)}
+      state = show_tabs(%{state | ready: true, size: {cols, rows}}, tabs, active)
+      # Anything that waited for the handshake (a config error) goes now.
+      {:noreply, update_status(state)}
     else
       {:stop, {:protocol_mismatch, renderer: version, window: Protocol.version()}, state}
     end
@@ -209,8 +219,36 @@ defmodule Guiltty.Window do
   # The user resized the window and the renderer worked out the new grid.
   defp handle_event({:resize, cols, rows}, state) do
     Tabs.resize(cols, rows)
-    {:noreply, %{state | size: {cols, rows}}}
+    state = %{state | size: {cols, rows}}
+
+    {:noreply,
+     if(state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state)}
   end
+
+  # While the cheatsheet is open, keys, text and the mouse are its own: the
+  # shell gets nothing.
+  defp handle_event({:key, _, _} = event, %{cheatsheet: %{}} = state),
+    do: {:noreply, cheatsheet_key(event, state)}
+
+  defp handle_event({:text, text}, %{cheatsheet: %{}} = state) do
+    case text do
+      "q" -> {:noreply, close_cheatsheet(state)}
+      "j" -> {:noreply, scroll_cheatsheet(state, 1)}
+      "k" -> {:noreply, scroll_cheatsheet(state, -1)}
+      _ -> {:noreply, state}
+    end
+  end
+
+  defp handle_event(
+         {:mouse, :wheel, dir, _col, _row, _mods, _clicks},
+         %{cheatsheet: %{}} = state
+       ),
+       do: {:noreply, scroll_cheatsheet(state, if(dir == 0, do: -3, else: 3))}
+
+  defp handle_event({:paste, _text}, %{cheatsheet: %{}} = state), do: {:noreply, state}
+
+  defp handle_event({:mouse, _, _, _, _, _, _}, %{cheatsheet: %{}} = state),
+    do: {:noreply, state}
 
   defp handle_event({:tab_click, index}, state) do
     Tabs.switch(index)
@@ -393,11 +431,73 @@ defmodule Guiltty.Window do
     state
   end
 
+  defp run(:cheatsheet, state), do: open_cheatsheet(state, 0)
+
   defp run(:zoom_in, state), do: zoom(state, state.zoom + 1)
   defp run(:zoom_out, state), do: zoom(state, state.zoom - 1)
   defp run(:zoom_reset, state), do: zoom(state, 0)
 
   defp run(_unknown, state), do: state
+
+  ## The cheatsheet
+  #
+  # Guiltty.Cheatsheet draws every key into rows, from the config. Instead
+  # of the tab's screen, the Window sends a screenful of those rows; on
+  # closing, the Screen sends all of its rows again.
+
+  defp open_cheatsheet(state, top) do
+    {cols, _rows} = state.size
+    state = %{state | cheatsheet: %{lines: Cheatsheet.render(state.config, cols), top: 0}}
+    scroll_cheatsheet(state, top)
+  end
+
+  defp scroll_cheatsheet(state, by) do
+    {cols, rows} = state.size
+    %{lines: lines, top: top} = state.cheatsheet
+    top = (top + by) |> min(length(lines) - rows) |> max(0)
+    blank = :binary.copy(<<?\s::32, 0::16, 0::32, 0::32>>, cols)
+    shown = lines |> Enum.drop(top) |> Enum.take(rows)
+    shown = shown ++ List.duplicate(blank, rows - length(shown))
+
+    send_port(
+      state,
+      Protocol.rows(%{
+        size: {cols, rows},
+        rows: Enum.with_index(shown, fn line, i -> {i, line} end),
+        cursor: {0, 0},
+        cursor_visible: false
+      })
+    )
+
+    put_in(state.cheatsheet.top, top)
+  end
+
+  defp close_cheatsheet(state) do
+    state = %{state | cheatsheet: nil, pending: false}
+    if state.active, do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
+    state
+  end
+
+  defp cheatsheet_key({:key, key, _mods} = event, state) do
+    closes =
+      key == Keymap.key(:escape) or
+        Enum.any?(state.bindings, fn {action, b} ->
+          action == :cheatsheet and Keymap.matches?(event, b)
+        end)
+
+    {_cols, rows} = state.size
+
+    cond do
+      closes -> close_cheatsheet(state)
+      key == Keymap.key(:down) -> scroll_cheatsheet(state, 1)
+      key == Keymap.key(:up) -> scroll_cheatsheet(state, -1)
+      key == Keymap.key(:page_down) -> scroll_cheatsheet(state, rows - 1)
+      key == Keymap.key(:page_up) -> scroll_cheatsheet(state, -(rows - 1))
+      key == Keymap.key(:home) -> scroll_cheatsheet(state, -length(state.cheatsheet.lines))
+      key == Keymap.key(:end) -> scroll_cheatsheet(state, length(state.cheatsheet.lines))
+      true -> state
+    end
+  end
 
   defp switch(state, to) do
     Tabs.switch(to)
@@ -441,6 +541,7 @@ defmodule Guiltty.Window do
   end
 
   defp switch_view(state, id) do
+    state = %{state | cheatsheet: nil}
     if state.active, do: catch_exit(fn -> Screen.unsubscribe(state.active, self()) end)
     if state.screen_ref, do: Process.demonitor(state.screen_ref, [:flush])
     if state.search, do: on_screen(state, &Screen.end_search/1)
@@ -477,6 +578,8 @@ defmodule Guiltty.Window do
 
   # Take the next update, unless the renderer is still drawing the last one.
   defp pull(%{awaiting_frame: true} = state), do: %{state | pending: true}
+  # The cheatsheet covers the screen; closing it brings every row back.
+  defp pull(%{cheatsheet: %{}} = state), do: state
   defp pull(%{active: nil} = state), do: state
 
   defp pull(state) do
@@ -508,19 +611,28 @@ defmodule Guiltty.Window do
 
   ## The status line, at the right of the tab bar
 
+  # Shown, most important first: the search you're typing, a broken config
+  # (in red, until the file loads again), where you are in the scrollback.
+  # Before the handshake the renderer accepts nothing but the setup; the
+  # status waits, and goes out right after it.
+  defp update_status(%{ready: false} = state), do: state
+
   defp update_status(state) do
-    status = status_text(state)
-    if status != state.status, do: send_port(state, Protocol.status(status))
+    {style, text} = status = status_text(state)
+    if status != state.status, do: send_port(state, Protocol.status(style, text))
     %{state | status: status}
   end
 
   defp status_text(%{search: %{query: query, found: found}}),
-    do: "find: #{query}" <> if(found, do: "", else: "  (not found)")
+    do: {:normal, "find: #{query}" <> if(found, do: "", else: "  (not found)")}
+
+  defp status_text(%{config_error: error}) when is_binary(error),
+    do: {:warning, "⚠ " <> error}
 
   defp status_text(%{scroll: scroll, scrollback: total}) when scroll > 0,
-    do: "scrollback #{scroll}/#{total}"
+    do: {:normal, "scrollback #{scroll}/#{total}"}
 
-  defp status_text(_state), do: ""
+  defp status_text(_state), do: {:normal, ""}
 
   defp window_title(""), do: "guiltty"
   defp window_title(title), do: title
@@ -547,14 +659,16 @@ defmodule Guiltty.Window do
          state.active,
        do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
 
-    state
+    # The keys on the cheatsheet may have changed.
+    if state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state
   end
 
   defp options(config) do
     %{
       padding: config.window.padding,
       opacity: config.window.opacity,
-      bold_is_bright: config.bold_is_bright
+      bold_is_bright: config.bold_is_bright,
+      tab_bar: config.tab_bar
     }
   end
 

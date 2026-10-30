@@ -115,6 +115,9 @@ defmodule Guiltty.Session.Screen do
        title: "",
        scroll: 0,
        selection: nil,
+       # the text it held when the mouse let go: if the text under it
+       # changes, the selection goes (see drop_stale_selection/1)
+       selected_text: nil,
        # %{query: binary, match: Search.match() | nil}
        search: nil,
        # the last update was decorated (see Guiltty.View): the next plain one
@@ -206,7 +209,7 @@ defmodule Guiltty.Session.Screen do
 
   def handle_call({:select, {:start, pos, clicks}}, _from, state) do
     selection = Selection.new(position(state, pos), clicks)
-    {:reply, :ok, notify(%{state | selection: selection})}
+    {:reply, :ok, notify(%{state | selection: selection, selected_text: nil})}
   end
 
   def handle_call({:select, {:extend, pos}}, _from, %{selection: %Selection{} = sel} = state) do
@@ -221,8 +224,10 @@ defmodule Guiltty.Session.Screen do
       ),
       do: {:reply, nil, notify(%{state | selection: nil})}
 
-  def handle_call({:select, :finish}, _from, %{selection: %Selection{} = sel} = state),
-    do: {:reply, Selection.text(state.grid, sel), state}
+  def handle_call({:select, :finish}, _from, %{selection: %Selection{} = sel} = state) do
+    text = Selection.text(state.grid, sel)
+    {:reply, text, %{state | selected_text: text}}
+  end
 
   def handle_call({:select, _action}, _from, state), do: {:reply, nil, state}
 
@@ -295,7 +300,23 @@ defmodule Guiltty.Session.Screen do
     end
   end
 
-  defp after_change(state), do: state |> answer_queries() |> report_title() |> notify()
+  defp after_change(state) do
+    state |> answer_queries() |> report_title() |> drop_stale_selection() |> notify()
+  end
+
+  # A selection points at rows by number, so it follows its text as output
+  # scrolls. But when the text itself changes under it (`clear`, a program
+  # redrawing), highlighting whatever is there now would be wrong: the
+  # selection goes, as in other terminals. Comparing the text, not "did
+  # these rows change", keeps a selection that merely scrolled.
+  defp drop_stale_selection(%{selection: %Selection{} = sel, selected_text: text} = state)
+       when is_binary(text) do
+    if Selection.text(state.grid, sel) == text,
+      do: state,
+      else: %{state | selection: nil, selected_text: nil}
+  end
+
+  defp drop_stale_selection(state), do: state
 
   defp answer_queries(state) do
     {responses, grid} = Grid.take_responses(state.grid)

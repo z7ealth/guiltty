@@ -54,6 +54,9 @@
   # does.
   bold_is_bright: true,
 
+  # Where the tabs go: :top or :bottom.
+  tab_bar: :top,
+
   # Rows of output each tab keeps for scrolling back (new tabs only).
   scrollback: 10_000,
 
@@ -76,6 +79,8 @@
     zoom_out: ["ctrl+-"],
     zoom_reset: ["ctrl+0"],
     # Opens this file in your editor (creating it from the example first).
-    open_config: ["ctrl+,"]
+    open_config: ["ctrl+,"],
+    # Shows every key (this list, as you bound it).
+    cheatsheet: ["ctrl+shift+/"]
   ]
 ]
