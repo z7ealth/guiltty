@@ -8,6 +8,19 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## Unreleased
+
+### Changed
+- The C parts (the PTY NIF and both renderers) are built hardened:
+  buffer-size checks in libc calls, stack protection, position-independent
+  executables and read-only relocations. A bug now crashes cleanly
+  instead of being exploitable.
+
+### Fixed
+- Two places in the renderer that relied on their callers to stay in
+  bounds now check for themselves (block characters, ligatures), as the
+  static analyzers asked.
+
 ## 0.11.0 — 2026-10-30 — Ligatures
 
 ### Added

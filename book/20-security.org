@@ -1,0 +1,164 @@
+#+TITLE: Security: making the C hard to break
+#+STARTUP: overview
+
+* What a terminal has to distrust
+
+A terminal shows bytes it didn't write. Whatever a program prints goes
+through guiltty: a file you =cat=, a web page =curl= fetched, a server at
+the other end of =ssh=. Any of them can send any bytes, on purpose or not.
+So the parts that read those bytes have to survive *anything*.
+
+#+begin_example
+  untrusted                         guiltty
+  ─────────                         ───────
+  bytes from programs ──> PTY NIF ──> Parser ──> Screen ──> Window
+  (cat, ssh, curl...)     (C, inside    (Elixir: a crash restarts
+                           the BEAM)     just that tab, chapter 12)
+                                                              │
+                                              port messages   │
+                                                              v
+  font files ───────────────────────────────────────────> renderer
+  (fontconfig picks them)                                (C, its own process)
+#+end_example
+
+Elixir is the forgiving part: bad input makes a process crash, its
+supervisor restarts it, and the BEAM goes on. C is not forgiving. A bad
+index in C doesn't stop the program: it reads or writes some other
+memory, and the program carries on with garbage, or crashes far from the
+mistake, or, in the worst case, does what an attacker's bytes tell it.
+guiltty's C is small (the PTY NIF, the renderer), so it can be made
+strict. This chapter is the layers that do it.
+
+* Layer 1: code that checks for itself
+
+The first layer is how the C is written (AGENTS.md, "C conventions"):
+
+- Sizes from the port are untrusted: every message is read through a
+  =struct reader= that refuses to read past the end, and every size
+  calculation uses =ckd_add= / =ckd_mul= (=<stdckdint.h>=), which report
+  overflow instead of wrapping around.
+- =static_assert= pins wire structs and tables to the sizes the code
+  assumes.
+- A function shouldn't rely on its caller for safety. That rule is what
+  the analyzers (layer 3) enforce.
+
+* Layer 2: hardened builds
+
+If a bug gets past layer 1, the compiler and the linker can make it fail
+safely: a clean crash instead of memory quietly overwritten. The
+=Makefile= adds these to every C file (=HARDEN= and =HARDEN_LD=):
+
+| Flag                          | What it does                                                    |
+|-------------------------------+-----------------------------------------------------------------|
+| =-D_FORTIFY_SOURCE=3=         | libc calls whose buffer size the compiler knows (=memcpy=, =snprintf=) check it at run time |
+| =-fstack-protector-strong=    | a canary next to return addresses; overwrite it and the program stops |
+| =-fstack-clash-protection=    | big stack frames touch every page, so they can't jump the guard page |
+| =-fcf-protection=             | marks valid jump targets for the CPU's control-flow checks (Intel CET) |
+| =-ftrivial-auto-var-init=zero= | locals start as zero: a forgotten initialization is predictable, not random |
+| =-fPIE -pie=                  | the renderers load at a random address each run (ASLR)         |
+| =-z relro -z now=             | symbols are resolved at startup, then that table is made read-only |
+| =-z noexecstack=              | the stack can't be run as code                                  |
+
+You can see them in the binaries. This is =readelf= on the release
+renderer:
+
+#+begin_example
+  $ readelf -h priv/guiltty_vk | grep Type
+    Type:      DYN (Position-Independent Executable file)
+  $ readelf -lW priv/guiltty_vk | grep -E 'GNU_RELRO|GNU_STACK'
+    GNU_STACK  ... RW  0x10          <- no E: not executable
+    GNU_RELRO  ... R   0x1           <- read-only after startup
+  $ readelf -d priv/guiltty_vk | grep FLAGS
+    (FLAGS)    BIND_NOW
+    (FLAGS_1)  Flags: NOW PIE
+  $ nm -D priv/guiltty_vk | grep -E '_chk|stack_chk'
+    __fprintf_chk __memcpy_chk __memset_chk __snprintf_chk
+    __stack_chk_fail __strcpy_chk
+#+end_example
+
+The =_chk= functions are FORTIFY's checked versions of the libc calls;
+=__stack_chk_fail= is what runs when a canary is found overwritten. The
+PTY NIF is a shared library loaded into the BEAM, so it gets the checks
+and RELRO, but its address is the BEAM's choice.
+
+* Layer 3: static analyzers
+
+Tests only find bugs on paths they walk. A static analyzer walks the
+paths symbolically, every branch, and reports where one could go wrong:
+reading past an array, a null pointer, a value never set, a file
+descriptor never closed. =make analyze= runs two of them over all the C,
+and any finding fails it:
+
+- GCC's =-fanalyzer=
+- Clang's static analyzer (=clang --analyze=)
+
+They catch different things. Their first run on guiltty found four:
+
+#+begin_example
+  sprites.c:46   buffer over-read                          (GCC)
+      quads[cp - 0x2596]: block() only checked cp >= 0x2596.
+      Safe today (its one caller passes cp <= 0x259F), but nothing in
+      block() said so. Fixed: an upper bound, and a static_assert that
+      the table has one entry per character.
+
+  main.c         "Assigned value is uninitialized"           (Clang)
+      shape_run trusted fonts_ligatures, in another file, never to
+      return a span past the end of the run. Fixed: it checks.
+
+  main.c         "argument is an uninitialized value"        (Clang)
+      decode_cell's colors stayed unset if a read failed. It can't
+      fail (the caller checked the size), but now they start at zero.
+
+  main.c         leak of file descriptor                      (GCC)
+      --replay puts a file on stdin with dup2(2): that fd is meant
+      to stay open. A false positive, silenced for that one function
+      only, with a comment.
+#+end_example
+
+None of these crashed guiltty: each was a place that was safe only
+because of something somewhere else. That's the kind of bug that
+appears later, when the something else changes.
+
+* Loot
+
+- =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,
+  =-fcf-protection=) and "Options That Control Static Analysis"
+  (=-fanalyzer=).
+- =feature_test_macros(7)=: =_FORTIFY_SOURCE=, levels 1 to 3.
+- =ld(1)=: =-z relro=, =-z now=, =-z noexecstack=.
+- =readelf(1)=: program headers (=-l=), the dynamic section (=-d=).
+- Clang Static Analyzer manual, "Available Checkers".
+- The OpenSSF "Compiler Options Hardening Guide for C and C++", the
+  source of the flag list.
+
+* Questions
+
+1. Why is a bug in the PTY NIF more dangerous than one in the renderer?
+2. What does =-D_FORTIFY_SOURCE= need from the compiler to check a
+   =memcpy=?
+3. What does RELRO with =now= protect, and why does it need =now=?
+4. =block()= never read past its table in practice. Why fix it anyway?
+5. Why run two analyzers instead of one?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The NIF runs inside the BEAM: a crash there takes down every tab and
+   the whole node. The renderer is its own process, so its crash only
+   closes the window (and the Window falls back or restarts it).
+2. The destination's size, known at compile time (an array, or a
+   =malloc= with a visible size). Then it calls =__memcpy_chk= with that
+   size, which stops the program if the copy is bigger. It also needs
+   optimization on (=-O1= or more).
+3. The GOT, the table of addresses of library functions, a classic
+   target for overwrites. It can only be made read-only after every
+   symbol is resolved, and =now= resolves them all at startup instead of
+   at first use.
+4. Its safety depended on its caller. If a new caller passed a bigger
+   =cp=, it would read past the table with no warning. Now the function
+   is safe on its own.
+5. They use different techniques and checkers; in guiltty's first run,
+   GCC found the sprite over-read and Clang the uninitialized values,
+   and neither found the other's.

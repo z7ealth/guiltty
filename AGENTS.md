@@ -168,8 +168,12 @@ Rules that keep the architecture intact:
 
 ## C conventions
 
-- C23, compiled with `-std=c23 -Wall -Wextra -Wpedantic`, warning-free.
-  Debug builds add `-fsanitize=address,undefined`.
+- C23, compiled with `-std=c23 -Wall -Wextra -Wpedantic -Wformat=2
+  -Wshadow -Wvla -Wnull-dereference`, warning-free, with the hardening
+  flags in the Makefile (`HARDEN`, `HARDEN_LD`). Debug builds add
+  `-fsanitize=address,undefined`. `make analyze` stays clean: fix
+  findings; silence one only for a proven false positive, scoped to that
+  function, with a comment saying why.
 - Use `<stdckdint.h>` (`ckd_add`, `ckd_mul`) for every size calculation:
   atlas dimensions, buffer lengths and message sizes read from the port.
   Treat sizes from the port as untrusted input.
@@ -229,6 +233,7 @@ mix guiltty                 # dev: open a window; closing it ends everything
 _build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel/env.sh.eex)
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
+make analyze                # GCC and Clang static analyzers over all C; any finding fails
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
 ./install.sh                # install for the user into ~/.local (--uninstall to remove)
@@ -258,8 +263,9 @@ The user's machine is openSUSE (packages via `zypper`), with:
 - AMD RX 6600 (RADV), Vulkan loader 1.4, glslc (shaderc), the Khronos
   validation layers, vulkan-tools. RADV can't present on Xvfb (no DRI3):
   Vulkan tests on Xvfb or offscreen run on lavapipe or a headless surface
-- **Not installed yet:** Valgrind, Clang. Ask before installing system
-  packages and give the exact `zypper` command.
+- Clang 23 (with LLVM, for libFuzzer and `make analyze`) and Valgrind
+- Ask before installing system packages and give the exact `zypper`
+  command.
 
 ## References
 

@@ -329,8 +329,10 @@ static void shape_run(struct renderer *r, size_t at, int n) {
     fonts_ligatures(&r->fonts, cps, n, spans);
     for (int i = 0; i < n; i++) {
         int k = spans[i];
-        // Its slots must fit in one row of the atlas (big zoom, few slots).
-        if (k < 2 || k > r->atlas.slots_per_row)
+        // Its slots must fit in one row of the atlas (big zoom, few slots),
+        // and it can't run past the run: fonts.c promises that, but it's
+        // another file, so check rather than trust it.
+        if (k < 2 || k > n - i || k > r->atlas.slots_per_row)
             continue;
         char text[max_ligature_run];
         for (int j = 0; j < k; j++)
@@ -423,9 +425,10 @@ static void mix(const uint8_t a[3], const uint8_t b[3], int percent_b, uint8_t o
 static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
     const struct theme *t = &r->theme;
     struct reader rd = {wire, wire_cell_size};
-    uint32_t glyph, fg, bg;
-    uint16_t attrs;
-    // Can't fail: the caller checked there are wire_cell_size bytes.
+    uint32_t glyph = 0, fg = 0, bg = 0;
+    uint16_t attrs = 0;
+    // Can't fail: the caller checked there are wire_cell_size bytes. If
+    // that ever changes, the cell comes out blank instead of garbage.
     (void)(rd_u32(&rd, &glyph) && rd_u16(&rd, &attrs) && rd_u32(&rd, &fg) && rd_u32(&rd, &bg));
 
     struct cell *out = &r->cells[idx];
@@ -1421,6 +1424,13 @@ static bool wait_event(struct renderer *r, SDL_Event *ev) {
 
 // --replay FILE: the recording takes stdin's place, and what would go to
 // Elixir goes nowhere. Everything else runs as in port mode.
+//
+// GCC's analyzer reports the fds dup2(2) makes here (0 and 1) as leaked:
+// they're meant to stay open for the life of the process.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#endif
 [[nodiscard]] static bool open_replay(const char *path) {
     int in = open(path, O_RDONLY | O_CLOEXEC);
     int out = open("/dev/null", O_WRONLY | O_CLOEXEC);
@@ -1431,6 +1441,9 @@ static bool wait_event(struct renderer *r, SDL_Event *ev) {
         close(out);
     return ok;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 int main(int argc, char *argv[]) {
     struct renderer r = {

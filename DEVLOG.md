@@ -700,3 +700,36 @@ across several cells, so drawing a ligature needed no new code.
 
 Not tried: Fira Code (not installed), and how it feels while typing.
 Tests use JetBrains Mono and skip themselves without it.
+
+## 2026-10-30 — Security, step 1: hardened builds and two analyzers
+
+_Draft: agent, awaiting user_
+
+v0.12.0 is the security MVP: guiltty won't be as fast as Ghostty, but its
+C should be very hard to break. Step one was the cheap layers.
+
+Every C file is now built with the hardening flags from the OpenSSF
+guide (FORTIFY_SOURCE=3, the stack protector, stack-clash protection,
+CET, zeroed locals, PIE, full RELRO, no executable stack). `readelf`
+shows them in the binaries. The new warnings found one thing: an
+ignored `chdir` in the forked child, which GCC doesn't let a `(void)`
+cast hide.
+
+`make analyze` runs GCC's `-fanalyzer` and Clang's analyzer. Between
+them they found four things. GCC: `block()` indexed its quadrant table
+with only a lower bound on the character (safe only because its one
+caller checked), and a false fd leak in `--replay`. Clang:
+`shape_run` trusted `fonts_ligatures`, in another file, to stay inside
+the run, and `decode_cell` left colors unset if a read could fail.
+Nothing crashed, but each was safe only because of code somewhere else.
+All fixed, and each analyzer found what the other missed.
+
+Also decided: distribution stays on for the launcher, but locked down
+(a later step), and the performance ideas wait.
+
+### Later
+- Speed: a launcher that doesn't boot two VMs (pidfile + FIFO, or a
+  small C client on a Unix socket): about 4 s to open today, about
+  0.7 s cold and near-instant warm after.
+- Throughput benchmarks and profiling; upload only the rows that
+  changed.

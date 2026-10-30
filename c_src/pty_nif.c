@@ -184,10 +184,10 @@ static void free_strings(char **strs) {
     close_range(STDERR_FILENO + 1, ~0U, 0);
 
     // Start where the user asked (a new tab opens in the current tab's
-    // directory). chdir(2) is async-signal-safe. If the directory is gone,
-    // the shell just starts where the BEAM is.
-    if (cwd[0] != '\0')
-        (void)chdir(cwd);
+    // directory). chdir(2) is async-signal-safe.
+    if (cwd[0] != '\0' && chdir(cwd) < 0) {
+        // The directory is gone: the shell just starts where the BEAM is.
+    }
 
     execve(path, argv, envp);
     _exit(127);

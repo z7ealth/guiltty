@@ -38,11 +38,12 @@ static bool block(uint32_t cp, int w, int h, uint8_t *rgba, size_t stride) {
         fill8(w, h, rgba, stride, 0, 0, 8, 1, 255);
     } else if (cp == 0x2595) { // ▕ right 1/8
         fill8(w, h, rgba, stride, 7, 0, 8, 8, 255);
-    } else if (cp >= 0x2596) {
+    } else if (cp >= 0x2596 && cp <= 0x259F) {
         // ▖..▟ quadrants: bits for upper left, upper right, lower left,
         // lower right.
         static const uint8_t quads[] = {0b0010, 0b0001, 0b1000, 0b1011, 0b1001,
                                         0b1110, 0b1101, 0b0100, 0b0110, 0b0111};
+        static_assert(sizeof quads == 0x259F - 0x2596 + 1, "one entry per quadrant character");
         uint8_t q = quads[cp - 0x2596];
         if (q & 0b1000)
             fill8(w, h, rgba, stride, 0, 0, 4, 4, 255);
