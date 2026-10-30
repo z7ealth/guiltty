@@ -637,8 +637,12 @@ Elixir yet. `CHANGELOG.md` covers every tag from v0.1.0 to v0.10.0, put
 together from the tags, the commits and this devlog. Two entries I had
 filed by memory were wrong, and git corrected them (`working_directory`
 came in 0.6.0, not 0.7.0). The README now goes from nothing to an
-installed guiltty: a table of what to install and why (no distribution's
-commands: package names differ everywhere), then `./install.sh`.
+installed guiltty: a table of what to install and why, one command each
+for openSUSE, Fedora, Ubuntu and Arch, then `./install.sh`. The package
+names for the three I can't try were checked against their package
+sites. Two traps found that way: Ubuntu 26.04's Elixir is 1.18 (too old),
+and the NIF needs `erl_nif.h`, which Ubuntu ships separately in
+`erlang-dev`.
 
 Writing it for a stranger found a real bug: on a fresh Elixir, `mix
 deps.get` stops to ask about installing Hex, and telemetry needs rebar3.

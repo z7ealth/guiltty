@@ -13,7 +13,8 @@ the tab bar instead of ignoring them.
 ### Added
 - `CHANGELOG.md`.
 - Complete install instructions in the README: what to install first,
-  and what each dependency is for.
+  what each dependency is for, and the commands for openSUSE, Fedora,
+  Ubuntu and Arch.
 
 ### Fixed
 - `./install.sh` on a fresh Elixir install: it now installs Hex and

@@ -31,6 +31,49 @@ Your distribution's packages work if they're recent enough; for Elixir
 and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
 you exact versions. `elixir --version` should say Elixir 1.20.
 
+On these distributions, one command installs it all. Only openSUSE has
+been tried; the other package names come from each distribution's
+package listings.
+
+**openSUSE Tumbleweed**
+
+```sh
+sudo zypper install gcc make pkg-config SDL3-devel freetype2-devel \
+  fontconfig-devel harfbuzz-devel vulkan-devel shaderc elixir erlang-epmd
+```
+
+**Fedora 45 or newer**
+
+```sh
+sudo dnf install gcc make pkgconf-pkg-config SDL3-devel freetype-devel \
+  fontconfig-devel harfbuzz-devel vulkan-loader-devel vulkan-headers glslc elixir
+```
+
+Fedora 43 and 44 have everything but Elixir 1.20: leave out `elixir` and
+get Elixir and Erlang from asdf.
+
+**Ubuntu 26.04 LTS or newer**
+
+```sh
+sudo apt install build-essential pkg-config libsdl3-dev libfreetype-dev \
+  libfontconfig-dev libharfbuzz-dev libvulkan-dev glslc
+```
+
+Ubuntu 26.04's Elixir is 1.18, too old: get Elixir 1.20 and Erlang from
+asdf. From Ubuntu 26.10 on, add `elixir erlang-dev` to the command
+instead. Older Ubuntus have neither SDL3 nor GCC 15.
+
+**Arch Linux**
+
+```sh
+sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz \
+  vulkan-icd-loader vulkan-headers shaderc elixir
+```
+
+guiltty itself is developed on Elixir 1.20.4 with Erlang/OTP 29, both
+from asdf; a distribution's Elixir 1.20 may come with an older Erlang,
+which should work but is less tested.
+
 guiltty also needs a GPU driver with OpenGL 3.3, which any desktop has.
 For Vulkan it needs a Vulkan 1.3 driver (for AMD and Intel GPUs, Mesa's).
 Without one, guiltty draws with OpenGL.
