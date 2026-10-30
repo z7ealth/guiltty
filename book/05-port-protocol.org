@@ -3,7 +3,8 @@
 
 * Why a port
 
-The renderer is a normal Linux program, [[file:../priv/][priv/guiltty_gl]]. Elixir
+The renderer is a normal Linux program, [[file:../priv/][priv/guiltty_vk]] (or
+=guiltty_gl=, the OpenGL build: same protocol, same core). Elixir
 starts it with =Port.open/2= and talks to it through its stdin and stdout
 pipes. That's an *Erlang port*: to Elixir it looks like a process you send
 messages to; to the renderer it's just reading stdin and writing stdout.
@@ -134,7 +135,7 @@ A renderer crash is different: it's an abnormal exit, so the supervisor
 restarts Window, which starts a new renderer. The new Window subscribes to
 the Screen, the Screen sends every row, and the window reappears with the
 same contents. The plan lists this for MVP 4; it falls out of the design
-already. Try =kill -9 $(pgrep -x guiltty_gl)= while guiltty runs.
+already. Try =kill -9 $(pgrep -x guiltty_vk)= while guiltty runs.
 
 * Malformed messages
 

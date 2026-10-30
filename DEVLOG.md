@@ -627,3 +627,25 @@ validation layers: not one message.
   copies all cells: a few hundred KB, not worth the bookkeeping yet).
 - MAILBOX present mode for lower latency where the driver has it.
 - A Wayland run (only X11 has been tried).
+
+## 2026-10-30 — A changelog, and install instructions for someone else
+
+_Draft: agent, awaiting user_
+
+You asked for a changelog and an install guide for people who don't have
+Elixir yet. `CHANGELOG.md` covers every tag from v0.1.0 to v0.10.0, put
+together from the tags, the commits and this devlog. Two entries I had
+filed by memory were wrong, and git corrected them (`working_directory`
+came in 0.6.0, not 0.7.0). The README now goes from nothing to an
+installed guiltty: a table of what to install and why (no distribution's
+commands: package names differ everywhere), then `./install.sh`.
+
+Writing it for a stranger found a real bug: on a fresh Elixir, `mix
+deps.get` stops to ask about installing Hex, and telemetry needs rebar3.
+install.sh hides that output, so the install would have hung silently.
+It now installs both itself (`mix local.hex --force --if-missing`).
+Also fixed: four chapters and the overview still named `guiltty_gl` as
+the renderer.
+
+Not tried: a full install on a clean machine, or Elixir 1.20 on an
+older Erlang/OTP than 29.

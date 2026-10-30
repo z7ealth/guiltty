@@ -1,0 +1,165 @@
+# Changelog
+
+What each version of guiltty added, newest first. Each version is one
+milestone (MVP) of the build plan; `DEVLOG.md` tells how each one went,
+and `book/` explains how it works.
+
+Versions before 1.0 may change the config file. When they do, it's listed
+under **Changed** or **Removed**, and guiltty reports old setting names in
+the tab bar instead of ignoring them.
+
+## Unreleased
+
+### Added
+- `CHANGELOG.md`.
+- Complete install instructions in the README: what to install first,
+  and what each dependency is for.
+
+### Fixed
+- `./install.sh` on a fresh Elixir install: it now installs Hex and
+  rebar3 itself. Before, `mix deps.get` stopped to ask for them, with its
+  output hidden, and the install seemed to hang.
+
+## 0.10.0 — 2026-10-30 — Vulkan
+
+### Added
+- A Vulkan 1.3 renderer, `guiltty_vk`, now the default. It draws the same
+  picture as the OpenGL one, pixel for pixel.
+- `renderer: :vulkan | :gl` setting (applies to the next window).
+- Automatic fallback: if Vulkan can't start (no driver, no GPU that can
+  show the window), guiltty draws with OpenGL and says so in the tab bar.
+- The renderer can replay recorded port messages and save a screenshot
+  (`GUILTTY_RECORD`, `--replay`, `--screenshot`), and a test checks that
+  OpenGL and Vulkan draw the same pixels.
+- Book chapter 19, on the Vulkan backend.
+
+### Changed
+- Building needs `glslc` (from shaderc) and the Vulkan development files.
+
+## 0.9.0 — 2026-10-30 — Broadcast
+
+### Added
+- Broadcast (Ctrl+Shift+B): type once into every tab in the group. A tab
+  joins only while it runs ssh or mosh-client. If a connection drops,
+  typing stops going anywhere and the bar shows which tab was lost, so
+  commands never land on your own machine by mistake.
+- Local tabs can join on purpose with a second Ctrl+Shift+B; they're
+  marked 🏠.
+- `broadcast_programs` setting.
+
+## 0.8.0 — 2026-10-30 — Lockable tabs
+
+### Added
+- Lock a tab with Ctrl+Shift+L (it shows a 🔒). Closing the window closes
+  every other tab; locked tabs keep running, and the next window opens
+  them where you left them.
+
+### Removed
+- The `on_close` setting from 0.7.0. Locking tabs replaces it.
+
+### Fixed
+- 🔒 and other emoji drew as plain monochrome glyphs when the main font
+  had them. Emoji now look for a color emoji font first.
+
+## 0.7.0 — 2026-10-30 — The installer
+
+### Added
+- `./install.sh`: builds a release and installs it into `~/.local`, with
+  a `guiltty` command, a menu entry and icons. `--uninstall` removes it.
+- The guiltty logo, as the app icon and the window icon.
+
+### Changed
+- Closing the window quits guiltty. Until then, tabs always kept running
+  in the background. `on_close: :detach` brought the old behavior back.
+
+## 0.6.1 — 2026-10-30 — Cheatsheet and fixes
+
+### Added
+- The cheatsheet (Ctrl+Shift+/): every key on one page, built from your
+  config.
+- `tab_bar: :bottom` puts the tab bar at the bottom.
+- Config errors show in red in the tab bar, with the file and line, until
+  the file loads again.
+- Misspelled setting names are reported, with a suggestion when one is
+  close.
+
+### Fixed
+- A selection stayed on screen after its text was gone (after `clear`).
+- A broken config at startup kept the window from opening.
+
+## 0.6.0 — 2026-10-30 — Flat tabs and more settings
+
+### Added
+- A flat tab bar with an accent line under the active tab.
+- Ctrl+, opens the config file in your editor, creating it from the
+  example first.
+- Named themes: Catppuccin Mocha, Dracula, Gruvbox Dark, Solarized Dark,
+  Tomorrow Night.
+- Settings for cursor style and blink, window padding, size and opacity,
+  the shell, copy-on-select, wheel lines and bold-is-bright.
+- `working_directory`: new tabs start in the current tab's directory
+  (`:inherit`), at home, or in a fixed path.
+- Cursor shapes set by programs (DECSCUSR), and a hollow cursor when the
+  window isn't focused.
+
+## 0.5.1 — 2026-10-30 — Prompt fixes
+
+### Fixed
+- Box-drawing, block and shade characters are drawn by guiltty instead of
+  the font, so lines meet with no gaps (powerlevel10k's prompt looked cut).
+- Nerd Font icons get room to spill into the next cell instead of being
+  clipped.
+
+## 0.5.0 — 2026-10-30 — Daily driver
+
+### Added
+- Unicode: UTF-8, grapheme clusters, wide characters, fallback fonts,
+  HarfBuzz shaping and color emoji.
+- 10,000 rows of scrollback, and search (Ctrl+Shift+F).
+- Mouse selection, copy and paste with the primary selection and the
+  clipboard.
+- Dead keys and input methods, zoom (Ctrl+=, Ctrl+-, Ctrl+0), and HiDPI
+  screens.
+
+## 0.4.0 — 2026-10-29 — The BEAM advantage
+
+### Added
+- Tabs (Ctrl+Shift+T, Ctrl+Shift+W, Ctrl+PgUp, Ctrl+PgDn).
+- Crash-proof sessions: a crashed part restarts on its own, and the
+  screen heals.
+- Detach and reattach: closing the window leaves the shells running, and
+  `guiltty` opens them again.
+- A config file, `~/.config/guiltty/config.exs`, applied live on save
+  (theme, font, keys).
+- Backpressure from the shell to the screen: a flood of output never
+  piles up in memory.
+
+## 0.3.43 — 2026-10-29 — The vim fight
+
+### Added
+- What full-screen programs need: the alternate screen, scroll regions,
+  saved cursors, insert and origin modes, and answers to terminal
+  queries. vim, less, htop, btop and tmux work.
+- Special keys (arrows, Home/End, F1-F12, and so on) in normal and
+  application modes, with modifiers.
+- Bracketed paste, mouse reporting and window titles.
+
+## 0.2.1 — 2026-10-29
+
+### Fixed
+- guiltty runs your login shell instead of always running bash.
+- The shell no longer inherits guiltty's release variables
+  (`RELEASE_COOKIE` among them).
+
+## 0.2.0 — 2026-10-29 — Color
+
+### Added
+- 16, 256 and 24-bit color, bold, underline, strikethrough and inverse.
+- A full escape-sequence parser (Paul Williams' DEC state machine).
+- A resizable window: the shell gets SIGWINCH.
+
+## 0.1.0 — 2026-10-29 — First light
+
+### Added
+- The whole pipeline: a PTY NIF, a parser, the screen in Elixir, and an
+  OpenGL renderer as its own process. ASCII only, 80x24.

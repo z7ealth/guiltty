@@ -7,38 +7,66 @@
 A GPU terminal emulator in Elixir, with a little C: a PTY NIF and a
 renderer (Vulkan, or OpenGL) that runs as its own process.
 
-## Install it
+Linux only. Tested on X11; Wayland should work through SDL but hasn't
+been tried.
+
+## Install
+
+guiltty is built from source on your machine, so installing it needs
+Elixir and a C toolchain. The installed copy carries its own Erlang
+runtime: once it's installed, it runs without Elixir.
+
+### 1. What to install first
+
+| What                                       | Why                                      |
+|--------------------------------------------|------------------------------------------|
+| Elixir 1.20 and Erlang/OTP (developed on 29) | building guiltty and its release       |
+| GCC 15 or newer, make, pkg-config          | the C is C23 and uses `#embed` (GCC 15+) |
+| SDL3 (development files)                   | the window, keyboard and mouse           |
+| FreeType, fontconfig, HarfBuzz (dev files) | finding fonts, drawing and shaping text  |
+| Vulkan loader and headers (dev files)      | the Vulkan renderer                      |
+| glslc (from shaderc)                       | compiles the Vulkan shaders to SPIR-V    |
+
+Your distribution's packages work if they're recent enough; for Elixir
+and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
+you exact versions. `elixir --version` should say Elixir 1.20.
+
+guiltty also needs a GPU driver with OpenGL 3.3, which any desktop has.
+For Vulkan it needs a Vulkan 1.3 driver (for AMD and Intel GPUs, Mesa's).
+Without one, guiltty draws with OpenGL.
+
+Fonts come from fontconfig. guiltty looks best with a Nerd Font (for
+prompt icons), Noto Color Emoji (for emoji) and a CJK font such as Noto
+Sans CJK, for Chinese and Japanese.
+
+### 2. guiltty
 
 ```sh
-./install.sh               # builds and installs into ~/.local (no root)
-guiltty                    # or find guiltty in your applications menu
-./install.sh --uninstall   # removes it; your config stays
+git clone https://github.com/z7ealth/guiltty.git
+cd guiltty
+./install.sh
 ```
 
-Run `./install.sh` again to update. It needs Elixir, GCC and the
-development files below.
+That checks for the tools above, builds a release and installs it into
+`~/.local` (no root needed):
 
-## Run it
+| Where                                             | What            |
+|---------------------------------------------------|-----------------|
+| `~/.local/lib/guiltty/`                           | the release     |
+| `~/.local/bin/guiltty`                            | the command     |
+| `~/.local/share/applications/guiltty.desktop`     | the menu entry  |
+| `~/.local/share/icons/hicolor/*/apps/guiltty.png` | the icon        |
 
-Needs Elixir 1.20, GCC 15+, glslc (shaderc) and the SDL3, FreeType,
-fontconfig, HarfBuzz and Vulkan development packages. guiltty draws with
-Vulkan 1.3; without it (an old GPU, no driver) it switches to OpenGL by
-itself and says so. `renderer: :gl` in the config picks OpenGL always. Fonts come from fontconfig: install a CJK
-font (`noto-sans-cjk-fonts` on openSUSE) to see Chinese and Japanese, and
-an emoji font (Noto Color Emoji) for emoji.
+Then run `guiltty`, or find it in your applications menu. If your shell
+says `guiltty: command not found`, add `~/.local/bin` to your `PATH`.
 
-```sh
-mix deps.get
-mix guiltty        # development: a window; closing it ends everything
-mix test
-```
+- **Update:** `git pull && ./install.sh`. If guiltty is running, the
+  script asks before stopping it, since that closes its tabs (`--yes`
+  skips the question).
+- **Uninstall:** `./install.sh --uninstall`. Your config stays.
+- **Somewhere else:** `PREFIX=/opt/guiltty ./install.sh`.
 
-As a release (what `./install.sh` installs):
-
-```sh
-MIX_ENV=prod mix release
-_build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
-```
+## Use it
 
 Closing the window ends guiltty and its tabs, except the ones you lock
 with Ctrl+Shift+L (they show a 🔒): those keep running, and the next
@@ -58,13 +86,49 @@ with Ctrl+Shift+L (they show a 🔒): those keep running, and the next
 | Ctrl+Shift+L                  | lock the tab: it outlives the window     |
 | Ctrl+Shift+B                  | broadcast: type into all tabs in the group (ssh tabs) |
 
-Hold Shift to select in programs that use the mouse (vim, htop). Copy
-`priv/config.example.exs` to
-`~/.config/guiltty/config.exs` to change the theme, font and keys; saving
-it applies them to the open window.
+Hold Shift to select in programs that use the mouse (vim, htop).
+
+## Configure it
+
+The config file is `~/.config/guiltty/config.exs`. Ctrl+, creates it from
+[priv/config.example.exs](priv/config.example.exs), which documents every
+setting, and opens it in your editor. Saving applies most changes to the
+open window. Mistakes show in red in the tab bar, so they don't go
+unnoticed.
+
+Among the settings: themes (Catppuccin, Dracula, Gruvbox, Solarized,
+Tomorrow Night, or your own colors), font and size, cursor, padding,
+opacity, the tab bar at the top or bottom, the shell, scrollback, and
+every key.
+
+**Vulkan or OpenGL.** guiltty draws with Vulkan 1.3. If Vulkan can't
+start (an old GPU, no driver), it switches to OpenGL by itself and says so
+in the tab bar. With `renderer: :gl` in the config it always uses OpenGL,
+starting with the next window.
+
+## Hack on it
+
+```sh
+mix deps.get
+mix guiltty        # a window from the source tree; closing it ends everything
+mix test
+iex -S mix         # the same, with an iex shell alongside
+```
+
+`mix compile` also builds the C (the NIF and both renderers, each in a
+normal and a debug build). To try a release without installing it:
+
+```sh
+MIX_ENV=prod mix release
+_build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
+```
+
+`AGENTS.md` lists every command: debug builds, replaying the renderer,
+regenerating the width table and the icons.
 
 ## Learn how it works
 
 - `book/` explains every part, with diagrams. Start at `book/index.org`.
+- `CHANGELOG.md` lists what each version added.
 - `DEVLOG.md` is what happened along the way.
 - `AGENTS.md` has the rules for working on the code.

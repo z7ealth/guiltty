@@ -14,7 +14,7 @@ in your home directory. No root.
   ├── lib/guiltty/                     the release
   │   ├── bin/guiltty                  its start script (and rel/env.sh.eex, chapter 12)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.8.0/priv/      guiltty_gl, pty_nif.so, guiltty.bmp
+  │   └── lib/guiltty-0.10.0/priv/     guiltty_vk, guiltty_gl, pty_nif.so, guiltty.bmp
   ├── bin/guiltty                      a two-line script: exec the release's
   └── share/
       ├── applications/guiltty.desktop the menu entry
@@ -29,6 +29,26 @@ in only when the build worked, so a failed update leaves the installed
 guiltty alone. A running installed guiltty is stopped first (after
 asking: its tabs close); the one in =_build/prod= is never touched, only
 pointed out, because both would use the node name =guiltty=.
+
+* What building needs
+
+Building is where Elixir comes in: =install.sh= compiles guiltty, its C
+programs and the release on your machine, and checks first that the tools
+are there.
+
+| Needed                          | For                                     |
+|---------------------------------+-----------------------------------------|
+| Elixir 1.20 on Erlang/OTP 29    | compiling guiltty and making the release |
+| GCC 15 or newer, make, pkg-config | the C: C23 and =#embed= need GCC 15    |
+| glslc (shaderc)                 | the Vulkan shaders, GLSL -> SPIR-V       |
+| SDL3, FreeType, fontconfig, HarfBuzz, Vulkan (dev files) | the renderers |
+
+Running the installed copy needs none of the build tools, only the shared
+libraries (SDL3, FreeType, fontconfig, HarfBuzz) and a GPU driver with
+OpenGL 3.3. Vulkan is optional: with the loader and a Vulkan 1.3 driver,
+guiltty draws with Vulkan; without them, =guiltty_vk= can't start and the
+Window falls back to OpenGL by itself (chapter 19). The README has the
+commands.
 
 * The menu entry
 
@@ -70,7 +90,7 @@ against =StartupWMClass=. The renderer calls =SDL_SetAppMetadata= before
 =xprop= on the installed guiltty's window:
 
 #+begin_example
-  WM_CLASS(STRING) = "guiltty_gl", "guiltty"
+  WM_CLASS(STRING) = "guiltty_vk", "guiltty"
                       instance      class: matches StartupWMClass
   _NET_WM_ICON(CARDINAL) = Icon (128 x 128): ...
 #+end_example

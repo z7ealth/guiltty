@@ -72,9 +72,13 @@ for lib in sdl3 freetype2 fontconfig harfbuzz vulkan; do
 done
 if [ ${#missing[@]} -gt 0 ]; then
     echo "can't build guiltty, missing: ${missing[*]}" >&2
-    echo "on openSUSE: sudo zypper install SDL3-devel freetype2-devel fontconfig-devel harfbuzz-devel vulkan-devel shaderc" >&2
+    echo "the README lists what to install, and why" >&2
     exit 1
 fi
+
+# Mix fetches the dependencies with Hex, and telemetry builds with rebar3.
+# On a fresh Elixir both are missing, and Mix would stop to ask for them.
+(cd "$here" && mix local.hex --force --if-missing >/dev/null && mix local.rebar --force --if-missing >/dev/null)
 
 # Build the release next to the old one, then swap them, so a failed build
 # leaves the installed guiltty as it was.

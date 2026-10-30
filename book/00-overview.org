@@ -36,9 +36,9 @@ adding new boxes.
          | master fd                     port stdin  |   | port stdout
          |                               (rows)      v   | (key events)
   +------|------+                               +-------------------+
-  |  kernel PTY |                               | guiltty_gl        |
+  |  kernel PTY |                               | guiltty_vk        |
   |  /dev/pts/N |                               | (separate C proc) |
-  +------|------+                               | SDL3 + OpenGL     |
+  +------|------+                               | SDL3 + Vulkan     |
          | slave fd 0,1,2                       +-------------------+
   +------v------+                                     |
   |    bash     |                                     v
@@ -51,7 +51,9 @@ Two pieces are C, everything else is Elixir:
   (=openpty=, =fork=, =read=, =write=). It is kept tiny, since a crash there
   takes down the whole VM.
 - *The renderer* is a separate program. If it segfaults, only the window dies;
-  bash and the screen contents survive in Elixir and can be redrawn.
+  bash and the screen contents survive in Elixir and can be redrawn. It
+  comes in two builds with the same core: =guiltty_vk= (Vulkan, the
+  default) and =guiltty_gl= (OpenGL, the fallback). See [[file:19-vulkan.org][chapter 19]].
 
 * Roadmap
 

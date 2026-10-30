@@ -62,6 +62,14 @@ tried, what broke and what clicked. Write it in plain language, because it's
 the first draft of a book. Mark it as an agent draft
 (`_Draft: agent, awaiting user_`) so the user can rewrite it in their own voice.
 
+## Changelog
+
+`CHANGELOG.md` lists what each version changed for someone using guiltty:
+features, settings, fixes, new build requirements. Add every user-visible
+change to "Unreleased" in the same change, in plain words. When the user
+tags a version, rename "Unreleased" to that version and date. Anything
+that breaks an existing config goes under "Changed" or "Removed".
+
 ## The book
 
 `book/` holds Org-mode files (`.org`) that explain how guiltty works, so

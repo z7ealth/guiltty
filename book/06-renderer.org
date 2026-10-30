@@ -10,9 +10,12 @@
   |   |-- protocol.c/.h        framing and safe message reading
   |   |-- atlas.c/.h           fontconfig + FreeType -> a glyph bitmap
   |   `-- backend.h            the interface every backend implements
-  `-- gl/                      knows OpenGL; nothing about ports or fonts
-      |-- gl_backend.c
-      `-- shaders/cell.vert, cell.frag
+  |-- gl/                      knows OpenGL; nothing about ports or fonts
+  |   |-- gl_backend.c
+  |   `-- shaders/cell.vert, cell.frag
+  `-- vk/                      knows Vulkan (chapter 19)
+      |-- vk_backend.c
+      `-- shaders/cell.vert, cell.frag, frame.glsl   (compiled to SPIR-V)
 #+end_example
 
 The core never includes a GL header. It calls the backend through a struct
@@ -20,7 +23,7 @@ of function pointers ([[file:../c_src/renderer/core/backend.h][backend.h]]):
 
 | Field          | When it's called                                      |
 |----------------+-------------------------------------------------------|
-| =window_flags= | read before creating the window (=SDL_WINDOW_OPENGL=) |
+| =window_flags= | read before creating the window (=SDL_WINDOW_OPENGL=, or =_VULKAN=) |
 | =configure=    | before the window exists: ask SDL for GL 3.3 core     |
 | =init=         | after the window exists: context, shaders, buffers    |
 | =upload_atlas= | once: the glyph bitmap becomes a texture              |
@@ -176,6 +179,7 @@ often than the screen refreshes.
 make                                     # both builds
 ./priv/guiltty_gl --demo        # a fixed screen, no port
 ./priv/guiltty_gl-dbg --demo  # same, under ASan + UBSan
+./priv/guiltty_vk-dbg --demo  # the Vulkan build, with validation layers too
 #+end_src
 
 Closing the demo window under the debug build prints nothing: no leaks, no
