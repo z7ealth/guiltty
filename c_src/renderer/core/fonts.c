@@ -339,6 +339,55 @@ static int draw_shaped(struct font *font, const char *utf8, size_t len, struct c
     return pen / 64;
 }
 
+// Coding fonts draw ligatures with OpenType's contextual alternates
+// (`calt`) or ligatures (`liga`). Either way, a character joined into one
+// comes out of HarfBuzz as a different glyph from its plain one, moved, or
+// with no glyph of its own (merged into its neighbor's cluster). Cells
+// like that, side by side, are one ligature.
+void fonts_ligatures(const struct fonts *f, const uint32_t *cps, int n, uint8_t *spans) {
+    memset(spans, 0, (size_t)n);
+    if (f->count == 0 || n < 2 || n > max_ligature_run)
+        return;
+    hb_font_t *hb = f->list[0]->hb;
+    hb_buffer_t *buf = hb_buffer_create();
+    // Codepoints, so each glyph's cluster is the index of its character.
+    hb_buffer_add_codepoints(buf, cps, n, 0, n);
+    hb_buffer_guess_segment_properties(buf);
+    hb_shape(hb, buf, nullptr, 0);
+    unsigned count;
+    hb_glyph_info_t *info = hb_buffer_get_glyph_infos(buf, &count);
+    hb_glyph_position_t *pos = hb_buffer_get_glyph_positions(buf, &count);
+
+    uint8_t glyphs[max_ligature_run] = {};
+    bool joined[max_ligature_run] = {};
+    for (unsigned g = 0; g < count; g++) {
+        unsigned c = info[g].cluster;
+        if (c >= (unsigned)n)
+            continue;
+        glyphs[c]++;
+        hb_codepoint_t plain;
+        if (!hb_font_get_nominal_glyph(hb, cps[c], &plain) || plain != info[g].codepoint ||
+            pos[g].x_offset != 0 || pos[g].y_offset != 0 ||
+            pos[g].x_advance != hb_font_get_glyph_h_advance(hb, plain))
+            joined[c] = true;
+    }
+    hb_buffer_destroy(buf);
+
+    for (int i = 0; i < n;) {
+        if (!joined[i] && glyphs[i] == 1) {
+            i++;
+            continue;
+        }
+        int start = i;
+        while (i < n && (joined[i] || glyphs[i] != 1))
+            i++;
+        // One changed character alone is an alternate shape, not a
+        // ligature; it needs its neighbors to look right, so leave it.
+        if (i - start >= 2)
+            spans[start] = (uint8_t)(i - start);
+    }
+}
+
 // Copy (or shrink) the canvas's content box into the cell area, as
 // straight-alpha RGBA. Shrinking averages each block of source pixels.
 // The source box is src_x, src_y, src_w x src_h on the canvas; it lands at

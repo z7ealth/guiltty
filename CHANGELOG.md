@@ -12,11 +12,17 @@ the tab bar instead of ignoring them.
 
 ### Added
 - `CHANGELOG.md`.
+- Ligatures: with a font that has them (JetBrains Mono, Fira Code),
+  `->`, `!=`, `|>`, `=>`, `===` and the like are drawn as one symbol.
+  On by default; `ligatures: false` turns them off.
 - Complete install instructions in the README: what to install first,
   what each dependency is for, and the commands for openSUSE, Fedora,
   Ubuntu and Arch.
 
 ### Changed
+- The renderer protocol is now version 9 (the ligatures option). Build
+  guiltty and its renderers together, as `mix compile` and `install.sh`
+  do.
 - The tabs look cleaner: each shows only its title, with more room
   around it, and no numbers or separators between them. The active tab is
   no longer bold. Ctrl+Shift+1 to 9 still go to tabs 1 to 9.

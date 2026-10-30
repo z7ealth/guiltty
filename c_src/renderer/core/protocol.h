@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 8;
+constexpr uint16_t protocol_version = 9;
 
 // Largest message we accept; anything bigger is a protocol error.
 constexpr uint32_t max_message_size = 1u << 24;
@@ -76,7 +76,11 @@ enum msg_tag : uint8_t {
 };
 enum cursor_shape : uint8_t { CURSOR_BLOCK = 0, CURSOR_UNDERLINE = 1, CURSOR_BAR = 2, CURSOR_HOLLOW = 3 };
 constexpr uint8_t cursor_blinks = 0x04;
-enum option_flag : uint8_t { OPTION_BOLD_IS_BRIGHT = 0x01, OPTION_TAB_BAR_BOTTOM = 0x02 };
+enum option_flag : uint8_t {
+    OPTION_BOLD_IS_BRIGHT = 0x01,
+    OPTION_TAB_BAR_BOTTOM = 0x02,
+    OPTION_LIGATURES = 0x04,
+};
 constexpr size_t options_size = sizeof(uint16_t) + 2;
 enum mouse_kind : uint8_t { MOUSE_PRESS = 0, MOUSE_RELEASE = 1, MOUSE_MOTION = 2, MOUSE_WHEEL = 3 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");

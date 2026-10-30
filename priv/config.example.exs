@@ -69,6 +69,10 @@
   # Where the tabs go: :top or :bottom.
   tab_bar: :top,
 
+  # Join ->, !=, |>, => and the like into one symbol, when the font has
+  # ligatures (JetBrains Mono and Fira Code do; Source Code Pro doesn't).
+  ligatures: true,
+
   # How guiltty draws: :vulkan, or :gl (OpenGL). If Vulkan can't start
   # (no driver, no GPU that can show the window), guiltty says so and
   # draws with OpenGL. Applies to windows opened after a change.

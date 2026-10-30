@@ -39,6 +39,15 @@ void fonts_close(struct fonts *f);
 bool fonts_render(struct fonts *f, const char *utf8, size_t len, int width, uint8_t *rgba,
                   size_t stride);
 
+// The longest run of characters shaped together to look for ligatures.
+constexpr int max_ligature_run = 32;
+
+// Shapes `n` characters (one per cell, n <= max_ligature_run) with the
+// primary font and finds where the font joined them: a ligature such as
+// "->" or "!=". spans[i] is the number of cells of the ligature that
+// starts at i (2 or more), or 0.
+void fonts_ligatures(const struct fonts *f, const uint32_t *cps, int n, uint8_t *spans);
+
 // The Private Use Area, where Nerd Font icons live.
 bool private_use(uint32_t cp);
 

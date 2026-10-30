@@ -70,6 +70,9 @@ defmodule Guiltty.Window.ProtocolTest do
     assert IO.iodata_to_binary(Protocol.options(Map.put(@options, :tab_bar, :bottom))) ==
              <<20, 6::16, 90, 0b11>>
 
+    assert IO.iodata_to_binary(Protocol.options(Map.put(@options, :ligatures, true))) ==
+             <<20, 6::16, 90, 0b101>>
+
     assert Protocol.open_url("file:///tmp/x.exs") == <<21, "file:///tmp/x.exs">>
   end
 

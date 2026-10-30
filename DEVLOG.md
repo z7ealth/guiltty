@@ -673,3 +673,30 @@ stop being a grid row, and stays for later.
 ### Later
 - A taller tab bar with centered text and a gap under it, like the
   mockup (its own pixel height instead of cells row 0).
+
+## 2026-10-30 — Ligatures
+
+_Draft: agent, awaiting user_
+
+You asked whether guiltty does ligatures (it didn't), and then for them
+in 0.11.0. The reason it didn't: every cell is shaped alone, so HarfBuzz
+never sees `-` and `>` side by side, and the font's rules never fire.
+
+The fix is a second pass over each row. Runs of ASCII punctuation in one
+style are shaped together with the primary font, and every glyph is
+compared with the character's plain one. JetBrains Mono turned out to
+keep one glyph per character: `->` becomes an empty spacer and a
+`hyphen_greater.liga` that draws the whole arrow back over the first
+cell. "Different from the plain glyph" catches that and the classic
+one-glyph ligature alike. Each span then goes into the atlas the way a
+wide character does, N slots side by side, so the backends, the shaders
+and Elixir didn't change. The only protocol change is a flag bit in
+OPTIONS (version 9).
+
+You picked: on by default, the cursor doesn't break a ligature, and only
+punctuation is checked (letters would mean shaping every word on every
+update). What clicked: `fonts_render` already drew multi-character text
+across several cells, so drawing a ligature needed no new code.
+
+Not tried: Fira Code (not installed), and how it feels while typing.
+Tests use JetBrains Mono and skip themselves without it.

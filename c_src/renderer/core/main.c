@@ -18,6 +18,7 @@
 #define _GNU_SOURCE
 
 #include <SDL3/SDL.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
@@ -79,6 +80,7 @@ struct renderer {
     // The tab bar is drawn at the bottom. It's still row 0 of the cell
     // mirror; only where it's drawn (and where clicks land) changes.
     bool tab_bar_bottom;
+    bool ligatures; // join "->", "!=" and friends when the font has them
     int cell_w, cell_h;
     // The terminal grid is cols x rows. The cell mirror has one more row on
     // top, the tab bar, so grid row i is cells row i + 1.
@@ -305,11 +307,68 @@ static void widen_icons(struct renderer *r, size_t first) {
     }
 }
 
+// Programming ligatures. Runs of ASCII punctuation in one style ("->",
+// "!=", "|>") are shaped together (fonts_ligatures). Where the font joined
+// characters, the span is drawn once into the atlas, as many cells wide,
+// and each cell shows its slice, the way a wide character's two cells do.
+// Letters and digits are left alone: they're most of the text, and
+// shaping every word on every row update would cost more than it shows.
+static bool ligature_char(uint32_t glyph) {
+    return glyph < 0x80 && ispunct((int)glyph);
+}
+
+static bool same_style(const struct cell *a, const struct cell *b) {
+    return a->attrs == b->attrs && memcmp(a->fg, b->fg, 3) == 0 && memcmp(a->bg, b->bg, 3) == 0;
+}
+
+static void shape_run(struct renderer *r, size_t at, int n) {
+    uint32_t cps[max_ligature_run];
+    uint8_t spans[max_ligature_run];
+    for (int i = 0; i < n; i++)
+        cps[i] = r->glyphs[at + (size_t)i];
+    fonts_ligatures(&r->fonts, cps, n, spans);
+    for (int i = 0; i < n; i++) {
+        int k = spans[i];
+        // Its slots must fit in one row of the atlas (big zoom, few slots).
+        if (k < 2 || k > r->atlas.slots_per_row)
+            continue;
+        char text[max_ligature_run];
+        for (int j = 0; j < k; j++)
+            text[j] = (char)cps[i + j];
+        uint16_t slot;
+        bool color;
+        if (!atlas_lookup(&r->atlas, &r->fonts, text, (size_t)k, k, &slot, &color)) {
+            r->atlas_full = true;
+            return;
+        }
+        for (int j = 0; j < k; j++)
+            r->cells[at + (size_t)(i + j)].slot = (uint16_t)(slot + j);
+        i += k - 1;
+    }
+}
+
+static void find_ligatures(struct renderer *r, size_t first) {
+    if (!r->ligatures || r->fonts.count == 0)
+        return;
+    for (size_t c = 0; c < r->cols;) {
+        size_t start = c;
+        while (c < r->cols && c - start < max_ligature_run && ligature_char(r->glyphs[first + c]) &&
+               !(r->cells[first + c].attrs & ATTR_HIDDEN) &&
+               same_style(&r->cells[first + c], &r->cells[first + start]))
+            c++;
+        if (c - start >= 2)
+            shape_run(r, first + start, (int)(c - start));
+        if (c == start)
+            c++;
+    }
+}
+
 // Every cell of one row to its atlas slot.
 static void row_slots(struct renderer *r, size_t first) {
     for (size_t c = 0; c < r->cols; c++)
         find_slot(r, first + c);
     widen_icons(r, first);
+    find_ligatures(r, first);
 }
 
 // The atlas filled up: start it over with just what's on screen now.
@@ -519,6 +578,7 @@ static void build_tab_bar(struct renderer *r) {
         col = bar_text(r, col, "  ", look, limit);
         r->tabs[i].end = col;
     }
+    find_ligatures(r, 0);
     mark_row(r, 0);
     r->dirty = true;
 }
@@ -636,6 +696,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     r->opacity = opacity;
     r->bold_is_bright = flags & OPTION_BOLD_IS_BRIGHT;
     r->tab_bar_bottom = flags & OPTION_TAB_BAR_BOTTOM;
+    r->ligatures = flags & OPTION_LIGATURES;
     return true;
 }
 
@@ -783,6 +844,7 @@ static void update_text_area(struct renderer *r) {
         for (uint16_t c = 0; c < cols; c++)
             decode_cell(r, wire + (size_t)c * wire_cell_size, first + c);
         widen_icons(r, first);
+        find_ligatures(r, first);
         mark_row(r, row + 1);
     }
     bool moved = r->cursor_row != crow || r->cursor_col != ccol || r->cursor_style != style;

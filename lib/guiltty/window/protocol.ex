@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 8
+  @version 9
 
   @hello 1
   @setup 2
@@ -67,13 +67,14 @@ defmodule Guiltty.Window.Protocol do
   @doc """
   Window options, live: u16 padding (pixels at scale 1), u8 opacity
   (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the
-  bottom).
+  bottom, bit 2: ligatures).
   """
   def options(options), do: [<<@options>>, option_bytes(options)]
 
   defp option_bytes(%{padding: padding, opacity: opacity, bold_is_bright: bright} = o) do
     bottom = Map.get(o, :tab_bar, :top) == :bottom
-    <<padding::16, round(opacity * 100), bool(bright) + 2 * bool(bottom)>>
+    ligatures = Map.get(o, :ligatures, false)
+    <<padding::16, round(opacity * 100), bool(bright) + 2 * bool(bottom) + 4 * bool(ligatures)>>
   end
 
   @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."

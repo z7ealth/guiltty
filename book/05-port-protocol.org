@@ -75,18 +75,20 @@ one byte.
 |  17 | STATUS | Elixir->renderer | u8 style (0 normal, 1 warning), UTF-8 text for the right of the tab bar (empty hides it) |
 |  18 | CLIPBOARD | Elixir->renderer | u8 target (0 clipboard, 1 primary), UTF-8 text         |
 |  19 | PASTE_PRIMARY | Elixir->renderer | (empty): paste the primary selection (answered with PASTE) |
-|  20 | OPTIONS | Elixir->renderer | u16 padding, u8 opacity (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the bottom) |
+|  20 | OPTIONS | Elixir->renderer | u16 padding, u8 opacity (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the bottom, bit 2: ligatures) |
 |  21 | OPEN_URL | Elixir->renderer | a URL to open with the desktop's app (the config file)     |
 
-This is version 8: STATUS gained its style byte, so a broken config shows
-in red. Version 7 added the tab bar's position to the OPTIONS flags.
+This is version 9: OPTIONS gained the ligatures bit (chapter 14).
+Version 8 gave STATUS its style byte, so a broken config shows in red.
+Version 7 added the tab bar's position to the OPTIONS flags.
 Version 6 (MVP 6) made SETUP carry the window options and ROWS the cursor
 style (bits 0-1 block, underline or bar; bit 2 blinking), and added
 OPTIONS and OPEN_URL (chapter 16). Version 1 had no colors and no
 RESIZE; version 2 had no TITLE, PASTE or MOUSE; version 3 had no tabs,
 live config, halo or frame reports; version 4 had ASCII-only cells;
 version 5 had no options or cursor styles; version 6 had the tab bar
-always at the top; version 7 had one style of status.
+always at the top; version 7 had one style of status;
+version 8 had no ligatures.
 
 ROWS carries the grid size it describes, so the renderer can drop updates
 sent before a resize reached the Screen ([[file:09-resize.org][the resize chapter]]). Rows are

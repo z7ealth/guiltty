@@ -83,6 +83,79 @@ Every cluster goes through HarfBuzz, even plain letters: one code path,
 and it runs once per distinct glyph, since the atlas caches the result. HarfBuzz reads the font through the FreeType face
 (=hb_ft_font_create_referenced=), so both always agree on the size.
 
+* Ligatures: when two characters become one symbol
+
+Coding fonts such as JetBrains Mono and Fira Code draw ~->~ as an arrow,
+~!=~ as ≠ and ~|>~ (Elixir's pipe) as a triangle. That's a *ligature*:
+two or more characters drawn as one symbol. The font decides when, with
+OpenType rules (the =calt= and =liga= features), and HarfBuzz applies them,
+but only when it sees the characters *together*. Cell by cell, as
+guiltty shapes everything else, =-= and =>= never meet.
+
+** What the font does
+
+A monospace font can't just swap =->= for one double-width glyph: the
+text would stop lining up. So JetBrains Mono keeps one glyph per
+character. The first becomes an empty spacer (=SPC=), and the last draws
+the whole arrow, reaching back over the cell before it. This is
+HarfBuzz's real output for that font (each advance is 600 units, one
+cell):
+
+#+begin_example
+  "->"   char 0 '-': SPC                      char 1 '>': hyphen_greater.liga
+  "!="   char 0 '!': SPC                      char 1 '=': exclam_equal.liga
+  "|>"   char 0 '|': SPC                      char 1 '>': bar_greater.liga
+  "-->"  char 0 '-': SPC   char 1 '-': SPC    char 2 '>': hyphen_hyphen_greater.liga
+  "ab"   char 0 'a': a (plain)                char 1 'b': b (plain)
+#+end_example
+
+Other fonts merge the characters into one glyph instead (a classic
+=liga=). Either way, a joined character comes out *different from its
+plain glyph*: another glyph, moved, or none of its own. That's the test
+guiltty uses, so it doesn't need to know how a font does it.
+
+** How guiltty finds them
+
+After a row's cells have their slots, a second pass looks at that row
+again (=find_ligatures= in [[file:../c_src/renderer/core/main.c::static void find_ligatures][main.c]]):
+
+#+begin_example
+  row:   x   ␠   |   >   ␠   f   (   )   ␠   -   >   ␠   y
+                 \___/               \___/   \___/
+  runs of ASCII punctuation, in one style, 2 or more long:
+                 "|>"                "()"    "->"
+     |
+     v  fonts_ligatures: shape each run with the primary font, compare
+     |  every glyph with the character's plain one (hb_font_get_nominal_glyph)
+     v
+  "|>": both changed -> span of 2      "()": both plain -> nothing
+     |
+     v  atlas_lookup("|>", width 2): drawn once, two slots side by side
+  cells 2 and 3 name those two slots, left half and right half
+#+end_example
+
+The span goes into the atlas like a wide character (see "The atlas,
+filled as you go"): =fonts_render= shapes "|>" again, alone, which gives
+the same glyphs, and draws them across two cells. Each cell then shows its
+slice. The backends and shaders don't change at all; Elixir only sends
+the setting.
+
+Some limits, chosen on purpose:
+
+- *Only punctuation.* Letters and digits are most of the text, and
+  shaping every word on every row update would cost more than it shows.
+  Ligatures made of letters (Fira Code's =www=, =0xFF=) stay plain.
+- *A run breaks at a style change.* A red =->= next to a green =->= are
+  two arrows, and so are the halves of a selection or a search match.
+- *The cursor doesn't break one.* It draws over its cell's slice of the
+  arrow, as in WezTerm.
+- A run is at most 32 characters, and a ligature must fit in one row of
+  the atlas.
+
+=ligatures: false= in the config turns it off. It travels in the OPTIONS
+message (bit 2 of the flags, protocol version 9), and Elixir sends every
+row again, so it applies at once.
+
 * Drawing a glyph into its cell
 
 =fonts_render= draws the shaped glyphs on a scratch canvas at the font's
@@ -223,7 +296,10 @@ usual resize chain runs (chapter 9).
   to try it by hand.
 - FreeType tutorial, part 1 and 2 (=FT_Load_Glyph=, metrics, bitmaps);
   =FT_LOAD_COLOR=.
-- HarfBuzz manual, "What is text shaping?" and "Shaping and shape plans".
+- HarfBuzz manual, "What is text shaping?" and "Shaping and shape plans";
+  "Clusters" (why a glyph's =cluster= is the index of its character).
+- OpenType features =calt= (contextual alternates) and =liga=
+  (ligatures), in the OpenType spec's "Feature tags" registry.
 - OpenType tables CBDT/CBLC (bitmap color glyphs) and COLR (vector ones).
 - SDL3 wiki: README-highdpi, =SDL_GetWindowDisplayScale=,
   =SDL_GetWindowPixelDensity=.
@@ -240,6 +316,10 @@ usual resize chain runs (chapter 9).
 6. Why does guiltty draw =─= itself instead of taking it from the font?
 7. Where does the right half of a Nerd Font icon go when the next cell is
    a space?
+8. Why can't guiltty find ligatures by shaping each cell alone?
+9. In JetBrains Mono, which of the two cells of =->= actually draws the
+   arrow?
+10. Why does a red =->= next to a green one stay two arrows?
 
 ** Answers
 :PROPERTIES:
@@ -262,3 +342,10 @@ usual resize chain runs (chapter 9).
    pixel in every cell, lines always meet.
 7. Into that space's cell: the icon is drawn two cells wide and the space
    shows the second half (it still is a space for Elixir).
+8. The font's rules match sequences of characters; HarfBuzz only applies
+   them to the text it's given, and one cell holds one character.
+9. The second one (=hyphen_greater.liga=), reaching back over the first;
+   the first gets an empty spacer. guiltty draws the pair as one
+   two-cell picture, so each cell shows its half.
+10. A run of punctuation stops where the style (colors, attributes)
+    changes, so each =->= is shaped on its own.

@@ -141,8 +141,8 @@ unnoticed.
 
 Among the settings: themes (Catppuccin, Dracula, Gruvbox, Solarized,
 Tomorrow Night, or your own colors), font and size, cursor, padding,
-opacity, the tab bar at the top or bottom, the shell, scrollback, and
-every key.
+opacity, the tab bar at the top or bottom, ligatures, the shell,
+scrollback, and every key.
 
 **Vulkan or OpenGL.** guiltty draws with Vulkan 1.3. If Vulkan can't
 start (an old GPU, no driver), it switches to OpenGL by itself and says so

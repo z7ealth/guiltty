@@ -839,7 +839,8 @@ defmodule Guiltty.Window do
       padding: config.window.padding,
       opacity: config.window.opacity,
       bold_is_bright: config.bold_is_bright,
-      tab_bar: config.tab_bar
+      tab_bar: config.tab_bar,
+      ligatures: config.ligatures
     }
   end
 
