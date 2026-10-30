@@ -38,9 +38,9 @@ MIX_ENV=prod mix release
 _build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
 ```
 
-Closing the window ends guiltty and its tabs. With `on_close: :detach`
-in the config they keep running instead, and the next `guiltty` opens
-them where you left them.
+Closing the window ends guiltty and its tabs, except the ones you lock
+with Ctrl+Shift+L (they show a 🔒): those keep running, and the next
+`guiltty` opens them where you left them.
 
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|
@@ -53,6 +53,7 @@ them where you left them.
 | Ctrl+=, Ctrl+-, Ctrl+0        | zoom in, out, reset                      |
 | Ctrl+,                        | open the config file in your editor      |
 | Ctrl+Shift+/                  | the cheatsheet: every key, on one page   |
+| Ctrl+Shift+L                  | lock the tab: it outlives the window     |
 
 Hold Shift to select in programs that use the mouse (vim, htop). Copy
 `priv/config.example.exs` to

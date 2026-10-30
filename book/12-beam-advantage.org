@@ -23,9 +23,9 @@ become the long-lived part, and the window becomes a view on them:
   DynamicSupervisor. A tab ends when its shell exits. When the last one
   ends, =Tabs= stops; it's /significant/, so guiltty stops.
 - *The window is not significant.* Closing it stops the Window and its
-  renderer. By default (=on_close: :quit=) the Window first closes every
-  tab, so the last tab ending is what stops guiltty; with
-  =on_close: :detach=, nothing else stops.
+  renderer. The Window first closes every tab that isn't *locked*
+  (Ctrl+Shift+L). With none locked, the last tab ending is what stops
+  guiltty; locked tabs keep it running.
 
 * Crash-proof, part by part
 
@@ -65,10 +65,17 @@ session supervisors exist (={id, :supervisor}= keys) and adopts them.
 
 * Detach and reattach
 
-This is opt-in: =on_close: :detach= in the config. (It was the only
-behavior until v0.7.0, and surprised the user: a new window opened in
-whatever directory the old shells had been left in, because they were the
-same shells.)
+This is per tab: lock the ones you want to keep with Ctrl+Shift+L (they
+show a 🔒 in the tab bar). Closing the window closes the rest; the locked
+ones keep running, and the next window opens them where you left them.
+=Tabs= keeps the set of locked tabs, since it already owns the tab list,
+and sends it to windows with the list; the Window only draws the lock and,
+on close, calls =Tabs.close_unlocked/0=.
+
+(Until v0.7.0 every tab was kept, always, and that surprised the user: a
+new window opened wherever the old shells had been left, because they were
+the same shells. One limit: if =Tabs= itself crashes, it takes back the
+running sessions but forgets which were locked.)
 
 #+begin_example
   $ guiltty                 bin/guiltty, no command -> rel/env.sh.eex:

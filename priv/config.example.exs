@@ -60,10 +60,6 @@
   # does.
   bold_is_bright: true,
 
-  # Closing the window :quit's guiltty (its tabs end). With :detach the tabs
-  # keep running, and the next guiltty opens them where you left them.
-  on_close: :quit,
-
   # Where the tabs go: :top or :bottom.
   tab_bar: :top,
 
@@ -91,6 +87,9 @@
     # Opens this file in your editor (creating it from the example first).
     open_config: ["ctrl+,"],
     # Shows every key (this list, as you bound it).
-    cheatsheet: ["ctrl+shift+/"]
+    cheatsheet: ["ctrl+shift+/"],
+    # Locks the tab: closing the window ends every tab but the locked ones,
+    # which keep running; the next guiltty opens them where you left them.
+    lock_tab: ["ctrl+shift+l"]
   ]
 ]

@@ -9,7 +9,9 @@ defmodule Guiltty.Tabs do
   window shows them again. That's detach and reattach.
 
   A window registers with `attach_window/1` and then gets
-  `{:tabs, [{id, title}], active_id}` whenever something changes.
+  `{:tabs, [{id, title}], active_id, locked}` whenever something changes;
+  `locked` is the set of tabs that stay when the window closes (see
+  `toggle_lock/1`).
 
   A tab ends when its shell exits (or `close/1`). When the last one ends,
   this process stops; it's significant in the application supervisor, so
@@ -37,10 +39,16 @@ defmodule Guiltty.Tabs do
   def close(id), do: GenServer.call(__MODULE__, {:close, id})
 
   @doc """
-  Closes every tab (each shell gets SIGHUP). When the last one has ended,
-  Tabs stops, and guiltty with it.
+  Locks or unlocks a tab. Closing the window closes every tab but the
+  locked ones; those keep running, and the next window shows them.
   """
-  def close_all, do: GenServer.call(__MODULE__, :close_all)
+  def toggle_lock(id), do: GenServer.call(__MODULE__, {:toggle_lock, id})
+
+  @doc """
+  Closes every tab that isn't locked (each shell gets SIGHUP). If none is
+  locked, the last one ending stops Tabs, and guiltty with it.
+  """
+  def close_unlocked, do: GenServer.call(__MODULE__, :close_unlocked)
 
   @doc "Switches to `:next`, `:prev`, or the tab at a 0-based index."
   def switch(to), do: GenServer.call(__MODULE__, {:switch, to})
@@ -62,6 +70,7 @@ defmodule Guiltty.Tabs do
     state = %{
       tabs: [],
       titles: %{},
+      locked: MapSet.new(),
       active: nil,
       next_id: 1,
       size: {Config.get().window.columns, Config.get().window.rows},
@@ -119,8 +128,18 @@ defmodule Guiltty.Tabs do
     end
   end
 
-  def handle_call(:close_all, _from, state) do
+  def handle_call({:toggle_lock, id}, _from, state) do
+    locked =
+      if MapSet.member?(state.locked, id),
+        do: MapSet.delete(state.locked, id),
+        else: MapSet.put(state.locked, id)
+
+    {:reply, :ok, broadcast(%{state | locked: locked})}
+  end
+
+  def handle_call(:close_unlocked, _from, state) do
     for id <- state.tabs,
+        not MapSet.member?(state.locked, id),
         pid = GenServer.whereis(Session.via(id, :supervisor)),
         pid != nil,
         do: DynamicSupervisor.terminate_child(@sessions, pid)
@@ -150,7 +169,7 @@ defmodule Guiltty.Tabs do
   def handle_call({:attach_window, pid}, _from, state) do
     Process.monitor(pid)
     state = %{state | windows: MapSet.put(state.windows, pid)}
-    {:reply, {tab_list(state), state.active}, state}
+    {:reply, {tab_list(state), state.active, state.locked}, state}
   end
 
   @impl true
@@ -247,6 +266,7 @@ defmodule Guiltty.Tabs do
   end
 
   defp remove_tab(state, id) do
+    state = %{state | locked: MapSet.delete(state.locked, id)}
     index = Enum.find_index(state.tabs, &(&1 == id))
     tabs = List.delete(state.tabs, id)
 
@@ -288,7 +308,7 @@ defmodule Guiltty.Tabs do
   defp tab_list(state), do: Enum.map(state.tabs, &{&1, Map.get(state.titles, &1, "")})
 
   defp broadcast(state) do
-    message = {:tabs, tab_list(state), state.active}
+    message = {:tabs, tab_list(state), state.active, state.locked}
     Enum.each(state.windows, &send(&1, message))
     state
   end

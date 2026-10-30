@@ -34,7 +34,8 @@ defmodule Guiltty.Cheatsheet do
          {"Next tab", k.(:next_tab)},
          {"Previous tab", k.(:prev_tab)},
          {"Go to tab 1-9", "Ctrl+Shift+1..9"},
-         {"Switch tab", "click it"}
+         {"Switch tab", "click it"},
+         {"Keep after closing", k.(:lock_tab)}
        ]},
       {"Scrollback",
        [

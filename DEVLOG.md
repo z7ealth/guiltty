@@ -542,3 +542,14 @@ so the last tab ending stops guiltty, as after the last `exit`;
 reopens the window. Checked with an installed copy on a private X server:
 asked its window to close the way a window manager does, and the whole
 node was gone a moment later.
+
+Later: `on_close` didn't last an hour. Your better idea: quit by default,
+and lock just the tabs you want to keep (Ctrl+Shift+L, a 🔒 in the tab
+bar). Closing the window closes the unlocked ones; the locked ones keep
+guiltty running for the next window. Tried live with an installed copy:
+two tabs, one locked, window closed, guiltty still running with just the
+locked tab, and the reopened window showed it. The new unknown-name check
+caught the example config still saying `on_close`. And the 🔒 came out as
+a plain white lock: Source Code Pro has its own, and guiltty used any open
+font that covered a character before asking for an emoji font. Now emoji
+look for an emoji font first.

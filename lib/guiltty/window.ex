@@ -6,10 +6,10 @@ defmodule Guiltty.Window do
   The renderer is a separate OS process, so if it crashes only this process
   notices; the supervisor starts a new Window, which starts a new renderer
   and redraws from the Screen. When the user closes the window the renderer
-  exits with status 0 and this process stops normally. By default
-  (`on_close: :quit`) every tab is closed too, and guiltty ends; with
-  `on_close: :detach` the tabs keep running, and the next window shows
-  them again (detach and reattach).
+  exits with status 0 and this process stops normally, closing every tab
+  that isn't locked (Ctrl+Shift+L). With none locked, guiltty ends; locked
+  tabs keep running, and the next window shows them again (detach and
+  reattach).
 
   ## Frames
 
@@ -130,6 +130,8 @@ defmodule Guiltty.Window do
       status: {:normal, ""},
       # the config file's error, one line, until it loads again
       config_error: nil,
+      # tabs that stay when the window closes (Tabs owns the set)
+      locked: MapSet.new(),
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
       cheatsheet: nil
     }
@@ -153,11 +155,11 @@ defmodule Guiltty.Window do
 
   # The renderer exits 0 when the user closes the window.
   #
-  # Then, by default (on_close: :quit), the tabs end too, and when the last
-  # one has, so does guiltty. With on_close: :detach they keep running, and
+  # Then the tabs end too, all but the locked ones. With none locked, the
+  # last one ending stops guiltty; locked tabs keep running, and
   # the next window shows them again.
   def handle_info({port, {:exit_status, 0}}, %{port: port} = state) do
-    if state.config.on_close == :quit, do: catch_exit(fn -> Tabs.close_all() end)
+    catch_exit(fn -> Tabs.close_unlocked() end)
     {:stop, {:shutdown, :window_closed}, %{state | port: nil}}
   end
 
@@ -172,7 +174,8 @@ defmodule Guiltty.Window do
   def handle_info({:screen_dirty, id}, %{active: id} = state), do: {:noreply, pull(state)}
   def handle_info({:screen_dirty, _other}, state), do: {:noreply, state}
 
-  def handle_info({:tabs, tabs, active}, state), do: {:noreply, show_tabs(state, tabs, active)}
+  def handle_info({:tabs, tabs, active, locked}, state),
+    do: {:noreply, show_tabs(%{state | locked: locked}, tabs, active)}
 
   # The active Screen restarted (it crashed, or its session did). The new
   # one doesn't know about us, so view it again.
@@ -205,11 +208,11 @@ defmodule Guiltty.Window do
   defp handle_event({:hello, version, backend}, state) do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
-      {tabs, active} = Tabs.attach_window(self())
+      {tabs, active, locked} = Tabs.attach_window(self())
       {cols, rows} = Session.size(active)
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
-      state = show_tabs(%{state | ready: true, size: {cols, rows}}, tabs, active)
+      state = show_tabs(%{state | ready: true, size: {cols, rows}, locked: locked}, tabs, active)
       # Anything that waited for the handshake (a config error) goes now.
       {:noreply, update_status(state)}
     else
@@ -440,6 +443,11 @@ defmodule Guiltty.Window do
 
   defp run(:cheatsheet, state), do: open_cheatsheet(state, 0)
 
+  defp run(:lock_tab, state) do
+    if state.active, do: catch_exit(fn -> Tabs.toggle_lock(state.active) end)
+    state
+  end
+
   defp run(:zoom_in, state), do: zoom(state, state.zoom + 1)
   defp run(:zoom_out, state), do: zoom(state, state.zoom - 1)
   defp run(:zoom_reset, state), do: zoom(state, 0)
@@ -539,8 +547,14 @@ defmodule Guiltty.Window do
 
   ## Showing a tab
 
+  # A locked tab shows a lock before its title.
   defp show_tabs(state, tabs, active) do
-    titles = Enum.map(tabs, fn {_id, title} -> if title == "", do: "shell", else: title end)
+    titles =
+      Enum.map(tabs, fn {id, title} ->
+        title = if title == "", do: "shell", else: title
+        if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
+      end)
+
     index = Enum.find_index(tabs, fn {id, _} -> id == active end) || 0
     send_port(state, Protocol.tabs(titles, index))
     state = %{state | tabs: tabs}

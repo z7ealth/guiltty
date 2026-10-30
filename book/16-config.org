@@ -85,7 +85,6 @@ the renderer, some reach the shell's process:
 | =window: columns, rows=        | Tabs            | the first tab of a new window |
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
 | =tab_bar= (=:top=, =:bottom=)  | renderer (OPTIONS) | live                       |
-| =on_close= (=:quit=, =:detach=) | Window          | live                          |
 | =cursor=                       | Window, per ROWS | live                         |
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |

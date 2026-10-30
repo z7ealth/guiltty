@@ -79,10 +79,11 @@ defmodule Guiltty.TabsTest do
   end
 
   test "windows hear about every change" do
-    {tabs, active} = Tabs.attach_window(self())
+    {tabs, active, locked} = Tabs.attach_window(self())
     assert [{^active, _}] = tabs
+    assert MapSet.size(locked) == 0
     {:ok, second} = Tabs.new_tab()
-    assert_receive {:tabs, [{^active, _}, {^second, _}], ^second}
+    assert_receive {:tabs, [{^active, _}, {^second, _}], ^second, _locked}
   end
 
   test "the last tab closing stops Tabs (and so guiltty)", %{tabs: tabs} do
@@ -123,6 +124,24 @@ defmodule Guiltty.TabsTest do
     {:ok, second} = Tabs.new_tab()
     Session.write(second, "pwd\r")
     assert eventually(fn -> Session.dump(second) =~ ~r/^\/usr\/share$/m end)
+  end
+
+  test "closing the unlocked tabs keeps the locked ones" do
+    Tabs.attach_window(self())
+    [first] = ids()
+    {:ok, second} = Tabs.new_tab()
+    {:ok, third} = Tabs.new_tab()
+
+    :ok = Tabs.toggle_lock(second)
+    assert MapSet.equal?(:sys.get_state(Tabs).locked, MapSet.new([second]))
+
+    :ok = Tabs.close_unlocked()
+    assert eventually(fn -> ids() == [second] end)
+    refute first in ids() or third in ids()
+
+    # Unlocking works too.
+    :ok = Tabs.toggle_lock(second)
+    assert MapSet.size(:sys.get_state(Tabs).locked) == 0
   end
 
   test "resize applies to every tab and to new ones" do

@@ -971,7 +971,7 @@ static void fill_demo(struct renderer *r) {
     constexpr uint32_t rgb = (uint32_t)COLOR_RGB << 24;
     r->tab_count = 2;
     r->active_tab = 0;
-    snprintf(r->tabs[0].title, sizeof r->tabs[0].title, "demo");
+    snprintf(r->tabs[0].title, sizeof r->tabs[0].title, "🔒 demo");
     snprintf(r->tabs[1].title, sizeof r->tabs[1].title, "日本語 tab");
     build_tab_bar(r);
     demo_text(r, 0, 0, "guiltty renderer --demo", def, def, ATTR_BOLD);

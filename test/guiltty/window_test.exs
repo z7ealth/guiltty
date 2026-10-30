@@ -204,18 +204,22 @@ defmodule Guiltty.WindowTest do
     assert_receive {:DOWN, ^ref, :process, ^tabs, {:shutdown, :last_tab_closed}}, 5000
   end
 
-  test "with on_close: :detach, closing the window leaves the tabs running", %{
+  test "Ctrl+Shift+L locks a tab: it shows a lock, and outlives the window", %{
     id: id,
     window: window
   } do
-    send(window, {:config, %{Config.defaults() | on_close: :detach}})
-    assert eventually(fn -> :sys.get_state(window).config.on_close == :detach end)
-    ref = Process.monitor(window)
+    {:ok, second} = Tabs.new_tab()
+    :ok = Tabs.switch(0)
+    key(window, ?l, @ctrl ||| @shift)
+    assert eventually(fn -> MapSet.member?(:sys.get_state(window).locked, id) end)
 
+    ref = Process.monitor(window)
     send(window, {port(window), {:exit_status, 0}})
     assert_receive {:DOWN, ^ref, :process, ^window, {:shutdown, :window_closed}}, 5000
-    Process.sleep(300)
-    assert Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)) == [id]
+
+    # The unlocked tab ended; the locked one runs on, for the next window.
+    assert eventually(fn -> Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)) == [id] end)
+    refute second in (Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)))
   end
 
   test "stopping the window ends the renderer process", %{window: window} do

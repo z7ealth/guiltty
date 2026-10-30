@@ -241,23 +241,32 @@ static bool known_missing(const struct fonts *f, uint32_t cp) {
 }
 
 static struct font *font_for(struct fonts *f, const uint32_t *cps, int n) {
-    bool color = wants_color(cps, n);
-    // Fonts already open first: an emoji font for emoji, then any.
-    for (int pass = color ? 0 : 1; pass < 2; pass++)
-        for (int i = 0; i < f->count; i++)
-            if ((pass == 1 || f->list[i]->color) && covers(f->list[i], cps, n))
-                return f->list[i];
-    if (known_missing(f, cps[0]))
-        return nullptr;
-
     uint32_t visible[32];
     int nv = 0;
     for (int i = 0; i < n && nv < 32; i++)
         if (!invisible(cps[i]))
             visible[nv++] = cps[i];
-    struct font *font = find_font(f, visible, nv, color);
-    if (font == nullptr && color)
-        font = find_font(f, visible, nv, false);
+
+    // An emoji: an emoji font, even when a text font that's already open
+    // (often the primary one: Source Code Pro has a plain 🔒) has a
+    // version of it too. Fonts already open first, then fontconfig.
+    if (wants_color(cps, n)) {
+        for (int i = 0; i < f->count; i++)
+            if (f->list[i]->color && covers(f->list[i], cps, n))
+                return f->list[i];
+        struct font *font = find_font(f, visible, nv, true);
+        if (font != nullptr && font->color)
+            return font;
+    }
+
+    // Anything else, or no emoji font has it: fonts already open, then
+    // whatever fontconfig finds.
+    for (int i = 0; i < f->count; i++)
+        if (covers(f->list[i], cps, n))
+            return f->list[i];
+    if (known_missing(f, cps[0]))
+        return nullptr;
+    struct font *font = find_font(f, visible, nv, false);
     if (font == nullptr && f->missing_count < max_missing)
         f->missing[f->missing_count++] = cps[0];
     return font;
