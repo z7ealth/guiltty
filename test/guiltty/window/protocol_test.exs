@@ -4,10 +4,13 @@ defmodule Guiltty.Window.ProtocolTest do
   alias Guiltty.{Grid, Theme}
   alias Guiltty.Window.Protocol
 
-  test "setup carries the size and 259 colors" do
-    bin = IO.iodata_to_binary(Protocol.setup(80, 24, Theme.default()))
-    assert <<2, 80::16, 24::16, colors::binary>> = bin
-    assert byte_size(colors) == 259 * 3
+  test "setup carries the size, 259 colors and the font" do
+    bin =
+      IO.iodata_to_binary(
+        Protocol.setup(80, 24, Theme.default(), %{family: "monospace", size: 18})
+      )
+
+    assert <<2, 80::16, 24::16, colors::binary-size(777), 18::16, "monospace">> = bin
     # palette 196 is pure red in the cube
     assert binary_part(colors, 196 * 3, 3) == <<255, 0, 0>>
     # the last three are fg, bg and cursor
@@ -24,7 +27,9 @@ defmodule Guiltty.Window.ProtocolTest do
   end
 
   test "decodes renderer events" do
-    assert Protocol.decode(<<1, 0, 3, 2, "gl">>) == {:ok, {:hello, 3, "gl"}}
+    assert Protocol.decode(<<1, 0, 4, 2, "gl">>) == {:ok, {:hello, 4, "gl"}}
+    assert Protocol.decode(<<15, 1234::32>>) == {:ok, {:frame, 1234}}
+    assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
     assert Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0x40>>) == {:ok, {:key, ?c, 0x40}}
     assert Protocol.decode(<<6, 100::16, 30::16>>) == {:ok, {:resize, 100, 30}}
@@ -43,6 +48,24 @@ defmodule Guiltty.Window.ProtocolTest do
 
   test "encodes the title" do
     assert Protocol.title("vim") == <<7, "vim">>
+  end
+
+  test "encodes tabs, cutting long titles on a character boundary" do
+    assert IO.iodata_to_binary(Protocol.tabs(["a", "bc"], 1)) == <<12, 1, 2, 1, "a", 2, "bc">>
+    long = String.duplicate("é", 200)
+    <<12, 0, 1, len, title::binary>> = IO.iodata_to_binary(Protocol.tabs([long], 0))
+    assert len == byte_size(title) and len <= 255 and String.valid?(title)
+  end
+
+  test "encodes the theme, font, halo and raise" do
+    assert <<10, colors::binary>> = IO.iodata_to_binary(Protocol.theme(Theme.default()))
+    assert byte_size(colors) == 777
+
+    assert IO.iodata_to_binary(Protocol.font(%{family: "Mono", size: 20})) ==
+             <<11, 20::16, "Mono">>
+
+    assert Protocol.halo({1, 2, 3}, 400) == <<13, 1, 2, 3, 400::16>>
+    assert Protocol.raise_window() == <<14>>
   end
 
   test "the palette is xterm's layout" do

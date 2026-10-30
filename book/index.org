@@ -16,3 +16,4 @@ the loot (what to read next) and a few questions to check yourself.
 10. [[file:09-resize.org][Resize: from a dragged window to SIGWINCH]]
 11. [[file:10-testing.org][Testing a terminal with real bytes]]
 12. [[file:11-full-screen.org][Full-screen programs: what vim needs from a terminal]]
+13. [[file:12-beam-advantage.org][The BEAM advantage: tabs, crashes, detaching, live config]]

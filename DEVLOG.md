@@ -249,3 +249,46 @@ first lines of its output say which test it was.
 - Cursor shapes (DECSCUSR), focus events (1004), OSC 10/11 color queries.
 - Tab stops (HTS/TBC) are fixed at 8.
 - Alt+key isn't sent as ESC + key yet.
+
+## 2026-10-29 — MVP 4: The BEAM advantage
+
+_Draft: agent, awaiting user_
+
+**Tried.** Tabs as sessions under a DynamicSupervisor, with `Guiltty.Tabs`
+keeping order, titles and the active tab, and adopting running sessions
+if it restarts. The Window became a view: closing it leaves the tabs
+running, and the release's `guiltty` command (rel/env.sh.eex) starts the
+node as a daemon if needed and opens a window on it. The chaos key
+(Ctrl+Shift+K) kills the parser; the Pty notices the second attach, emits
+telemetry and sends SIGWINCH (a new `winch/1` NIF), and the window's
+border flashes. Backpressure end to end: Pty-to-Parser credits, a
+synchronous Screen.apply, and the Window pulling one update per frame the
+renderer reports. Config as code with live theme, font and keys.
+Telemetry for reads, parses and frames. Protocol version 4.
+
+**Broke.**
+- `Task.async` links: a config that raised killed the Config process. A
+  monitored, unlinked process fixed it; a test caught it.
+- The flaky test from MVP 3 showed its name at last: a test called
+  `Session.dump` while the session was restarting and the Screen wasn't
+  registered yet. The `eventually` helpers now treat an exit as "not yet".
+  31 repeated runs passed after that.
+- My first chaos-key run opened vim on a swap-file prompt left by an
+  earlier killed vim in my scratch directory.
+
+**Clicked.** Live, through the release: three tabs, vim in one; the chaos
+key flashes the halo and vim keeps working (`4Gdd` after it). Closing the
+window and running `guiltty` again brings all three tabs back, vim as it
+was. Editing the theme in config.exs recolors the open window in about a
+second; a bigger font re-lays out the grid and vim follows. A 101 MB `cat`
+in one tab took 6.3 s while another tab answered in 6 ms.
+
+**Later the same day.** The chaos key went away after review: a key that
+kills part of the terminal is a demo, not a daily-driver feature, and an
+accidental press loses bytes in a plain shell. Killing a parser from
+`guiltty remote` shows the same recovery (book chapter 12); the halo still
+flashes on any parser restart.
+
+**Not verified by me.** `kill -9` on the renderer: the safety checks in
+my environment didn't allow it this time. It worked in MVP 1, and the new
+Window takes the tabs back through the same path as reattaching.

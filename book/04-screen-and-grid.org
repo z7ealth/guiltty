@@ -84,21 +84,19 @@ a restarted renderer redraws.
 From iex:
 
 #+begin_src elixir
-Guiltty.Session.write(:main, "ls\r")
-Guiltty.Session.dump(:main) |> IO.puts()
+Guiltty.Session.write(Guiltty.Tabs.active(), "ls\r")
+Guiltty.Session.dump(Guiltty.Tabs.active()) |> IO.puts()
 #+end_src
 
 * One session, three processes
 
+Each tab is one session (the whole tree is in [[file:12-beam-advantage.org][the MVP 4 chapter]]):
+
 #+begin_example
-  Guiltty.Supervisor (rest_for_one, auto_shutdown: :any_significant)
-  |-- Registry Guiltty.Registry         names: {session_id, :pty} etc.
-  |-- Session.Supervisor :main          (significant)
-  |   |   rest_for_one, auto_shutdown: :any_significant
-  |   |-- Pty      (significant)  owns the NIF resource and bash
-  |   |-- Screen                  owns the grid
-  |   `-- Parser                  owns the parser state
-  `-- Window                            (significant) owns the renderer port
+  Session.Supervisor 1    rest_for_one, auto_shutdown: :any_significant
+  |-- Pty      (significant)  owns the NIF resource and the shell
+  |-- Screen                  owns the grid
+  `-- Parser                  owns the parser state
 #+end_example
 
 Data flows Pty -> Parser -> Screen:
@@ -172,10 +170,10 @@ session comes back and the window follows it.
 The Pty is marked *significant*. When it stops with ={:shutdown, _}= (bash
 exited), its =:transient= restart policy says don't restart, and
 =auto_shutdown: :any_significant= shuts down the whole session. The session
-supervisor is itself significant in the application supervisor, so the
-application stops too, which stops the Window and closes the renderer.
-That's the "=exit= closes the window" rule, done with plain OTP. Closing the
-window works the same way from the other side: Window is significant too.
+supervisor's exit tells =Guiltty.Tabs= the tab is gone. In MVP 1 the
+session itself was significant, so =exit= closed the window; since MVP 4
+only the *last* tab ending stops guiltty, and closing the window stops
+nothing but the window.
 
 * Loot
 

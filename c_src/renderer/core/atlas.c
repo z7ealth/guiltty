@@ -9,11 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *font_find_monospace(void) {
+char *font_find(const char *family) {
     if (!FcInit())
         return nullptr;
     char *path = nullptr;
-    FcPattern *pattern = FcNameParse((const FcChar8 *)"monospace");
+    FcPattern *pattern = FcNameParse((const FcChar8 *)family);
     if (pattern != nullptr) {
         // Apply the user's config (aliases like monospace -> Source Code Pro)
         // and defaults, then pick the closest installed font.

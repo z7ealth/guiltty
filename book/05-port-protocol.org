@@ -64,9 +64,17 @@ one byte.
 |   7 | TITLE | Elixir->renderer | the window title, UTF-8                                       |
 |   8 | PASTE | renderer->Elixir | clipboard text, UTF-8                                         |
 |   9 | MOUSE | renderer->Elixir | u8 kind (press, release, motion, wheel), u8 button, u16 col, u16 row, u16 modifiers |
+|  10 | THEME | Elixir->renderer | the 259 colors, as in SETUP                                   |
+|  11 | FONT  | Elixir->renderer | u16 pixel size, family name                                   |
+|  12 | TABS  | Elixir->renderer | u8 active, u8 count, then per tab: u8 length, UTF-8 title     |
+|  13 | HALO  | Elixir->renderer | u8 r, g, b, u16 milliseconds                                  |
+|  14 | RAISE | Elixir->renderer | (empty): bring the window to the front                        |
+|  15 | FRAME | renderer->Elixir | u32 microseconds: a frame showing the last ROWS was drawn     |
+|  16 | TAB_CLICK | renderer->Elixir | u8 index                                                  |
 
-This is version 3 (MVP 3). Version 1 had no colors and no RESIZE; version 2
-had no TITLE, PASTE or MOUSE.
+This is version 4 (MVP 4); SETUP now ends with the font (u16 size, family).
+Version 1 had no colors and no RESIZE; version 2 had no TITLE, PASTE or
+MOUSE; version 3 had no tabs, live config, halo or frame reports.
 
 ROWS carries the grid size it describes, so the renderer can drop updates
 sent before a resize reached the Screen ([[file:09-resize.org][the resize chapter]]). Rows are
@@ -82,8 +90,8 @@ version.
   Window                                renderer
     | Port.open ------------------------> starts
     |                                     |
-    |<----------------- HELLO v3 "gl" ----|
-    | version == 3? else stop             |
+    |<----------------- HELLO v4 "gl" ----|
+    | version == 4? else stop             |
     |---- SETUP 80x24 + theme ----------->| now it knows the window size and
     |                                     | colors: builds the atlas, opens the window
     | Screen.subscribe                    |

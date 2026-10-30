@@ -37,8 +37,18 @@ defmodule Guiltty.Session.EnvironmentTest do
     %{id: id}
   end
 
+  # Retries for up to 5 seconds. A process that's restarting may not be
+  # registered yet; that counts as "not yet", not as a failure.
   defp eventually(fun, tries \\ 250) do
-    if fun.() or tries == 0, do: fun.(), else: Process.sleep(20) && eventually(fun, tries - 1)
+    if check(fun) or tries == 0,
+      do: check(fun),
+      else: Process.sleep(20) && eventually(fun, tries - 1)
+  end
+
+  defp check(fun) do
+    fun.()
+  catch
+    :exit, _ -> false
   end
 
   test "the shell doesn't inherit the VM's own variables", %{id: id} do

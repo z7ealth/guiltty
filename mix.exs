@@ -31,6 +31,7 @@ defmodule Guiltty.MixProject do
   defp deps do
     [
       {:elixir_make, "~> 0.10.1", runtime: false},
+      {:telemetry, "~> 1.4"},
       {:stream_data, "~> 1.4", only: :test}
     ]
   end

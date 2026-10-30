@@ -104,6 +104,17 @@ cell's background color.
 The grid can change size between frames (the window was resized); the
 backend grows its buffer when that happens.
 
+** The tab bar and the halo (MVP 4)
+The cell mirror has one more row than the grid: row 0 is the tab bar,
+built by the core from the TABS message (" 1 title " per tab, the active
+one in the theme's blue), so the backend draws it like any other row. Grid
+row i is mirror row i + 1; the cursor and mouse rows are shifted to match,
+and a click on row 0 becomes a TAB_CLICK.
+
+The halo is the 6-pixel padding around the grid: while it's lit, the frame
+is cleared with the halo color instead of the background. The main loop
+waits with a timeout so it can turn it off.
+
 ** Damage tracking
 The GPU keeps last frame's cells in its buffer, so each frame only uploads
 the rows that changed since the previous one. The core tracks the range

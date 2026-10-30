@@ -203,7 +203,8 @@ mix deps.get
 mix compile                 # also builds c_src/ into priv/ via elixir_make
 mix test
 mix format --check-formatted
-mix guiltty                 # open a guiltty window; returns when it closes
+mix guiltty                 # dev: open a window; closing it ends everything
+_build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel/env.sh.eex)
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir

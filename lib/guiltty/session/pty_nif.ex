@@ -30,6 +30,9 @@ defmodule Guiltty.Session.PtyNif do
   @doc "Sets the terminal size (TIOCSWINSZ); the kernel sends SIGWINCH."
   def resize(_pty, _cols, _rows), do: :erlang.nif_error(:not_loaded)
 
+  @doc "Sends SIGWINCH to the foreground job, so full-screen programs redraw."
+  def winch(_pty), do: :erlang.nif_error(:not_loaded)
+
   @doc "Closes the master, which hangs up the child's terminal."
   def close(_pty), do: :erlang.nif_error(:not_loaded)
 

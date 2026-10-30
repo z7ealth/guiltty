@@ -5,23 +5,33 @@ defmodule Guiltty.Application do
 
   use Application
 
+  #   Guiltty.Supervisor (rest_for_one)
+  #   |-- Guiltty.Registry      names of every session's processes
+  #   |-- Guiltty.Config        ~/.config/guiltty/config.exs, reloaded on save
+  #   |-- Guiltty.Sessions      DynamicSupervisor: one Session.Supervisor per tab
+  #   |-- Guiltty.Tabs          tab order, active tab, titles (significant)
+  #   |-- Guiltty.Windows       DynamicSupervisor: the Window, when one is open
+  #   `-- (a Task)              opens the first window at boot
+  #
+  # rest_for_one: each child depends on the ones before it. Tabs is
+  # significant: when the last tab closes, guiltty stops. Windows are not:
+  # closing the window leaves the tabs running.
   @impl true
   def start(_type, _args) do
     children =
       [{Registry, keys: :unique, name: Guiltty.Registry}] ++
         if Application.get_env(:guiltty, :autostart, true) do
-          # Both are significant: when the shell exits or the window closes,
-          # the application stops, and stopping takes the other one down.
           [
-            Supervisor.child_spec({Guiltty.Session.Supervisor, id: :main}, significant: true),
-            Supervisor.child_spec({Guiltty.Window, session: :main}, significant: true)
+            Guiltty.Config,
+            {DynamicSupervisor, name: Guiltty.Sessions, strategy: :one_for_one},
+            Supervisor.child_spec(Guiltty.Tabs, significant: true),
+            {DynamicSupervisor, name: Guiltty.Windows, strategy: :one_for_one},
+            {Task, fn -> Guiltty.open_window() end}
           ]
         else
           []
         end
 
-    # rest_for_one: everything after the Registry uses it for names, so if it
-    # restarts, they restart too.
     opts = [strategy: :rest_for_one, name: Guiltty.Supervisor, auto_shutdown: :any_significant]
     Supervisor.start_link(children, opts)
   end

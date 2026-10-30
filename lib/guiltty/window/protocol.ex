@@ -9,7 +9,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 3
+  @version 4
 
   @hello 1
   @setup 2
@@ -20,6 +20,15 @@ defmodule Guiltty.Window.Protocol do
   @title 7
   @paste 8
   @mouse 9
+  @theme 10
+  @font 11
+  @tabs 12
+  @halo 13
+  @raise 14
+  @frame 15
+  @tab_click 16
+
+  @max_tab_title 255
 
   @type event ::
           {:hello, version :: non_neg_integer(), backend :: binary()}
@@ -29,15 +38,26 @@ defmodule Guiltty.Window.Protocol do
           | {:paste, binary()}
           | {:mouse, :press | :release | :motion | :wheel, 0..3, non_neg_integer(),
              non_neg_integer(), non_neg_integer()}
+          | {:frame, draw_us :: non_neg_integer()}
+          | {:tab_click, index :: non_neg_integer()}
 
   @doc "The protocol version this side speaks."
   def version, do: @version
 
-  @doc "Initial grid size and the theme: 256 palette colors, then fg, bg and cursor."
-  @spec setup(pos_integer(), pos_integer(), Theme.t()) :: iodata()
-  def setup(cols, rows, theme) do
-    colors = Theme.palette(theme) ++ [theme.fg, theme.bg, theme.cursor]
-    [<<@setup, cols::16, rows::16>> | Enum.map(colors, fn {r, g, b} -> <<r, g, b>> end)]
+  @doc "Initial grid size, the theme's 259 colors, then the font (u16 size, family)."
+  @spec setup(pos_integer(), pos_integer(), Theme.t(), map()) :: iodata()
+  def setup(cols, rows, theme, font) do
+    [<<@setup, cols::16, rows::16>>, colors(theme), <<font.size::16>>, font.family]
+  end
+
+  @doc "A new theme: the same 259 colors as the setup."
+  def theme(theme), do: [<<@theme>>, colors(theme)]
+
+  @doc "A new font: u16 pixel size, then the family name for fontconfig."
+  def font(font), do: [<<@font, font.size::16>>, font.family]
+
+  defp colors(theme) do
+    for {r, g, b} <- Theme.palette(theme) ++ [theme.fg, theme.bg, theme.cursor], do: <<r, g, b>>
   end
 
   @doc """
@@ -54,6 +74,26 @@ defmodule Guiltty.Window.Protocol do
   @doc "The window title (UTF-8)."
   @spec title(binary()) :: binary()
   def title(text), do: <<@title, text::binary>>
+
+  @doc "The tab bar: u8 active index, u8 count, then each title as u8 length + bytes."
+  @spec tabs([binary()], non_neg_integer()) :: iodata()
+  def tabs(titles, active) do
+    titles = Enum.take(titles, 255)
+
+    [
+      <<@tabs, active, length(titles)>>
+      | Enum.map(titles, fn t ->
+          t = truncate(t, @max_tab_title)
+          [<<byte_size(t)>>, t]
+        end)
+    ]
+  end
+
+  @doc "Flash the window's border in a color for some milliseconds."
+  def halo({r, g, b}, ms), do: <<@halo, r, g, b, min(ms, 65_535)::16>>
+
+  @doc "Bring the window to the front."
+  def raise_window, do: <<@raise>>
 
   @mouse_kinds %{0 => :press, 1 => :release, 2 => :motion, 3 => :wheel}
 
@@ -73,8 +113,17 @@ defmodule Guiltty.Window.Protocol do
       when is_map_key(@mouse_kinds, kind) and button <= 3,
       do: {:ok, {:mouse, @mouse_kinds[kind], button, col, row, mods}}
 
+  def decode(<<@frame, us::32>>), do: {:ok, {:frame, us}}
+  def decode(<<@tab_click, index>>), do: {:ok, {:tab_click, index}}
   def decode(other), do: {:error, {:bad_message, other}}
 
   defp bool(true), do: 1
   defp bool(false), do: 0
+
+  # Cut to at most `max` bytes without splitting a UTF-8 character.
+  defp truncate(text, max) when byte_size(text) <= max, do: text
+
+  defp truncate(text, max) do
+    text |> binary_part(0, max) |> String.chunk(:valid) |> List.first("")
+  end
 end

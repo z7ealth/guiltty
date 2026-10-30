@@ -2,8 +2,9 @@ defmodule Guiltty.Session do
   @moduledoc """
   Helpers for working with a session from iex.
 
-      iex> Guiltty.Session.write(:main, "ls\\r")
-      iex> Guiltty.Session.dump(:main) |> IO.puts()
+      iex> id = Guiltty.Tabs.active()
+      iex> Guiltty.Session.write(id, "ls\\r")
+      iex> Guiltty.Session.dump(id) |> IO.puts()
   """
 
   alias Guiltty.Session.{Pty, Screen}
@@ -45,6 +46,9 @@ defmodule Guiltty.Session do
 
   @doc "The session's screen as text."
   defdelegate dump(id), to: Screen
+
+  @doc "The session's `{cols, rows}`."
+  defdelegate size(id), to: Screen
 
   @doc """
   Resizes the session: the grid first, then the PTY. In that order, the

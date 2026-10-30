@@ -17,8 +17,9 @@ struct atlas {
     uint8_t *pixels; // width * height coverage values, row-major
 };
 
-// Asks fontconfig for the user's "monospace" font. Returns a malloc'd path.
-[[nodiscard]] char *font_find_monospace(void);
+// Asks fontconfig for the font that best matches a family name (for
+// example "monospace", the user's default). Returns a malloc'd path.
+[[nodiscard]] char *font_find(const char *family);
 
 [[nodiscard]] bool atlas_build(struct atlas *atlas, const char *font_path, int pixel_size);
 

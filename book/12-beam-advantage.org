@@ -1,0 +1,196 @@
+#+TITLE: The BEAM advantage: tabs, crashes, detaching, live config
+#+STARTUP: overview
+
+* What changes in MVP 4
+
+Until now guiltty was "a window with a shell in it". In MVP 4 the shells
+become the long-lived part, and the window becomes a view on them:
+
+#+begin_example
+  Guiltty.Supervisor (rest_for_one)
+  |-- Guiltty.Registry          every session process, by {tab id, role}
+  |-- Guiltty.Config            ~/.config/guiltty/config.exs, reloaded on save
+  |-- Guiltty.Sessions          DynamicSupervisor
+  |   |-- Session.Supervisor 1  (rest_for_one: Pty, Screen, Parser)
+  |   |-- Session.Supervisor 2
+  |   `-- Session.Supervisor 3
+  |-- Guiltty.Tabs              order, active tab, titles      (significant)
+  `-- Guiltty.Windows           DynamicSupervisor
+      `-- Guiltty.Window        the renderer port, when a window is open
+#+end_example
+
+- *Tabs* ([[file:../lib/guiltty/tabs.ex][Guiltty.Tabs]]) are sessions, numbered, started under a
+  DynamicSupervisor. A tab ends when its shell exits. When the last one
+  ends, =Tabs= stops; it's /significant/, so guiltty stops.
+- *The window is not significant.* Closing it stops the Window and its
+  renderer, and nothing else.
+
+* Crash-proof, part by part
+
+| What crashes            | What restarts                          | What you see                       |
+|-------------------------+----------------------------------------+------------------------------------|
+| a Parser                | that Parser                            | the halo; the screen stays         |
+| a Screen or a Pty       | that tab's session processes           | the window follows the new Screen  |
+| a Session.Supervisor    | that tab, same id                      | the tab stays in place             |
+| the renderer (kill -9)  | the Window, which starts a renderer    | the window comes back, all tabs    |
+| Tabs                    | Tabs, which finds the running sessions | nothing: the tabs are taken back   |
+
+** Killing a parser
+To watch a parser crash and come back, kill it from =guiltty remote= (or
+Observer), with vim open in the active tab:
+
+#+begin_src elixir
+Process.exit(GenServer.whereis(Guiltty.Session.via(Guiltty.Tabs.active(), :parser)), :kill)
+#+end_src
+
+#+begin_example
+  Process.exit(parser, :kill)
+  Session.Supervisor (rest_for_one): Parser is last, so only it restarts
+  new Parser: Pty.attach_parser
+  Pty: "a parser again?"  -> telemetry [:guiltty, :session, :parser_restarted]
+                          -> SIGWINCH to the foreground job (winch/1 NIF)
+  Window (telemetry handler): HALO -> the window's border flashes blue
+  vim (SIGWINCH): redraws everything, repairing whatever bytes were lost
+#+end_example
+
+The bytes the old parser had in hand are gone. That's why the Pty sends
+SIGWINCH: full-screen programs redraw on it, so the screen heals itself.
+
+** Taking the tabs back
+If =Tabs= itself crashes, the sessions keep running (they're under
+=Guiltty.Sessions=, not under =Tabs=). The new =Tabs= asks the Registry which
+session supervisors exist (={id, :supervisor}= keys) and adopts them.
+
+* Detach and reattach
+
+#+begin_example
+  $ guiltty                 bin/guiltty, no command -> rel/env.sh.eex:
+                              not running? start the release as a daemon
+                              then: rpc Guiltty.open_window(env64: <DISPLAY...>)
+  ... work in three tabs ...
+  close the window          Window stops normally; Tabs and sessions run on
+  $ guiltty                 running: rpc open_window -> a new Window
+                              -> Tabs.attach_window -> the same three tabs
+#+end_example
+
+The launcher is [[file:../rel/env.sh.eex][rel/env.sh.eex]]: the release's start script sources
+=env.sh= before every command, so with no command it can find or start the
+node and then ask it for a window. The caller's =DISPLAY= (and Wayland,
+XAUTHORITY) travel with the request, so the window opens on the display you
+ran =guiltty= from. If a window is already open, it's raised instead.
+
+* Backpressure, end to end
+
+#+begin_example
+   cat bigfile
+      | write()          blocks when the PTY buffer is full
+   kernel PTY buffer
+      | read()           only while < 4 chunks are unacknowledged
+   Pty  --{:pty_data}--> Parser --Screen.apply (call)--> Screen
+     ^                     |                               |
+     `------ Pty.ack ------'                {:screen_dirty} once
+                                                           v
+   renderer <--ROWS-- Window --Screen.take_update-------  (pull)
+       |                ^
+       `---- FRAME -----'   the next update only after the frame is drawn
+#+end_example
+
+Two kinds of flow control meet here:
+
+- *Credit-based* between Pty and Parser: the Pty reads only while fewer than
+  4 chunks are unacknowledged. When it stops reading, the kernel's PTY
+  buffer fills and =cat='s own =write()= blocks. The kernel throttles the
+  program to guiltty's speed, and nothing piles up in memory. A test floods
+  2.6 MB through a shell and samples the parser's mailbox: never more than 4.
+- *Pull-based* between Screen and Window: the Screen says "dirty" once and
+  keeps collecting changes; the Window takes one combined update per frame.
+  33 chunks of =seq= output became 13 frames.
+
+Measured on this machine: a 101 MB =cat= in one tab took 6.3 s (about
+16 MB/s, the parser's speed), and meanwhile another tab answered commands
+in 6 ms.
+
+* Config as code
+
+=~/.config/guiltty/config.exs= (or =$GUILTTY_CONFIG=) is plain Elixir:
+
+#+begin_src elixir
+[
+  font: [family: "monospace", size: 18],
+  theme: [fg: "#c5c8c6", bg: "#1d1f21", cursor: "#c5c8c6",
+          ansi: ~w(#1d1f21 #cc6666 ... #eaeaea)],
+  keys: [new_tab: ["ctrl+shift+t"], close_tab: ["ctrl+shift+w"]]
+]
+#+end_src
+
+[[file:../lib/guiltty/config.ex][Guiltty.Config]] checks the file's modification time every second. On a
+change it evaluates the file in a separate, *monitored but not linked*
+process (a config that raises can't take Config down; an earlier version
+used =Task.async=, which links, and a test caught it), validates it, and
+sends ={:config, config}= to the Window:
+
+- a theme: the renderer gets the new 259 colors, then every row again
+  (it had resolved them with the old theme);
+- a font: the renderer rebuilds its atlas, the cell size changes, the grid
+  changes, and a RESIZE goes out;
+- keys: the Window re-reads its bindings.
+
+A broken file is logged and ignored; the previous config stays. The
+example is [[file:../priv/config.example.exs][priv/config.example.exs]].
+
+* Telemetry
+
+| Event                                    | Measurements          |
+|------------------------------------------+-----------------------|
+| =[:guiltty, :pty, :read]=                | =bytes=               |
+| =[:guiltty, :parser, :parse]=            | =duration=, =bytes=   |
+| =[:guiltty, :renderer, :frame]=          | =duration= (µs)       |
+| =[:guiltty, :session, :parser_restarted]= | (none)               |
+
+Attach a handler from =guiltty remote= (or any connected node) to watch
+guiltty work.
+
+* Keys
+
+| Keys                          | Action                     |
+|-------------------------------+----------------------------|
+| Ctrl+Shift+T                  | new tab                    |
+| Ctrl+Shift+W                  | close tab                  |
+| Ctrl+PgDn, Ctrl+Tab           | next tab                   |
+| Ctrl+PgUp, Ctrl+Shift+Tab     | previous tab               |
+| Ctrl+Shift+1 .. 9             | tab 1 .. 9                 |
+| click a tab                   | switch to it               |
+
+* Loot
+
+- Supervision strategies: =rest_for_one=, =significant=, =auto_shutdown=,
+  DynamicSupervisor.
+- What happens to a NIF resource when its owner dies: the destructor runs
+  when the last reference is gone (chapter 2).
+- Backpressure: credits, pull, and the kernel's PTY buffer.
+- =:telemetry=.
+- Mix releases: =env.sh=, =daemon=, =rpc=.
+
+* Questions
+
+1. Why isn't the Window significant, when it was in MVP 1?
+2. After a parser is killed, why does the Pty send SIGWINCH?
+3. What makes =cat= slow down when guiltty can't keep up?
+4. Why does the Window wait for a FRAME before taking the next update?
+5. Why evaluate the config in a monitored, unlinked process?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. In MVP 1 closing the window meant quitting. Now the tabs outlive
+   windows, so closing one must not stop guiltty.
+2. The killed parser lost the bytes it was holding. Full-screen programs
+   redraw everything on SIGWINCH, repairing the screen.
+3. The Pty stops reading, the kernel's PTY buffer fills, and =cat='s
+   =write()= blocks until there's room.
+4. Without it, a fast program would queue updates faster than the renderer
+   draws them. One update per frame keeps memory flat and latency low.
+5. A linked process that raises takes its caller down. A monitor only
+   reports the death, so a bad config can't crash guiltty.

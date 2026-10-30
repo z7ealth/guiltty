@@ -335,6 +335,24 @@ static ERL_NIF_TERM nif_resize(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     return ioctl(pty->fd, TIOCSWINSZ, &ws) < 0 ? make_errno_error(env, errno) : atom_ok;
 }
 
+// winch(pty) -> :ok | {:error, reason}
+// Sends SIGWINCH to the terminal's foreground process group, the same
+// signal a resize sends, without changing the size. Full-screen programs
+// answer it by redrawing everything, which repairs a screen that missed
+// some bytes (after a parser restart, for example). tcgetpgrp(3) asks the
+// terminal which group is in the foreground.
+static ERL_NIF_TERM nif_winch(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
+    struct pty *pty;
+    if (!get_pty(env, argv[0], &pty))
+        return enif_make_badarg(env);
+    if (pty->fd < 0)
+        return make_errno_error(env, EBADF);
+    pid_t pgrp = tcgetpgrp(pty->fd);
+    if (pgrp <= 0)
+        return make_errno_error(env, errno);
+    return kill(-pgrp, SIGWINCH) < 0 ? make_errno_error(env, errno) : atom_ok;
+}
+
 // close(pty) -> :ok. Closing the master hangs up the terminal: the kernel
 // sends SIGHUP to the session, which is how bash learns the window is gone.
 static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
@@ -398,6 +416,7 @@ static ErlNifFunc funcs[] = {
     {"select_read", 1, nif_select_read, 0},
     {"select_write", 1, nif_select_write, 0},
     {"resize", 3, nif_resize, 0},
+    {"winch", 1, nif_winch, 0},
     {"close", 1, nif_close, 0},
     {"wait", 1, nif_wait, 0},
     {"kill", 2, nif_kill, 0},

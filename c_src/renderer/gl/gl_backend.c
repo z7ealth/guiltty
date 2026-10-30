@@ -215,6 +215,9 @@ static bool gl_upload_atlas(void *state, const struct atlas *atlas) {
     gl->cell_h = atlas->cell_h;
     gl->baseline = atlas->baseline;
     gl->line_thickness = atlas->line_thickness;
+    // A new font replaces the old atlas.
+    if (gl->atlas_texture != 0)
+        gl->f.DeleteTextures(1, &gl->atlas_texture);
     gl->f.GenTextures(1, &gl->atlas_texture);
     gl->f.ActiveTexture(GL_TEXTURE0);
     gl->f.BindTexture(GL_TEXTURE_2D, gl->atlas_texture);

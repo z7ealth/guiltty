@@ -577,5 +577,8 @@ defmodule Guiltty.Grid do
 
   defp all_dirty(grid), do: %{grid | dirty: MapSet.new(0..(grid.rows - 1))}
 
+  @doc "Marks every row as changed, for a viewer that needs the whole screen."
+  def mark_all_dirty(grid), do: all_dirty(grid)
+
   defp clamp(v, lo, hi), do: v |> max(lo) |> min(hi)
 end

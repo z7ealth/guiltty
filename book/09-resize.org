@@ -20,10 +20,11 @@ The renderer is the only one that sees the window, so it starts the chain.
      |
   SDL: WINDOW_PIXEL_SIZE_CHANGED 1100 x 420
      |
-  renderer: cols = (1100 - 2*6) / 11 = 98     rows = (420 - 2*6) / 23 = 17
+  renderer: cols = (1100 - 2*6) / 11 = 98     rows = (420 - 2*6) / 23 - 1 = 16
+     |      (since MVP 4 one row is the tab bar; this example predates it: read 17 as 16)
      |      clears its cell mirror to 98x17, sends RESIZE 98 17
      v
-  Window ----> Session.resize(:main, 98, 17)
+  Window ----> Tabs.resize(98, 17) -> Session.resize(id, 98, 17) for every tab
                  |
                  |-- 1. Screen.resize: Grid.resize (no reflow), every row dirty,
                  |      sends a full update tagged 98x17 -----------------> renderer draws

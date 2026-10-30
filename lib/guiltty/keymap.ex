@@ -139,6 +139,58 @@ defmodule Guiltty.Keymap do
   defp function_key(letter, m) when letter in ?P..?S, do: <<"\e[1;#{m}", letter>>
   defp function_key(n, m), do: tilde(n, m)
 
+  ## Bindings
+
+  @key_names Map.merge(
+               %{
+                 "tab" => @tab,
+                 "enter" => @return,
+                 "escape" => @escape,
+                 "backspace" => @backspace,
+                 "delete" => @delete,
+                 "insert" => @insert,
+                 "home" => @home,
+                 "end" => @end_,
+                 "page_up" => @page_up,
+                 "page_down" => @page_down,
+                 "up" => @up,
+                 "down" => @down,
+                 "left" => @left,
+                 "right" => @right
+               },
+               Map.new(1..12, fn n -> {"f#{n}", @f1 + n - 1} end)
+             )
+
+  @doc """
+  Parses a key name like `"ctrl+shift+t"` into `{keycode, modifiers}`,
+  where modifiers is a set of `:ctrl`, `:shift` and `:alt`. Single letters
+  and digits are their own keycode.
+  """
+  @spec parse_key(binary()) :: {:ok, {non_neg_integer(), MapSet.t()}} | :error
+  def parse_key(name) do
+    {mods, [key]} = name |> String.downcase() |> String.split("+") |> Enum.split(-1)
+
+    with true <- Enum.all?(mods, &(&1 in ~w(ctrl shift alt))),
+         {:ok, code} <- keycode(key) do
+      {:ok, {code, MapSet.new(mods, &String.to_existing_atom/1)}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp keycode(<<c>>) when c in ?a..?z or c in ?0..?9, do: {:ok, c}
+  defp keycode(name), do: Map.fetch(@key_names, name)
+
+  @doc "Whether a key event matches a parsed binding."
+  def matches?({:key, code, mods}, {code, wanted}), do: modifier_set(mods) == wanted
+  def matches?(_event, _binding), do: false
+
+  defp modifier_set(mods) do
+    [ctrl: @kmod_ctrl, shift: @kmod_shift, alt: @kmod_alt]
+    |> Enum.filter(fn {_name, mask} -> (mods &&& mask) != 0 end)
+    |> MapSet.new(fn {name, _mask} -> name end)
+  end
+
   ## Paste
 
   @doc """

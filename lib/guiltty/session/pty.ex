@@ -6,6 +6,19 @@ defmodule Guiltty.Session.Pty do
   Bytes from the shell go to the attached parser. Reading only starts once a
   parser attaches, so the first prompt is never lost, and stops while there
   is none: the kernel buffers the output until a new parser shows up.
+
+  ## Backpressure
+
+  The parser acknowledges each chunk once the screen has it (`ack/1`). With
+  `@max_in_flight` chunks unacknowledged, this process stops reading. The
+  shell's output then waits in the kernel's PTY buffer, and when that's
+  full the shell's own `write()` blocks: a `cat` of a huge file runs exactly
+  as fast as the screen can keep up, and nothing piles up in memory.
+
+  ## Telemetry
+
+    * `[:guiltty, :pty, :read]` - `%{bytes: n}`, `%{session: id}`
+    * `[:guiltty, :session, :parser_restarted]` - `%{}`, `%{session: id}`
   """
 
   use GenServer, restart: :transient
@@ -19,6 +32,8 @@ defmodule Guiltty.Session.Pty do
 
   # Chunks read per readiness message, so one chatty shell can't hog the process.
   @max_reads 16
+  # Chunks sent to the parser and not yet acknowledged.
+  @max_in_flight 4
   @sighup 1
   @sigkill 9
 
@@ -34,6 +49,12 @@ defmodule Guiltty.Session.Pty do
   sends SIGWINCH to the foreground job, and programs like `less` redraw.
   """
   def resize(id, cols, rows), do: GenServer.call(Session.via(id, :pty), {:resize, cols, rows})
+
+  @doc "The parser has applied one chunk to the screen."
+  def ack(id), do: GenServer.cast(Session.via(id, :pty), :ack)
+
+  @doc "Sends SIGWINCH to the foreground job, so full-screen programs redraw."
+  def redraw(id), do: GenServer.cast(Session.via(id, :pty), :redraw)
 
   @doc "Makes `pid` the receiver of `{:pty_data, bytes}` messages."
   def attach_parser(id, pid), do: GenServer.call(Session.via(id, :pty), {:attach_parser, pid})
@@ -52,7 +73,19 @@ defmodule Guiltty.Session.Pty do
     case PtyNif.open(shell, argv, env, cols, rows) do
       {:ok, pty, os_pid} ->
         Logger.debug("pty: started #{shell} as pid #{os_pid}")
-        {:ok, %{pty: pty, os_pid: os_pid, parser: nil, armed: false, pending: <<>>}}
+
+        state = %{
+          id: opts[:id],
+          pty: pty,
+          os_pid: os_pid,
+          parser: nil,
+          parsers_seen: 0,
+          armed: false,
+          in_flight: 0,
+          pending: <<>>
+        }
+
+        {:ok, state}
 
       {:error, reason} ->
         {:stop, {:open_failed, reason}}
@@ -124,7 +157,16 @@ defmodule Guiltty.Session.Pty do
   @impl true
   def handle_call({:attach_parser, pid}, _from, state) do
     Process.monitor(pid)
-    {:reply, :ok, arm(%{state | parser: pid})}
+
+    # Not the first parser: the previous one crashed. The chunks it had in
+    # hand are lost, so ask full-screen programs to redraw.
+    if state.parsers_seen > 0 do
+      :telemetry.execute([:guiltty, :session, :parser_restarted], %{}, %{session: state.id})
+      PtyNif.winch(state.pty)
+    end
+
+    state = %{state | parser: pid, parsers_seen: state.parsers_seen + 1, in_flight: 0}
+    {:reply, :ok, arm(state)}
   end
 
   def handle_call({:resize, cols, rows}, _from, state) do
@@ -134,6 +176,15 @@ defmodule Guiltty.Session.Pty do
   @impl true
   def handle_cast({:write, bytes}, state) do
     {:noreply, flush(%{state | pending: state.pending <> bytes})}
+  end
+
+  def handle_cast(:ack, state) do
+    {:noreply, arm(%{state | in_flight: max(state.in_flight - 1, 0)})}
+  end
+
+  def handle_cast(:redraw, state) do
+    PtyNif.winch(state.pty)
+    {:noreply, state}
   end
 
   @impl true
@@ -171,11 +222,18 @@ defmodule Guiltty.Session.Pty do
 
   defp drain(state, 0), do: {:noreply, arm(state)}
 
+  # The parser is behind: stop reading until it acknowledges something.
+  defp drain(%{in_flight: n} = state, _reads_left) when n >= @max_in_flight, do: {:noreply, state}
+
   defp drain(state, reads_left) do
     case PtyNif.read(state.pty) do
       {:ok, bytes} ->
+        :telemetry.execute([:guiltty, :pty, :read], %{bytes: byte_size(bytes)}, %{
+          session: state.id
+        })
+
         send(state.parser, {:pty_data, bytes})
-        drain(state, reads_left - 1)
+        drain(%{state | in_flight: state.in_flight + 1}, reads_left - 1)
 
       :eagain ->
         {:noreply, arm(state)}
@@ -191,6 +249,7 @@ defmodule Guiltty.Session.Pty do
 
   defp arm(%{armed: true} = state), do: state
   defp arm(%{parser: nil} = state), do: state
+  defp arm(%{in_flight: n} = state) when n >= @max_in_flight, do: state
 
   defp arm(state) do
     :ok = PtyNif.select_read(state.pty)

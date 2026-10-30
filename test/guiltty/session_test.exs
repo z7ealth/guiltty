@@ -17,8 +17,18 @@ defmodule Guiltty.SessionTest do
     %{id: id, sup: pid}
   end
 
+  # Retries for up to 5 seconds. A process that's restarting may not be
+  # registered yet; that counts as "not yet", not as a failure.
   defp eventually(fun, tries \\ 250) do
-    if fun.() or tries == 0, do: fun.(), else: Process.sleep(20) && eventually(fun, tries - 1)
+    if check(fun) or tries == 0,
+      do: check(fun),
+      else: Process.sleep(20) && eventually(fun, tries - 1)
+  end
+
+  defp check(fun) do
+    fun.()
+  catch
+    :exit, _ -> false
   end
 
   test "a command's output reaches the screen", %{id: id} do
@@ -74,6 +84,28 @@ defmodule Guiltty.SessionTest do
 
     Session.write(id, "echo reborn\r")
     assert eventually(fn -> Session.dump(id) =~ ~r/^reborn$/m end)
+  end
+
+  test "a flood of output never piles up in the parser's mailbox", %{id: id} do
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    parser = GenServer.whereis(Session.via(id, :parser))
+    Session.write(id, "seq 1 400000; echo FLOOD-DONE\r")
+
+    # Sample the parser's queue while the flood runs. The Pty sends at most
+    # 4 chunks before waiting for an acknowledgement; the rest of the output
+    # waits in the kernel.
+    samples =
+      Stream.repeatedly(fn ->
+        Process.sleep(5)
+        {:message_queue_len, n} = Process.info(parser, :message_queue_len)
+        {n, Session.dump(id) =~ "FLOOD-DONE"}
+      end)
+      |> Enum.reduce_while([], fn {n, done}, acc ->
+        if done, do: {:halt, acc}, else: {:cont, [n | acc]}
+      end)
+
+    assert length(samples) > 10
+    assert Enum.max(samples) <= 4
   end
 
   test "exit ends the session", %{id: id, sup: sup} do
