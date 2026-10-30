@@ -8,7 +8,7 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.11.0 — 2026-10-30 — Ligatures
 
 ### Added
 - `CHANGELOG.md`.
