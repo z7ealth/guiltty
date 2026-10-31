@@ -24,6 +24,11 @@ the tab bar instead of ignoring them.
   sooner. Before, it waited for the window that was already opening, and
   failed with status 1 if that window was closed in the meantime
   (`hyperfine guiltty` did).
+- The shell is signaled through a pidfd instead of its process id, so a
+  late signal can never reach another process that got the same id (maybe
+  another tab's shell).
+- Two calls on the same terminal from different threads could race when
+  one closed it; each terminal now has a lock.
 - The renderer used the window's size without checking that SDL could
   tell it; if it couldn't (a window gone mid-change), the grid size came
   from garbage. It now keeps the grid it has.

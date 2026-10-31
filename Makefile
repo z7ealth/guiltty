@@ -61,7 +61,7 @@ all: $(NIF) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
 
 $(NIF): c_src/pty_nif.c
 	@mkdir -p $(PRIV)
-	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared $(HARDEN_LD) -I$(ERTS_INCLUDE_DIR) -o $@ $< -lutil
+	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared $(HARDEN_LD) -I$(ERTS_INCLUDE_DIR) -o $@ $<
 
 $(RENDERER_GL): $(RENDERER_CORE) $(RENDERER_HEADERS) $(GL_SRC) $(GL_SHADERS)
 	@mkdir -p $(PRIV)

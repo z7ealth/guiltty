@@ -195,6 +195,34 @@ No output after each line means no errors and no leaks. Mesa and SDL
 were expected to be noisy enough to need a suppressions file; they
 weren't.
 
+* Layer 6: the PTY NIF, audited
+
+The PTY NIF is the C that matters most: it runs inside the BEAM, so its
+crash would take every tab with it. [[file:02-pty-nif.org][Chapter 2]] explains how it works; the
+audit for v0.12.0 changed five things:
+
+| What could go wrong                                    | Now                          |
+|--------------------------------------------------------+------------------------------|
+| a signal by pid reaching a process that got the pid next | pidfd for kill, wait and the destructor |
+| a call on another thread using the fd as it's being closed | a lock per pty; close marks it closed first |
+| =read= handing out a buffer's stale tail if shrinking it failed | checked; a sub-binary of just the data |
+| =kill= passing any number as a signal                  | badarg outside 1..64         |
+| PTY fds without close-on-exec, for an instant           | =posix_openpt(O_CLOEXEC)= and =TIOCGPTPEER= |
+
+None of these had been seen to happen: the races need sub-microsecond
+timing or a pid coming round again. That's the point of the audit:
+finding them before they happen.
+
+[[file:../test/guiltty/session/pty_nif_safety_test.exs][pty_nif_safety_test.exs]] makes sure the NIF answers with an error, never a
+crash, to:
+
+- junk in every argument of every function (StreamData's =term()=:
+  atoms, huge integers, nested tuples, binaries with NULs...);
+- every call on a closed pty, and on one whose child is gone;
+- sixteen processes calling one pty at once, while one of them closes it;
+- fifty open-and-close cycles, then counting the BEAM's open files
+  (=/proc/self/fd=): none may be left over.
+
 * Loot
 
 - =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,
@@ -213,6 +241,8 @@ weren't.
 - =valgrind(1)=, and the Memcheck manual: "Use of uninitialised values".
 - =memfd_create(2)=: a file that lives in memory, how the fuzz targets
   hand each input to the renderer as stdin.
+- =pidfd_open(2)= and =ioctl_tty(2)= =TIOCGPTPEER=; chapter 2's loot for the
+  rest of the NIF audit.
 
 * Questions
 

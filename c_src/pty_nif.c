@@ -3,8 +3,8 @@
 // master without a reader thread: enif_select tells the owning process when
 // the fd is ready, and a regular (non-blocking) NIF call does the I/O.
 //
-// Read: pty(7), openpty(3), setsid(2), ioctl_tty(2), signal-safety(7), and the
-// enif_select / resource sections of erl_nif(3).
+// Read: pty(7), posix_openpt(3), setsid(2), ioctl_tty(2), signal-safety(7),
+// pidfd_open(2), and the enif_select / resource sections of erl_nif(3).
 
 #define _GNU_SOURCE
 
@@ -13,14 +13,18 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <pty.h>
 #include <signal.h>
 #include <stdckdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/pidfd.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+// waitid(2)'s "the id is a pidfd" (Linux 5.4). The kernel has it; glibc's
+// idtype_t doesn't name it yet.
+constexpr idtype_t p_pidfd = (idtype_t)3;
 
 // Largest chunk returned by one read/1 call.
 constexpr size_t read_chunk = 64 * 1024;
@@ -28,9 +32,18 @@ constexpr size_t read_chunk = 64 * 1024;
 // One pseudoterminal and the process running on it. Lives in a NIF resource,
 // so Elixir holds it as an opaque reference and the BEAM frees it when the
 // last reference is gone.
+//
+// The child is known by a pidfd, not its pid. The BEAM ignores SIGCHLD, so
+// the kernel reaps an exited child at once and its pid is free for the next
+// process, maybe another tab's shell. A signal sent by pid could hit that
+// one; a pidfd always means this child, alive or dead (pidfd_open(2)).
 struct pty {
+    // NIF calls on one pty can come from different processes at once (the
+    // Pty process, then the task that reaps its shell), so on different
+    // scheduler threads. The lock covers fd and pidfd.
+    ErlNifMutex *lock;
     int fd; // master fd, -1 once closed
-    pid_t pid; // child pid, -1 once reaped
+    int pidfd; // the child, -1 once it's known to be gone
 };
 
 static ErlNifResourceType *pty_type;
@@ -60,26 +73,27 @@ static ERL_NIF_TERM make_errno_error(ErlNifEnv *env, int err) {
 
 // Called by the BEAM when it's safe to close an fd that was in enif_select.
 // Closing a selected fd any other way races with the BEAM's poll set.
-static void pty_stop(ErlNifEnv *, void *obj, ErlNifEvent event, int) {
-    struct pty *pty = obj;
+// close() already marked the pty closed. No lock here: the BEAM may call
+// this from inside enif_select, while close() holds it.
+static void pty_stop(ErlNifEnv *, void *, ErlNifEvent event, int) {
     close(event);
-    if (pty->fd == event)
-        pty->fd = -1;
 }
 
-// Last reference gone. Normally the Pty process has already closed the fd
-// and seen the child exit; this is the safety net if it crashed before that.
-// It must never block a scheduler.
+// Last reference gone, so no other call can run. Normally the Pty process
+// has already closed the fd and its shell is gone; this is the safety net
+// if it crashed first. It must never block a scheduler.
 static void pty_dtor(ErlNifEnv *, void *obj) {
     struct pty *pty = obj;
-    if (pty->fd >= 0) {
+    if (pty->fd >= 0)
         close(pty->fd);
-        pty->fd = -1;
+    if (pty->pidfd >= 0) {
+        // Harmless if the child is already gone: the pidfd can't point to
+        // anyone else.
+        pidfd_send_signal(pty->pidfd, SIGKILL, nullptr, 0);
+        close(pty->pidfd);
     }
-    // Only signal the child if waitpid says it's still running: once it's
-    // gone its pid can be reused by an unrelated process.
-    if (pty->pid > 0 && waitpid(pty->pid, nullptr, WNOHANG) == 0)
-        kill(pty->pid, SIGKILL);
+    if (pty->lock != nullptr)
+        enif_mutex_destroy(pty->lock);
 }
 
 static int load(ErlNifEnv *env, void **, ERL_NIF_TERM) {
@@ -222,17 +236,23 @@ static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
 
     ERL_NIF_TERM result;
     int master = -1, slave = -1;
+    ErlNifMutex *lock = nullptr;
     struct winsize ws = {.ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols};
-    if (openpty(&master, &slave, nullptr, nullptr, &ws) < 0) {
+    // Both ends close-on-exec from the moment they exist, so no program
+    // another thread starts can inherit them (a stray copy of the slave
+    // would keep the master from ever seeing EIO). The master is
+    // non-blocking, so read and write never stall a scheduler. TIOCGPTPEER
+    // opens this master's own slave, with no path to look up in /dev/pts
+    // (ioctl_tty(2)).
+    master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC | O_NONBLOCK);
+    if (master < 0 || unlockpt(master) < 0 ||
+        (slave = ioctl(master, TIOCGPTPEER, O_RDWR | O_NOCTTY | O_CLOEXEC)) < 0 ||
+        ioctl(slave, TIOCSWINSZ, &ws) < 0) {
         result = make_errno_error(env, errno);
         goto out;
     }
-    // Close-on-exec, so no other program the BEAM starts inherits them. A
-    // stray copy of the slave would keep the master from ever seeing EIO.
-    // Non-blocking, so read and write never stall a scheduler.
-    if (fcntl(master, F_SETFD, FD_CLOEXEC) < 0 || fcntl(slave, F_SETFD, FD_CLOEXEC) < 0 ||
-        fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK) < 0) {
-        result = make_errno_error(env, errno);
+    if ((lock = enif_mutex_create("pty")) == nullptr) {
+        result = make_errno_error(env, ENOMEM);
         goto out;
     }
 
@@ -248,9 +268,16 @@ static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     close(slave);
     slave = -1;
 
+    // The child can't have been reaped yet: it can only exit after
+    // setsid() and the rest, and even then its pid would have to come
+    // round again (pid_max is millions) before this line. If it's somehow
+    // gone, ESRCH: the pty starts out knowing its child is gone.
+    int pidfd = pidfd_open(pid, 0);
+
     struct pty *pty = enif_alloc_resource(pty_type, sizeof *pty);
-    *pty = (struct pty){.fd = master, .pid = pid};
-    master = -1; // owned by the resource now
+    *pty = (struct pty){.lock = lock, .fd = master, .pidfd = pidfd};
+    master = -1; // owned by the resource now, with the pidfd and the lock
+    lock = nullptr;
     result = enif_make_tuple3(env, atom_ok, enif_make_resource(env, pty), enif_make_int(env, pid));
     enif_release_resource(pty); // the term keeps it alive
 
@@ -259,6 +286,8 @@ out:
         close(master);
     if (slave >= 0)
         close(slave);
+    if (lock != nullptr)
+        enif_mutex_destroy(lock);
     free(path);
     free(cwd);
     free_strings(child_argv);
@@ -271,22 +300,31 @@ static ERL_NIF_TERM nif_read(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->fd < 0)
-        return atom_eof;
 
     ErlNifBinary bin;
     if (!enif_alloc_binary(read_chunk, &bin))
         return make_errno_error(env, ENOMEM);
     ssize_t n;
-    do
-        n = read(pty->fd, bin.data, bin.size);
-    while (n < 0 && errno == EINTR);
+    int err = 0;
+    enif_mutex_lock(pty->lock);
+    if (pty->fd < 0) {
+        n = 0; // closed: the same as the end
+    } else {
+        do
+            n = read(pty->fd, bin.data, bin.size);
+        while (n < 0 && errno == EINTR);
+        err = errno;
+    }
+    enif_mutex_unlock(pty->lock);
 
     if (n > 0) {
-        enif_realloc_binary(&bin, (size_t)n);
-        return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &bin));
+        // Shrink it to what was read. If that fails, hand out just the
+        // first n bytes: never the rest of the buffer.
+        if (enif_realloc_binary(&bin, (size_t)n))
+            return enif_make_tuple2(env, atom_ok, enif_make_binary(env, &bin));
+        ERL_NIF_TERM whole = enif_make_binary(env, &bin);
+        return enif_make_tuple2(env, atom_ok, enif_make_sub_binary(env, whole, 0, (size_t)n));
     }
-    int err = errno;
     enif_release_binary(&bin);
     if (n == 0)
         return atom_eof;
@@ -305,18 +343,22 @@ static ERL_NIF_TERM nif_write(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     ErlNifBinary bin;
     if (!get_pty(env, argv[0], &pty) || !enif_inspect_binary(env, argv[1], &bin))
         return enif_make_badarg(env);
-    if (pty->fd < 0)
-        return make_errno_error(env, EBADF);
 
-    ssize_t n;
-    do
-        n = write(pty->fd, bin.data, bin.size);
-    while (n < 0 && errno == EINTR);
+    ssize_t n = -1;
+    int err = EBADF;
+    enif_mutex_lock(pty->lock);
+    if (pty->fd >= 0) {
+        do
+            n = write(pty->fd, bin.data, bin.size);
+        while (n < 0 && errno == EINTR);
+        err = errno;
+    }
+    enif_mutex_unlock(pty->lock);
     if (n >= 0)
         return enif_make_tuple2(env, atom_ok, enif_make_uint64(env, (ErlNifUInt64)n));
-    if (errno == EAGAIN)
+    if (err == EAGAIN)
         return atom_eagain;
-    return make_errno_error(env, errno);
+    return make_errno_error(env, err);
 }
 
 // Ask the BEAM to send the calling process {:select, pty, :undefined,
@@ -326,9 +368,12 @@ static ERL_NIF_TERM do_select(ErlNifEnv *env, const ERL_NIF_TERM argv[], enum Er
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->fd < 0)
+    enif_mutex_lock(pty->lock);
+    int rc = pty->fd < 0 ? 0 : enif_select(env, pty->fd, mode, pty, nullptr, atom_undefined);
+    bool closed = pty->fd < 0;
+    enif_mutex_unlock(pty->lock);
+    if (closed)
         return make_errno_error(env, EBADF);
-    int rc = enif_select(env, pty->fd, mode, pty, nullptr, atom_undefined);
     return rc < 0 ? enif_make_tuple2(env, atom_error, enif_make_int(env, rc)) : atom_ok;
 }
 
@@ -350,10 +395,12 @@ static ERL_NIF_TERM nif_resize(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
         !enif_get_uint(env, argv[2], &rows) || cols == 0 || rows == 0 || cols > USHRT_MAX ||
         rows > USHRT_MAX)
         return enif_make_badarg(env);
-    if (pty->fd < 0)
-        return make_errno_error(env, EBADF);
     struct winsize ws = {.ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols};
-    return ioctl(pty->fd, TIOCSWINSZ, &ws) < 0 ? make_errno_error(env, errno) : atom_ok;
+    enif_mutex_lock(pty->lock);
+    int rc = pty->fd < 0 ? -1 : ioctl(pty->fd, TIOCSWINSZ, &ws);
+    int err = pty->fd < 0 ? EBADF : errno;
+    enif_mutex_unlock(pty->lock);
+    return rc < 0 ? make_errno_error(env, err) : atom_ok;
 }
 
 // winch(pty) -> :ok | {:error, reason}
@@ -362,15 +409,23 @@ static ERL_NIF_TERM nif_resize(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
 // answer it by redrawing everything, which repairs a screen that missed
 // some bytes (after a parser restart, for example). tcgetpgrp(3) asks the
 // terminal which group is in the foreground.
+// The terminal's foreground process group, or -1 with *err set.
+static pid_t foreground_group(struct pty *pty, int *err) {
+    enif_mutex_lock(pty->lock);
+    pid_t pgrp = pty->fd < 0 ? -1 : tcgetpgrp(pty->fd);
+    *err = pty->fd < 0 ? EBADF : errno;
+    enif_mutex_unlock(pty->lock);
+    return pgrp > 0 ? pgrp : -1;
+}
+
 static ERL_NIF_TERM nif_winch(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->fd < 0)
-        return make_errno_error(env, EBADF);
-    pid_t pgrp = tcgetpgrp(pty->fd);
-    if (pgrp <= 0)
-        return make_errno_error(env, errno);
+    int err;
+    pid_t pgrp = foreground_group(pty, &err);
+    if (pgrp < 0)
+        return make_errno_error(env, err);
     return kill(-pgrp, SIGWINCH) < 0 ? make_errno_error(env, errno) : atom_ok;
 }
 
@@ -381,11 +436,10 @@ static ERL_NIF_TERM nif_foreground(ErlNifEnv *env, int, const ERL_NIF_TERM argv[
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->fd < 0)
-        return make_errno_error(env, EBADF);
-    pid_t pgrp = tcgetpgrp(pty->fd);
-    if (pgrp <= 0)
-        return make_errno_error(env, errno);
+    int err;
+    pid_t pgrp = foreground_group(pty, &err);
+    if (pgrp < 0)
+        return make_errno_error(env, err);
     return enif_make_tuple2(env, atom_ok, enif_make_int(env, pgrp));
 }
 
@@ -395,15 +449,16 @@ static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->fd >= 0) {
-        // pty_stop does the actual close(), now or once the BEAM lets go.
-        int fd = pty->fd;
-        int rc = enif_select(env, fd, ERL_NIF_SELECT_STOP, pty, nullptr, atom_undefined);
-        if (rc < 0) {
-            close(fd);
-            pty->fd = -1;
-        }
-    }
+    enif_mutex_lock(pty->lock);
+    int fd = pty->fd;
+    // Closed for every later call from now on. pty_stop does the actual
+    // close(), now or once the BEAM lets go of the fd: until then the
+    // number is still ours, but if a call could still use it after that,
+    // it might reach whatever file opens next with that number.
+    pty->fd = -1;
+    if (fd >= 0 && enif_select(env, fd, ERL_NIF_SELECT_STOP, pty, nullptr, atom_undefined) < 0)
+        close(fd);
+    enif_mutex_unlock(pty->lock);
     return atom_ok;
 }
 
@@ -411,38 +466,52 @@ static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
 // Never blocks: polls the child with WNOHANG.
 //
 // The BEAM ignores SIGCHLD, and with SIGCHLD ignored the kernel reaps exited
-// children itself (waitpid(2), NOTES). Then waitpid fails with ECHILD and the
+// children itself (waitpid(2), NOTES). Then waitid fails with ECHILD and the
 // exit status is lost: that's :gone.
 static ERL_NIF_TERM nif_wait(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
     if (!get_pty(env, argv[0], &pty))
         return enif_make_badarg(env);
-    if (pty->pid < 0)
-        return atom_gone;
 
-    int status;
-    pid_t rc = waitpid(pty->pid, &status, WNOHANG);
-    if (rc == 0)
+    siginfo_t info = {};
+    int rc = 0, err = 0;
+    bool gone;
+    enif_mutex_lock(pty->lock);
+    if (pty->pidfd >= 0) {
+        rc = waitid(p_pidfd, (id_t)pty->pidfd, &info, WEXITED | WNOHANG);
+        err = errno;
+        // Exited (si_pid set), or already reaped by the kernel (ECHILD).
+        if ((rc == 0 && info.si_pid != 0) || (rc < 0 && err == ECHILD)) {
+            close(pty->pidfd);
+            pty->pidfd = -1;
+        }
+    }
+    gone = pty->pidfd < 0;
+    enif_mutex_unlock(pty->lock);
+
+    if (rc < 0 && err != ECHILD)
+        return make_errno_error(env, err);
+    if (!gone)
         return atom_running;
-    if (rc < 0 && errno != ECHILD)
-        return make_errno_error(env, errno);
-    pty->pid = -1;
-    if (rc < 0)
+    if (info.si_pid == 0)
         return atom_gone;
-    if (WIFSIGNALED(status))
-        return enif_make_tuple2(env, atom_signaled, enif_make_int(env, WTERMSIG(status)));
-    return enif_make_tuple2(env, atom_exited, enif_make_int(env, WEXITSTATUS(status)));
+    if (info.si_code == CLD_KILLED || info.si_code == CLD_DUMPED)
+        return enif_make_tuple2(env, atom_signaled, enif_make_int(env, info.si_status));
+    return enif_make_tuple2(env, atom_exited, enif_make_int(env, info.si_status));
 }
 
 // kill(pty, signal) -> :ok | {:error, reason}
 static ERL_NIF_TERM nif_kill(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
     int sig;
-    if (!get_pty(env, argv[0], &pty) || !enif_get_int(env, argv[1], &sig))
+    if (!get_pty(env, argv[0], &pty) || !enif_get_int(env, argv[1], &sig) || sig <= 0 || sig >= NSIG)
         return enif_make_badarg(env);
-    if (pty->pid < 0)
-        return make_errno_error(env, ESRCH);
-    return kill(pty->pid, sig) < 0 ? make_errno_error(env, errno) : atom_ok;
+    enif_mutex_lock(pty->lock);
+    // Through the pidfd: if the child is gone, ESRCH, never a stranger.
+    int rc = pty->pidfd < 0 ? -1 : pidfd_send_signal(pty->pidfd, sig, nullptr, 0);
+    int err = pty->pidfd < 0 ? ESRCH : errno;
+    enif_mutex_unlock(pty->lock);
+    return rc < 0 ? make_errno_error(env, err) : atom_ok;
 }
 
 static ErlNifFunc funcs[] = {

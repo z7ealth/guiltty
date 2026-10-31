@@ -21,7 +21,7 @@ two rules matter:
 
 | Elixir                                 | Does                                  |
 |----------------------------------------+---------------------------------------|
-| =PtyNif.open(path, argv, env, c, r, cwd)= | openpty, fork, chdir, exec; ={:ok, pty, pid}= |
+| =PtyNif.open(path, argv, env, c, r, cwd)= | posix_openpt, fork, chdir, exec; ={:ok, pty, pid}= |
 | =PtyNif.foreground(pty)=              | tcgetpgrp: the foreground job's group (chapter 18) |
 | =PtyNif.read(pty)=                     | one non-blocking read                 |
 | =PtyNif.write(pty, bytes)=             | one non-blocking write                |
@@ -37,7 +37,7 @@ while.
 
 * Resources: a C struct that Elixir can hold
 
-The master fd and the child pid live in a =struct pty= wrapped in a *NIF
+The master fd and the child live in a =struct pty= wrapped in a *NIF
 resource*. Elixir sees an opaque reference; the C side gets the struct back
 on every call.
 
@@ -45,16 +45,23 @@ on every call.
   Elixir (Pty process state)           C heap (owned by the BEAM)
   +--------------------------+         +--------------------------+
   | pty: #Reference<...> ----+-------->| struct pty               |
-  | os_pid: 219202           |         |   fd  = 23  (master)     |
-  +--------------------------+         |   pid = 219202           |
+  | os_pid: 219202           |         |   lock                   |
+  +--------------------------+         |   fd    = 23 (master)    |
+                                       |   pidfd = 24 (the child) |
                                        +--------------------------+
                                        destructor runs when the last
                                        Elixir reference is garbage
 #+end_example
 
+The child is held as a *pidfd*, not a pid (see "Surprise: the BEAM ignores
+SIGCHLD", below). The *lock* is there because a resource can be used from
+two processes at once: the Pty process, and later the task that reaps its
+shell. Each runs on its own scheduler thread, so without the lock one could
+close the fd while the other reads it.
+
 The destructor ([[file:../c_src/pty_nif.c::pty_dtor][pty_dtor]]) is a safety net: if the Pty process died
-without cleaning up, it closes the fd and kills the child if it's still
-running.
+without cleaning up, it closes the fd and SIGKILLs the child through the
+pidfd. If the child is already gone, that signal goes nowhere.
 
 * enif_select: no reader thread
 
@@ -119,9 +126,14 @@ Three more things the child does because it's forked from the BEAM:
 - *Changes directory* with =chdir(2)= (async-signal-safe) when given one,
   so a new tab starts where the current tab's shell is (chapter 16). If
   the directory is gone, the shell starts where the BEAM is.
-- The parent marks both PTY fds close-on-exec, so no other program the BEAM
-  starts inherits them. A stray copy of the slave would keep the master from
-  ever reporting the end (see [[file:01-pseudoterminals.org][chapter 1]], "The end").
+- Both PTY fds are close-on-exec from the moment they exist, so no other
+  program the BEAM starts inherits them. A stray copy of the slave would
+  keep the master from ever reporting the end (see [[file:01-pseudoterminals.org][chapter 1]], "The end").
+  The master comes from =posix_openpt(O_CLOEXEC | O_NONBLOCK ...)=, and the
+  slave from =ioctl(master, TIOCGPTPEER, O_CLOEXEC ...)=, which opens
+  /this/ master's slave without looking up a path in =/dev/pts=. (Until
+  v0.12.0, =openpty= opened them and a second call set close-on-exec:
+  for a moment in between, a fork on another thread could inherit them.)
 
 * Surprise: the BEAM ignores SIGCHLD
 
@@ -137,10 +149,29 @@ status is thrown away.
 #+end_example
 
 So =wait/1= returns =:gone= instead of an exit code. One consequence matters
-for safety: once bash is gone, its pid can be reused by an unrelated process,
-so the NIF forgets the pid as soon as it sees =:gone= and the destructor never
-signals a pid it can't prove is still ours. (Linux's =pidfd_open= solves this
-completely; noted for later.)
+for safety: once bash is gone, its pid is free, and the next process may
+get it, maybe another tab's shell (a child of the same BEAM). A
+=kill(pid, SIGKILL)= sent a moment too late would hit that one.
+
+So the NIF never signals a pid. Right after =fork=, it asks for a *pidfd*
+(=pidfd_open(2)=): a file descriptor that means this one process, alive
+or dead. Signals go through it (=pidfd_send_signal=), and so does waiting
+(=waitid(P_PIDFD, ...)=). Once the child is gone, a signal through its
+pidfd fails with ESRCH; it can't reach anyone else.
+
+#+begin_example
+  bash running   waitid(P_PIDFD, fd, WNOHANG): si_pid = 0  -> :running
+  bash exits     kernel reaps it right away
+  afterwards     waitid(P_PIDFD, fd, WNOHANG) = -1 ECHILD   -> :gone
+                 kill through the pidfd                     -> {:error, :esrch}
+#+end_example
+
+There's one moment the pid is still used: =pidfd_open(pid)= right after
+=fork=. For that to pick up a stranger, the child would have to exit and
+its pid come round again (out of =pid_max=, 4 million here) between two
+lines of the parent. glibc doesn't offer a =fork= that returns a pidfd
+yet; =clone3= with =CLONE_PIDFD= does, at the cost of skipping glibc's
+=fork=.
 
 * The Pty process
 
@@ -180,7 +211,11 @@ completely; noted for later.)
 - =fork(2)= NOTES on multithreaded programs.
 - =waitpid(2)= NOTES: ignoring SIGCHLD.
 - =close_range(2)=, =fcntl(2)= (=FD_CLOEXEC=, =O_NONBLOCK=).
-- =pidfd_open(2)=: the race-free alternative to pids.
+- =posix_openpt(3)=, and =ioctl_tty(2)= for =TIOCGPTPEER=.
+- =pidfd_open(2)=, =pidfd_send_signal(2)=, =waitid(2)= (=P_PIDFD=): the
+  race-free alternative to pids.
+- =erl_nif(3)=: =enif_mutex_create=, and which callbacks may run on which
+  thread.
 
 * Questions
 
@@ -189,6 +224,8 @@ completely; noted for later.)
 3. What could go wrong if the child called =malloc= after =fork=?
 4. Why does =wait/1= return =:gone= instead of an exit code?
 5. Why does the Pty process wait for a parser before reading?
+6. Why does the NIF signal the child through a pidfd instead of its pid?
+7. Why doesn't =pty_stop= take the lock?
 
 ** Answers
 :PROPERTIES:
@@ -205,3 +242,9 @@ completely; noted for later.)
    discards their status. =waitpid= then fails with ECHILD.
 5. Otherwise the first bytes (the prompt) would be read with nobody to send
    them to. Not reading leaves them safely in the kernel buffer.
+6. The kernel reaps the child as soon as it exits, and its pid can then go
+   to another process, maybe another tab's shell. A pidfd always refers to
+   the same process; once that process is gone, signals fail with ESRCH.
+7. The BEAM may call it from inside =enif_select=, which =close= calls
+   while holding the lock: taking it again would deadlock. It only closes
+   the fd it's given; =close= has already marked the pty closed.

@@ -769,3 +769,38 @@ waits for it to finish and starts a new one.
 ### Later
 - Several windows, each with its own tabs (today `guiltty` raises the
   one window).
+
+## 2026-10-30 — Security, step 3: the PTY NIF audit
+
+_Draft: agent, awaiting user_
+
+The NIF read well: sizes checked, everything copied before `fork`, only
+async-signal-safe calls in the child. The audit still found five things,
+none of them ever seen to happen, which is the point.
+
+The worst was signals by pid. The BEAM ignores SIGCHLD, so the kernel
+reaps a shell the moment it exits, and its pid is free. The reaper task
+did `wait` (running), then `kill(pid, SIGKILL)`: if the shell exited
+between the two and its pid went to another tab's shell, that one died.
+It needs a pid to come round in milliseconds, out of 4 million, so it's
+rare, but it's the kind of thing that happens once and can't be
+explained. The child is now held as a pidfd, which means that one
+process forever; once it's gone, signals fail with ESRCH.
+
+The rest: a lock per pty (the Pty process and the reaper task can call
+into the same resource from two threads), `close` marking the pty closed
+before the BEAM gets round to closing the fd, a `read` that could have
+handed out a stale buffer tail if shrinking it ever failed, `kill`
+accepting any number as a signal, and an instant where the PTY fds
+weren't close-on-exec (now `posix_openpt(O_CLOEXEC)` and `TIOCGPTPEER`).
+
+I first described the close race as wider than it was: the old
+`pty_stop` did mark the fd closed, just a few instructions after closing
+it, on another thread. Checking that against the old code before
+handing over is what caught it.
+
+New tests throw junk at every argument (StreamData's `term()`), call a
+closed pty and a dead one, hammer one pty from sixteen processes while
+one closes it, and count the BEAM's open files after fifty open/close
+cycles. Against the old NIF, only the signal-range test fails: the races
+can't be provoked on demand.
