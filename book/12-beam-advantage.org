@@ -96,7 +96,7 @@ it inherited. A node already running is asked for a window: the caller's
 opens on the display you ran =guiltty= from. If a window is already open,
 it's raised instead.
 
-(Until v0.12.0 the launcher also waited for a node it had started, and
+(Until v0.12.4 the launcher also waited for a node it had started, and
 then asked it for a window it had already opened. That added about two
 seconds, and if the window was closed in the meantime, the node was gone
 and the launcher failed with status 1: what =hyperfine guiltty= hit.)

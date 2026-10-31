@@ -14,7 +14,7 @@ in your home directory. No root.
   ├── lib/guiltty/                     the release
   │   ├── bin/guiltty                  its start script (and rel/env.sh.eex, chapter 12)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.11.0/priv/     guiltty_vk, guiltty_gl, pty_nif.so, guiltty.bmp
+  │   └── lib/guiltty-0.12.4/priv/     guiltty_vk, guiltty_gl, pty_nif.so, guiltty.bmp
   ├── bin/guiltty                      a two-line script: exec the release's
   └── share/
       ├── applications/guiltty.desktop the menu entry
@@ -28,7 +28,12 @@ The release is built next to the old one (=lib/guiltty.new=) and swapped
 in only when the build worked, so a failed update leaves the installed
 guiltty alone. A running installed guiltty is stopped first (after
 asking: its tabs close); the one in =_build/prod= is never touched, only
-pointed out, because both would use the node name =guiltty=.
+pointed out, because both would use the node name =guiltty@127.0.0.1=.
+
+The installed node listens only on 127.0.0.1, and its cookie (the secret
+that lets a program connect to it) comes from =~/.erlang.cookie=, never
+from the command line: =install.sh= stops if that file can be read by
+anyone but you. Chapter 20 explains why.
 
 * What building needs
 

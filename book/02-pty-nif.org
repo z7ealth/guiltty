@@ -132,7 +132,7 @@ Three more things the child does because it's forked from the BEAM:
   The master comes from =posix_openpt(O_CLOEXEC | O_NONBLOCK ...)=, and the
   slave from =ioctl(master, TIOCGPTPEER, O_CLOEXEC ...)=, which opens
   /this/ master's slave without looking up a path in =/dev/pts=. (Until
-  v0.12.0, =openpty= opened them and a second call set close-on-exec:
+  v0.12.4, =openpty= opened them and a second call set close-on-exec:
   for a moment in between, a fork on another thread could inherit them.)
 
 * Surprise: the BEAM ignores SIGCHLD
@@ -181,9 +181,10 @@ yet; =clone3= with =CLONE_PIDFD= does, at the cost of skipping glibc's
   the Erlang runtime's (=BINDIR=, =ROOTDIR=, =EMU=, =PROGNAME=) and the
   release start script's (=RELEASE_*=). Two reasons. Another Mix release
   started from the shell would read =RELEASE_NODE= as its own node name and
-  collide with guiltty's (that's how =extop= failed). And =RELEASE_COOKIE= is
-  the key to run code on guiltty's node: no program in your shell should be
-  able to read it.
+  collide with guiltty's (that's how =extop= failed). And =RELEASE_COOKIE=
+  used to be the key to run code on guiltty's node: no program in your
+  shell should be able to read it. (Since v0.12.4 it's empty, and the key
+  lives in =~/.erlang.cookie=; chapter 20.)
 - It runs *your* shell: =$SHELL=, or your login shell from the user
   database (=getent passwd $USER=, which asks NSS, so LDAP users work too),
   or bash, or =/bin/sh=, the first that is an executable file.

@@ -63,6 +63,15 @@ if $uninstall; then
     exit 0
 fi
 
+# guiltty's node takes its cookie from ~/.erlang.cookie (book chapter
+# 20), and Erlang refuses to start if anyone but you can read that file.
+cookie="$HOME/.erlang.cookie"
+if [ -e "$cookie" ] && [ -n "$(find "$cookie" -perm /077)" ]; then
+    echo "$cookie can be read by other users; guiltty (and Erlang) won't use it." >&2
+    echo "Make it yours alone first: chmod 400 $cookie" >&2
+    exit 1
+fi
+
 # What building needs: Elixir, a C compiler, the renderers' libraries, and
 # glslc (from shaderc) to compile the Vulkan shaders.
 missing=()
@@ -129,7 +138,7 @@ version=$(cut -d' ' -f2 "$APP/releases/start_erl.data")
 echo "guiltty $version is installed: run guiltty, or find it in your menu"
 if running "$here/_build/prod/rel/guiltty"; then
     echo "note: a guiltty from _build/prod is running. Stop it first" \
-        "($here/_build/prod/rel/guiltty/bin/guiltty stop): both use the node name guiltty."
+        "($here/_build/prod/rel/guiltty/bin/guiltty stop): both use the node name guiltty@127.0.0.1."
 fi
 case ":$PATH:" in
 *":$(dirname "$BIN"):"*) ;;

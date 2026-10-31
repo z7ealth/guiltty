@@ -199,7 +199,7 @@ weren't.
 
 The PTY NIF is the C that matters most: it runs inside the BEAM, so its
 crash would take every tab with it. [[file:02-pty-nif.org][Chapter 2]] explains how it works; the
-audit for v0.12.0 changed five things:
+audit for v0.12.4 changed five things:
 
 | What could go wrong                                    | Now                          |
 |--------------------------------------------------------+------------------------------|
@@ -282,6 +282,68 @@ boundary (=Terminal.clean_title/1=).
   tab shows       prod lmth.exe
 #+end_example
 
+* Layer 8: the node's network door
+
+When guiltty is already running, =guiltty= asks it for a window over
+*Erlang distribution*: it starts a tiny second node, which connects to
+guiltty's node and calls =Guiltty.open_window/1= there (chapter 12).
+Distribution lets one node run any code on another; its only lock is a
+shared secret, the *cookie*. So whoever has the cookie and can reach the
+port can do anything you can.
+
+Until v0.12.4 the door was wider than it needed to be:
+
+#+begin_example
+  before                                    since v0.12.4
+  ──────                                    ─────────────
+  node guiltty@hs-suse (short name)         guiltty@127.0.0.1 (long name)
+  listens on 0.0.0.0: every network         listens on 127.0.0.1 only
+  -setcookie 47UYX... on the command        no cookie on any command line:
+    line: ps shows it to every user           ~/.erlang.cookie, mode 0400
+  releases/COOKIE, mode 0644                emptied, mode 0600 (unused)
+#+end_example
+
+- *Localhost only.* =vm.args= and =remote.vm.args= set
+  =-kernel inet_dist_use_interface {127,0,0,1}=, for guiltty's node and
+  for the launcher's short-lived ones. Nothing on the network can connect,
+  cookie or not.
+- *A name that needs no lookup.* =guiltty@127.0.0.1= is a long name made
+  of the address itself. The short name made Erlang look up the hostname
+  on every call, which here doesn't resolve: a warm =guiltty= went from
+  about 2.5 s to 0.8 s.
+- *The cookie off the command line.* Mix's start script passes
+  =--cookie "$RELEASE_COOKIE"= to every command, and it ends up as
+  =-setcookie= on the VM's command line, which any user can read in
+  =/proc/<pid>/cmdline=. A release step in =mix.exs= (=private_cookie/1=)
+  removes the flag. Erlang then reads =~/.erlang.cookie=, which it creates
+  with a random cookie if needed and refuses to use if others can read it.
+  The step fails the build if Mix ever writes the script differently, so
+  the cookie can't silently come back.
+- *epmd.* Erlang's port directory, a separate program, is shared by every
+  Erlang node on the machine and usually started by whichever came first,
+  listening on every interface. It tells anyone the nodes' names and
+  ports, but can't run code. If guiltty is the one to start it,
+  =ERL_EPMD_ADDRESS= keeps it on 127.0.0.1.
+
+Checked on a test release:
+
+#+begin_example
+  $ tr '\0' ' ' < /proc/$PID/cmdline | grep -o -- '-setcookie [^ ]*'
+  (nothing)
+  $ ss -ltnp | grep pid=$PID
+  LISTEN 0 128 127.0.0.1:33567 0.0.0.0:* users:(("beam.smp",pid=...))
+  $ erl -name probe@127.0.0.1 -setcookie not-the-cookie ... net_adm:ping
+  pang
+  $ erl -name probe2@127.0.0.1 ... net_adm:ping       (~/.erlang.cookie)
+  pong
+#+end_example
+
+The cookie in =~/.erlang.cookie= is shared with your other Erlang nodes
+(=iex --sname=, a Phoenix app in development). They all run as you, so
+they can't do anything you couldn't. Turning distribution off entirely
+would need a launcher that talks to guiltty some other way (a FIFO or a
+Unix socket): DEVLOG "Later".
+
 * Loot
 
 - =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,
@@ -309,6 +371,10 @@ boundary (=Terminal.clean_title/1=).
   differently than it is.
 - =termios(3)=: =ICANON= (canonical mode, whose line buffer discards
   overflow) against raw mode.
+- Erlang's "Distributed Erlang" guide, "Security"; =erl(1)= =-setcookie=,
+  =-name=; kernel's =inet_dist_use_interface=; =epmd(1)= and
+  =ERL_EPMD_ADDRESS=.
+- =proc_pid_cmdline(5)=: why a secret on the command line isn't one.
 
 * Questions
 
@@ -325,6 +391,9 @@ boundary (=Terminal.clean_title/1=).
    GPU is there to be hurt?
 9. Why are answers capped, but not what you type or paste?
 10. Why strip 📡 from a program's title?
+11. Your home folder is mode 0700, so the old 0644 COOKIE file wasn't
+    readable by others here. Why was the cookie still exposed?
+12. What does epmd let a stranger do, and what not?
 
 ** Answers
 :PROPERTIES:
@@ -364,3 +433,7 @@ boundary (=Terminal.clean_title/1=).
 10. guiltty puts 📡 in front of tabs that are in the broadcast group. If a
     program could show it too, you couldn't tell which tabs your typing
     goes to.
+11. It was on the VM's command line (=-setcookie=), and every user can
+    read every process's command line in =/proc=.
+12. Learn which Erlang nodes run and on which ports. Not connect to them:
+    that needs the cookie, and guiltty's node only listens on 127.0.0.1.

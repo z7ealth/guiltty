@@ -1,0 +1,6 @@
+## Flags for the short-lived nodes that talk to guiltty (`guiltty`'s
+## launcher uses `rpc`; `remote` gives an iex shell).
+## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
+
+## Like guiltty's own node: listen on 127.0.0.1 only (book chapter 20).
+-kernel inet_dist_use_interface {127,0,0,1}

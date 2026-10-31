@@ -8,9 +8,17 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.12.4 — 2026-10-30 — Security
 
 ### Changed
+- guiltty's background node now listens on 127.0.0.1 only, is named
+  `guiltty@127.0.0.1`, and takes its cookie from `~/.erlang.cookie`
+  instead of the command line, where every user on the machine could read
+  it. `install.sh` stops if that file can be read by others. Reinstall to
+  get it: a guiltty still running from an older version keeps the old
+  name, so stop it first (`install.sh` asks).
+- `guiltty` opens a window on a running guiltty in about 0.8 s instead of
+  2.5 s (it no longer looks up the machine's hostname).
 - The C parts (the PTY NIF and both renderers) are built hardened:
   buffer-size checks in libc calls, stack protection, position-independent
   executables and read-only relocations. A bug now crashes cleanly

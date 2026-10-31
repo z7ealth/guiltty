@@ -705,7 +705,7 @@ Tests use JetBrains Mono and skip themselves without it.
 
 _Draft: agent, awaiting user_
 
-v0.12.0 is the security MVP: guiltty won't be as fast as Ghostty, but its
+v0.12.4 is the security MVP: guiltty won't be as fast as Ghostty, but its
 C should be very hard to break. Step one was the cheap layers.
 
 Every C file is now built with the hardening flags from the OpenSSF
@@ -831,3 +831,31 @@ in source code, I found out trying to test it) and control characters,
 and are made valid UTF-8.
 
 Also: `RESIZE` from the renderer is capped at 4096 x 4096, its own limit.
+
+## 2026-10-30 — Security, step 5: closing the network door
+
+_Draft: agent, awaiting user_
+
+The launcher reaches the running guiltty over Erlang distribution, and
+distribution's only lock is the cookie: whoever has it and can reach the
+port can run anything as you. Three things were wrong. The node listened
+on every interface. The cookie was on the VM's command line, `-setcookie
+47UYX...`, which `ps` shows to every user (it was even in the log). And
+the COOKIE file was 0644, saved only by a 0700 home folder.
+
+Now the node is `guiltty@127.0.0.1` and listens only there
+(`inet_dist_use_interface` in vm.args, for the launcher's nodes too).
+The cookie comes from `~/.erlang.cookie`: Mix's start script passes
+`--cookie` in four places, so a release step in mix.exs removes them, and
+fails the build if Mix ever writes the script differently. Checked on a
+test release: no cookie in /proc/PID/cmdline, the port on 127.0.0.1
+only, a wrong cookie gets `pang`.
+
+The surprise was speed. The race test from step 2 suddenly "failed":
+closes at 0.9 s and later found no window. They were landing after the
+launcher had finished: a warm `guiltty` now takes 0.8 s instead of 2.5 s,
+because the short name made Erlang look up a hostname that doesn't
+resolve, on every call. The test now tells closes during a launch (21 of
+them, all fine) from closes after.
+
+That's all five steps. MVP 12 is ready for its loot and the tag.
