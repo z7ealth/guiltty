@@ -111,12 +111,15 @@ says `guiltty: command not found`, add `~/.local/bin` to your `PATH`.
 
 ## Use it
 
-Closing the window ends guiltty and its tabs, except the ones you lock
-with Ctrl+Shift+L (they show a 🔒): those keep running, and the next
-`guiltty` opens them where you left them.
+Every window has its own tabs: `guiltty` (or Ctrl+Shift+N) opens another
+window, and closing one never touches the others. Closing a window ends its
+tabs, except the ones you lock with Ctrl+Shift+L (they show a 🔒): those
+keep running, and the next `guiltty` brings that window back with them.
+guiltty stops after its last window.
 
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|
+| Ctrl+Shift+N                  | new window, with its own tabs            |
 | Ctrl+Shift+T, Ctrl+Shift+W    | new tab, close tab                       |
 | Ctrl+PgUp, Ctrl+PgDn          | previous, next tab                       |
 | Shift+PgUp, Shift+PgDn        | scroll back, forward (or the mouse wheel)|

@@ -134,7 +134,9 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
 
   test "opening and closing many ptys leaks no file descriptors" do
     count = fn -> length(File.ls!("/proc/self/fd")) end
-    before = count.()
+    # Other tests' shells may still be closing (their reaper tasks hold a
+    # pidfd for a moment): start from a count that has settled.
+    before = settled(count)
 
     for _ <- 1..50 do
       {:ok, pty, _} = PtyNif.open("/bin/true", ["true"], [], 80, 24, "")
@@ -148,7 +150,18 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
     :erlang.garbage_collect()
     Process.sleep(50)
 
-    assert count.() == before
+    # A leak can only add descriptors; fewer means someone else's cleanup
+    # finished meanwhile.
+    assert settled(count) <= before
+  end
+
+  # The count once it stays the same for 300 ms (at most 5 s).
+  defp settled(count, last \\ nil, tries \\ 17) do
+    now = count.()
+
+    if now == last or tries == 0,
+      do: now,
+      else: Process.sleep(300) && settled(count, now, tries - 1)
   end
 
   test "many processes calling one pty at once don't crash the BEAM" do

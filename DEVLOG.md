@@ -859,3 +859,51 @@ resolve, on every call. The test now tells closes during a launch (21 of
 them, all fine) from closes after.
 
 That's all five steps. MVP 12 is ready for its loot and the tag.
+
+## 2026-10-30 — Multi window, step 1: desks
+
+_Draft: agent, awaiting user_
+
+You asked for windows that are 100% independent. The one window was
+built in deep: a global `Tabs` with the tab list, the active tab, the
+locked set and the broadcast group, a Window registered under one name,
+and `open_window` that raised it. Tabs could already attach several
+windows, but they'd all have shown the same tabs.
+
+So each window is now a *desk*: a little supervisor with its own Tabs
+and its own Window, rest_for_one, ending when its Tabs ends. Sessions
+stay where they were, under one global supervisor, but with ids unique
+across desks (`System.unique_integer`) and their desk's id stored as the
+Registry value, so a Tabs that crashes takes back its own sessions and
+nobody else's. "guiltty stops when the last tab closes" used to be Tabs
+being significant; with many Tabs that can't work, so a small
+`Lifeline` watches the desks and is the significant one.
+
+The Window barely changed: it's told which Tabs is its own and passes
+it along. Most of the diff is that, and the tests following suit.
+
+Not done yet: a closed window's locked tabs keep running in their desk,
+but nothing opens it again. That and Ctrl+Shift+N are step 2.
+
+## 2026-10-30 — Multi window, steps 2 and 3: windows that come back
+
+_Draft: agent, awaiting user_
+
+With desks in place, the rest was mostly deciding what "a window comes
+back" means. A window closed with locked tabs leaves its desk running
+with no Window: its Window child is still in the supervisor, just not
+running, which `Supervisor.which_children` reports as `:undefined`. The
+next `guiltty` finds the oldest such desk and gives it a new window.
+Replacing the child, not restarting it: the new launch may come from
+another display, and the old child spec remembers the old one.
+Ctrl+Shift+N skips all that and asks for a fresh desk.
+
+One test turned flaky along the way: the PTY fd-leak test counted the
+BEAM's open files before and after and wanted them equal. The new desk
+tests leave reaper tasks behind that close their pidfds a moment later,
+so the count sometimes *dropped* during the test. A leak can only make
+it grow, so the test now waits for the count to settle and checks it
+didn't go up.
+
+v0.13.0 is ready: book chapter 21 has the story, with the real Registry
+of two windows (desk 1 owning sessions 2 and 5, desk 3 owning 4).

@@ -10,6 +10,8 @@ defmodule Guiltty.WindowTest do
   # Leak checking is off here only: Mesa's offscreen EGL driver leaks a few
   # bytes from a library it unloads before exit. Run the renderer on X11 or
   # Wayland to check leaks.
+  @tabs :test_tabs
+
   @env [
     {~c"SDL_VIDEO_DRIVER", ~c"offscreen"},
     {~c"ASAN_OPTIONS", ~c"detect_leaks=0"},
@@ -28,16 +30,16 @@ defmodule Guiltty.WindowTest do
       env: %{"PS1" => "$ "}
     ]
 
-    start_supervised!({Tabs, session_opts: session_opts})
+    start_supervised!({Tabs, name: @tabs, session_opts: session_opts})
     window = start_window()
-    id = Tabs.active()
+    id = Tabs.active(@tabs)
     assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
     %{id: id, window: window}
   end
 
   defp start_window do
     spec =
-      Supervisor.child_spec({Window, name: false, env: @env}, restart: :temporary, id: make_ref())
+      Supervisor.child_spec({Window, tabs: @tabs, env: @env}, restart: :temporary, id: make_ref())
 
     window = start_supervised!(spec)
     assert eventually(fn -> :sys.get_state(window).ready end), "no handshake"
@@ -81,8 +83,8 @@ defmodule Guiltty.WindowTest do
     window: window
   } do
     key(window, ?t, @ctrl ||| @shift)
-    assert eventually(fn -> match?({[_, _], _}, Tabs.list()) end)
-    {_tabs, second} = Tabs.list()
+    assert eventually(fn -> match?({[_, _], _}, Tabs.list(@tabs)) end)
+    {_tabs, second} = Tabs.list(@tabs)
     assert second != first
     assert eventually(fn -> :sys.get_state(window).active == second end)
 
@@ -93,16 +95,16 @@ defmodule Guiltty.WindowTest do
     refute Session.dump(first) =~ "in-second"
 
     key(window, ?w, @ctrl ||| @shift)
-    assert eventually(fn -> Tabs.list() == {[{first, Screen.title(first)}], first} end)
+    assert eventually(fn -> Tabs.list(@tabs) == {[{first, Screen.title(first)}], first} end)
     assert eventually(fn -> :sys.get_state(window).active == first end)
   end
 
   test "Ctrl+PgDn and a click on the tab bar switch tabs", %{id: first, window: window} do
-    {:ok, second} = Tabs.new_tab()
+    {:ok, second} = Tabs.new_tab(@tabs)
     key(window, 0x4000004E, @ctrl)
-    assert eventually(fn -> Tabs.active() == first end)
+    assert eventually(fn -> Tabs.active(@tabs) == first end)
     renderer(window, <<16, 1>>)
-    assert eventually(fn -> Tabs.active() == second end)
+    assert eventually(fn -> Tabs.active(@tabs) == second end)
   end
 
   test "closing the window leaves the tabs running; a new window shows them", %{
@@ -110,12 +112,12 @@ defmodule Guiltty.WindowTest do
     window: window
   } do
     Session.write(id, "echo still-here\r")
-    {:ok, second} = Tabs.new_tab()
+    {:ok, second} = Tabs.new_tab(@tabs)
     {:os_pid, os_pid} = Port.info(port(window), :os_pid)
 
     GenServer.stop(window)
     assert eventually(fn -> not File.exists?("/proc/#{os_pid}") end)
-    assert Tabs.list() |> elem(0) |> length() == 2
+    assert Tabs.list(@tabs) |> elem(0) |> length() == 2
     assert Session.dump(id) =~ ~r/^still-here$/m
 
     window = start_window()
@@ -152,7 +154,7 @@ defmodule Guiltty.WindowTest do
   end
 
   test "a resize from the renderer resizes every tab", %{id: id, window: window} do
-    {:ok, second} = Tabs.new_tab()
+    {:ok, second} = Tabs.new_tab(@tabs)
     renderer(window, <<6, 100::16, 30::16>>)
 
     assert eventually(fn ->
@@ -195,8 +197,8 @@ defmodule Guiltty.WindowTest do
   end
 
   test "closing the window quits: every tab ends, then Tabs (and guiltty)", %{window: window} do
-    {:ok, _second} = Tabs.new_tab()
-    tabs = Process.whereis(Tabs)
+    {:ok, _second} = Tabs.new_tab(@tabs)
+    tabs = Process.whereis(@tabs)
     ref = Process.monitor(tabs)
 
     # What the renderer sends when you close the window: exit status 0.
@@ -225,8 +227,8 @@ defmodule Guiltty.WindowTest do
     id: id,
     window: window
   } do
-    {:ok, second} = Tabs.new_tab()
-    :ok = Tabs.switch(0)
+    {:ok, second} = Tabs.new_tab(@tabs)
+    :ok = Tabs.switch(@tabs, 0)
     key(window, ?l, @ctrl ||| @shift)
     assert eventually(fn -> MapSet.member?(:sys.get_state(window).locked, id) end)
 
@@ -235,8 +237,8 @@ defmodule Guiltty.WindowTest do
     assert_receive {:DOWN, ^ref, :process, ^window, {:shutdown, :window_closed}}, 5000
 
     # The unlocked tab ended; the locked one runs on, for the next window.
-    assert eventually(fn -> Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)) == [id] end)
-    refute second in (Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0)))
+    assert eventually(fn -> Tabs.list(@tabs) |> elem(0) |> Enum.map(&elem(&1, 0)) == [id] end)
+    refute second in (Tabs.list(@tabs) |> elem(0) |> Enum.map(&elem(&1, 0)))
   end
 
   test "stopping the window ends the renderer process", %{window: window} do
@@ -384,7 +386,7 @@ defmodule Guiltty.WindowTest do
     # A Window that hears about the error during init, before the renderer
     # said hello, must not send it early: the renderer would refuse it.
     spec =
-      Supervisor.child_spec({Window, name: false, env: @env}, restart: :temporary, id: :early)
+      Supervisor.child_spec({Window, tabs: @tabs, env: @env}, restart: :temporary, id: :early)
 
     window = start_supervised!(spec)
     send(window, {:config_error, "config.exs: broken"})
@@ -410,7 +412,7 @@ defmodule Guiltty.WindowTest do
       {~c"VK_DRIVER_FILES", ~c"/nonexistent.json"} | @env
     ]
 
-    opts = [name: false, env: env, renderer: "guiltty_vk-dbg"]
+    opts = [tabs: @tabs, env: env, renderer: "guiltty_vk-dbg"]
     spec = Supervisor.child_spec({Window, opts}, restart: :temporary, id: :vulkan)
     window = start_supervised!(spec)
 

@@ -111,6 +111,9 @@ program works now.
 guiltty/
 ├── lib/guiltty/
 │   ├── application.ex
+│   ├── lifeline.ex          # watches the desks; guiltty stops after the last
+│   ├── desk.ex              # one per window: its Tabs and its Window
+│   ├── tabs.ex              # one window's tabs, locks, broadcast group
 │   ├── window.ex            # owns the renderer port, input events, keymap
 │   ├── keymap.ex
 │   └── session/

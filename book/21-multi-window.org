@@ -1,0 +1,185 @@
+#+TITLE: Multi window: every window its own desk
+#+STARTUP: overview
+
+* What changed in v0.13.0
+
+Until v0.13.0 guiltty had one window. Running =guiltty= again only raised
+it, and every tab belonged to it. Now there can be as many windows as you
+like, and each is *independent*: its own tabs, its own active tab, its own
+locked tabs, its own broadcast group. Closing one never touches another,
+and a crash in one never reaches another.
+
+| You do                               | guiltty does                                   |
+|--------------------------------------+------------------------------------------------|
+| =guiltty= (or the menu), not running | starts, with one window                        |
+| =guiltty= while running              | brings back a closed window that kept locked tabs, or else opens a new one |
+| Ctrl+Shift+N in a window             | opens a new window, always fresh               |
+| close a window                       | closes its tabs, except the locked ones        |
+| close the last window (none locked)  | guiltty stops                                  |
+
+* A desk per window
+
+The heart of it is one small supervisor per window, a *desk*
+([[file:../lib/guiltty/desk.ex][Guiltty.Desk]]), holding that window's =Tabs= and its =Window=:
+
+#+begin_example
+  Guiltty.Supervisor (rest_for_one)
+  |-- Guiltty.Registry
+  |-- Guiltty.Config
+  |-- Guiltty.Sessions          every tab's session, of every window
+  |-- Guiltty.Desks             DynamicSupervisor
+  |   |-- Desk 1                rest_for_one, auto_shutdown: any_significant
+  |   |   |-- Tabs              significant: its last tab closing ends the desk
+  |   |   `-- Window            the renderer
+  |   `-- Desk 3
+  |       |-- Tabs
+  |       `-- Window
+  |-- Guiltty.Lifeline          significant: the last desk ending stops guiltty
+  `-- (a Task)                  the first window, at boot
+#+end_example
+
+Why a supervisor, and why this order:
+
+- *rest_for_one, Tabs first.* The Window shows what its Tabs says. If the
+  Tabs restarts, the Window restarts after it and attaches to the new
+  one. If only the Window crashes (its renderer died), it restarts alone.
+- *Tabs is significant.* When a desk's last tab closes, its Tabs stops, and
+  =auto_shutdown: :any_significant= ends the desk with it.
+- *The Window isn't.* Closing a window with locked tabs leaves the desk
+  running without one: the tabs keep going.
+
+The sessions don't live in the desk: they stay under =Guiltty.Sessions=,
+so a desk can crash and restart without killing a single shell.
+
+* Whose tabs are these?
+
+With one =Tabs= there was nothing to ask: every session was its tab. Now
+each desk must recognize its own, also after a crash, when its new =Tabs=
+starts with an empty list. The answer is in the Registry. Every session's
+supervisor is registered under ={id, :supervisor}=, and Registry keys can
+carry a *value*: the desk's id. This is the real Registry with two
+windows, after a new tab in the first:
+
+#+begin_example
+  {{2, :supervisor}, 1}       session 2 belongs to desk 1
+  {{4, :supervisor}, 3}       session 4 belongs to desk 3
+  {{5, :supervisor}, 1}       session 5 belongs to desk 1
+  {{:desk, 1}, nil}           the desks' own names
+  {{:desk, 3}, nil}
+  {{:desk, 1, :tabs}, nil}    and their Tabs
+  {{:desk, 3, :tabs}, nil}
+#+end_example
+
+A restarted =Tabs= asks for the sessions whose value is its desk, with a
+match spec ([[file:../lib/guiltty/tabs.ex::defp running_sessions][running_sessions/1]]):
+
+#+begin_src elixir
+Registry.select(Guiltty.Registry, [
+  {{{:"$1", :supervisor}, :"$2", :"$3"}, [{:is_integer, :"$1"}, {:"=:=", :"$3", desk}],
+   [{{:"$1", :"$2"}}]}
+])
+#+end_src
+
+Ids now come from =System.unique_integer([:positive, :monotonic])=: unique
+across every desk (the Registry names sessions by id, so two desks can't
+both have a "tab 1") and increasing, so sorting them gives the order the
+tabs were opened. You can see it above: desks and sessions share one
+counter (1, 2, 3, 4, 5).
+
+* Lifeline: when does guiltty stop?
+
+"guiltty stops when the last tab closes" used to mean: =Tabs= is
+significant in the application's supervisor. With many =Tabs= that can't
+work: the first window's last tab would stop everything. A desk can't be
+significant either, because desks live under a DynamicSupervisor, which
+has no =auto_shutdown=.
+
+So [[file:../lib/guiltty/lifeline.ex][Guiltty.Lifeline]] watches the desks. =Lifeline.open/1= starts a
+desk and monitors it. When a desk ends normally, it's crossed off; when
+the last is crossed off, Lifeline stops, and since /it/ is significant,
+guiltty stops. A desk that *crashes* isn't counted as gone: =Desks=
+restarts it under the same name, and Lifeline finds the new one.
+
+#+begin_example
+  window 1 closed (no locks)  -> Tabs 1 ends -> Desk 1 ends -> Lifeline: 1 left
+  window 3 closed (no locks)  -> Tabs 3 ends -> Desk 3 ends -> Lifeline: none
+                                                             -> stops -> guiltty stops
+#+end_example
+
+* Closing a window that has locked tabs
+
+#+begin_example
+  Desk 1: Tabs [2, 5🔒], Window
+     | the user closes the window: renderer exits 0
+     v
+  Window: Tabs.close_unlocked -> tab 2 closes; Window stops (normally)
+  Desk 1: Tabs [5🔒], no Window            <- "windowless"
+     | later: $ guiltty
+     v
+  Lifeline.open: a windowless desk? Desk 1 -> Desk.reopen(1, display)
+  Desk 1: Tabs [5🔒], a new Window -> attach -> tab 5, as you left it
+#+end_example
+
+A desk is windowless when its Window child is there but not running
+(=Supervisor.which_children= says =:undefined=). =Desk.reopen/2= replaces
+that child rather than restarting it, because the new window may be on
+another display: the old child spec has the old =DISPLAY=.
+
+The launcher reopens windowless desks first, the oldest one each time,
+before opening any new window. Ctrl+Shift+N doesn't: it asks for a fresh
+desk (=fresh: true=), because inside a window you asked for a new one.
+
+* What stays shared
+
+Independent doesn't mean separate programs. One BEAM runs every window,
+and these are shared on purpose:
+
+- the config (=Guiltty.Config=): a change applies to every window;
+- the fallback to OpenGL: once Vulkan has failed, later windows start
+  with OpenGL;
+- the sessions' supervisor, so a desk's crash doesn't take its shells.
+
+Each window still has its own renderer process, so a renderer crash takes
+down only its own window.
+
+* Loot
+
+- =Supervisor=: =auto_shutdown= and =significant= children; why a
+  =DynamicSupervisor= can't have them.
+- =Supervisor.which_children/1=, =delete_child/2=, =start_child/2=: changing
+  a running supervisor's children.
+- =Registry=: values stored with keys, and =Registry.select/2= with match
+  specs (=ets:select/2='s match specification guide).
+- =System.unique_integer/1=: =:positive=, =:monotonic=.
+- =Process.monitor/1=: watching processes you don't own (Lifeline doesn't
+  link to the desks).
+
+* Questions
+
+1. Why are the sessions outside the desks?
+2. Why is =Tabs= before =Window= in a desk, and why =rest_for_one=?
+3. Why can't a desk be significant, so guiltty stops with the last one?
+4. How does a restarted =Tabs= know which sessions are its own?
+5. Why does =Desk.reopen/2= replace the Window instead of restarting it?
+6. Why does Ctrl+Shift+N skip windowless desks, when =guiltty= doesn't?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. So a desk can crash and restart without killing its shells: the new
+   =Tabs= takes them back.
+2. The Window depends on its Tabs: if the Tabs restarts, the Window must
+   restart after it to attach to the new one. =rest_for_one= restarts a
+   child and everything after it, but not what comes before.
+3. Desks are children of a DynamicSupervisor, which doesn't support
+   =auto_shutdown=. Lifeline, a plain child of the application's
+   supervisor, can be significant, so it counts the desks instead.
+4. Each session's supervisor is registered with its desk's id as the
+   Registry value; =running_sessions/1= selects by that value.
+5. The old child spec holds the old Window options, including the display
+   it was opened on. A new launch may come from another display.
+6. Inside a window, Ctrl+Shift+N means "another window", so a fresh one.
+   The launcher reopens a closed window first, because that's how you
+   get back to tabs you locked.

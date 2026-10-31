@@ -4,28 +4,36 @@
 * What changes in MVP 4
 
 Until now guiltty was "a window with a shell in it". In MVP 4 the shells
-become the long-lived part, and the window becomes a view on them:
+become the long-lived part, and the window becomes a view on them. Since
+v0.13.0 there can be many windows, each a *desk* with its own tabs
+(chapter 21 tells that story):
 
 #+begin_example
   Guiltty.Supervisor (rest_for_one)
-  |-- Guiltty.Registry          every session process, by {tab id, role}
+  |-- Guiltty.Registry          sessions by {tab id, role}, desks by {:desk, id}
   |-- Guiltty.Config            ~/.config/guiltty/config.exs, reloaded on save
-  |-- Guiltty.Sessions          DynamicSupervisor
-  |   |-- Session.Supervisor 1  (rest_for_one: Pty, Screen, Parser)
-  |   |-- Session.Supervisor 2
-  |   `-- Session.Supervisor 3
-  |-- Guiltty.Tabs              order, active tab, titles      (significant)
-  `-- Guiltty.Windows           DynamicSupervisor
-      `-- Guiltty.Window        the renderer port, when a window is open
+  |-- Guiltty.Sessions          DynamicSupervisor: every tab of every window
+  |   |-- Session.Supervisor    (rest_for_one: Pty, Screen, Parser)
+  |   `-- ...
+  |-- Guiltty.Desks             DynamicSupervisor: one Desk per window
+  |   |-- Desk 1                (rest_for_one, auto_shutdown)
+  |   |   |-- Guiltty.Tabs      its tabs: order, active, locked   (significant)
+  |   |   `-- Guiltty.Window    its renderer port
+  |   `-- Desk 2 ...
+  |-- Guiltty.Lifeline          watches the desks                 (significant)
+  `-- (a Task)                  opens the first window at boot
 #+end_example
 
-- *Tabs* ([[file:../lib/guiltty/tabs.ex][Guiltty.Tabs]]) are sessions, numbered, started under a
-  DynamicSupervisor. A tab ends when its shell exits. When the last one
-  ends, =Tabs= stops; it's /significant/, so guiltty stops.
+- *Tabs* ([[file:../lib/guiltty/tabs.ex][Guiltty.Tabs]]) are sessions, started under a DynamicSupervisor
+  with ids unique across all windows. A tab ends when its shell exits.
+  When a desk's last tab ends, its =Tabs= stops; it's /significant/ in
+  its desk, so the desk stops.
 - *The window is not significant.* Closing it stops the Window and its
-  renderer. The Window first closes every tab that isn't *locked*
-  (Ctrl+Shift+L). With none locked, the last tab ending is what stops
-  guiltty; locked tabs keep it running.
+  renderer. The Window first closes every tab of its desk that isn't
+  *locked* (Ctrl+Shift+L). With none locked, the last tab ending ends the
+  desk; locked tabs keep it running.
+- *Lifeline* ([[file:../lib/guiltty/lifeline.ex][Guiltty.Lifeline]]) watches the desks. When the last one
+  ends, it stops; it's significant, so guiltty stops.
 
 * Crash-proof, part by part
 
@@ -34,15 +42,17 @@ become the long-lived part, and the window becomes a view on them:
 | a Parser                | that Parser                            | the halo; the screen stays         |
 | a Screen or a Pty       | that tab's session processes           | the window follows the new Screen  |
 | a Session.Supervisor    | that tab, same id                      | the tab stays in place             |
-| the renderer (kill -9)  | the Window, which starts a renderer    | the window comes back, all tabs    |
-| Tabs                    | Tabs, which finds the running sessions | nothing: the tabs are taken back   |
+| the renderer (kill -9)  | that desk's Window, which starts a renderer | the window comes back, all tabs |
+| a desk's Tabs           | that Tabs, and its Window; the Tabs finds its sessions | nothing: the tabs are taken back |
+| a whole Desk            | that desk, same id                     | that window comes back; others never notice |
 
 ** Killing a parser
 To watch a parser crash and come back, kill it from =guiltty remote= (or
 Observer), with vim open in the active tab:
 
 #+begin_src elixir
-Process.exit(GenServer.whereis(Guiltty.Session.via(Guiltty.Tabs.active(), :parser)), :kill)
+[desk | _] = Guiltty.Desk.all()
+Process.exit(GenServer.whereis(Guiltty.Session.via(Guiltty.Tabs.active(Guiltty.Desk.tabs(desk)), :parser)), :kill)
 #+end_src
 
 #+begin_example
@@ -59,18 +69,22 @@ The bytes the old parser had in hand are gone. That's why the Pty sends
 SIGWINCH: full-screen programs redraw on it, so the screen heals itself.
 
 ** Taking the tabs back
-If =Tabs= itself crashes, the sessions keep running (they're under
-=Guiltty.Sessions=, not under =Tabs=). The new =Tabs= asks the Registry which
-session supervisors exist (={id, :supervisor}= keys) and adopts them.
+If a desk's =Tabs= crashes, its sessions keep running (they're under
+=Guiltty.Sessions=, not under =Tabs=). Each session's supervisor is
+registered with its desk's id as the Registry /value/, so the new =Tabs=
+asks for the ={id, :supervisor}= keys whose value is its desk, and adopts
+those: another window's tabs stay where they are.
 
 * Detach and reattach
 
 This is per tab: lock the ones you want to keep with Ctrl+Shift+L (they
 show a 🔒 in the tab bar). Closing the window closes the rest; the locked
-ones keep running, and the next window opens them where you left them.
+ones keep running, and the next =guiltty= brings that window back with
+them, where you left them. Since v0.13.0 that's per window: each closed
+window that kept locked tabs comes back as itself (chapter 21).
 =Tabs= keeps the set of locked tabs, since it already owns the tab list,
-and sends it to windows with the list; the Window only draws the lock and,
-on close, calls =Tabs.close_unlocked/0=.
+and sends it to its window with the list; the Window only draws the lock
+and, on close, calls =Tabs.close_unlocked/1=.
 
 (Until v0.7.0 every tab was kept, always, and that surprised the user: a
 new window opened wherever the old shells had been left, because they were
@@ -83,9 +97,10 @@ running sessions but forgets which were locked.)
                                 and return: it opens its first window itself
                               running? rpc Guiltty.open_window(env64: <DISPLAY...>)
   ... work in three tabs ...
-  close the window          Window stops normally; Tabs and sessions run on
-  $ guiltty                 running: rpc open_window -> a new Window
-                              -> Tabs.attach_window -> the same three tabs
+  close the window          Window stops normally; its desk's Tabs and
+                              locked sessions run on, windowless
+  $ guiltty                 running: rpc open_window -> that desk gets a
+                              new Window -> Tabs.attach_window -> the same tabs
 #+end_example
 
 The launcher is [[file:../rel/env.sh.eex][rel/env.sh.eex]]: the release's start script sources
@@ -93,8 +108,9 @@ The launcher is [[file:../rel/env.sh.eex][rel/env.sh.eex]]: the release's start 
 node. A node it starts opens its first window as it boots, on the display
 it inherited. A node already running is asked for a window: the caller's
 =DISPLAY= (and Wayland, XAUTHORITY) travel with the request, so the window
-opens on the display you ran =guiltty= from. If a window is already open,
-it's raised instead.
+opens on the display you ran =guiltty= from. Since v0.13.0 it's a closed
+window that kept locked tabs, if there is one, and otherwise a new window
+with its own tabs.
 
 (Until v0.12.4 the launcher also waited for a node it had started, and
 then asked it for a window it had already opened. That added about two
@@ -178,6 +194,7 @@ guiltty work.
 
 | Keys                          | Action                     |
 |-------------------------------+----------------------------|
+| Ctrl+Shift+N                  | new window (chapter 21)    |
 | Ctrl+Shift+T                  | new tab                    |
 | Ctrl+Shift+W                  | close tab                  |
 | Ctrl+PgDn, Ctrl+Tab           | next tab                   |

@@ -7,9 +7,8 @@ defmodule Guiltty.Window do
   notices; the supervisor starts a new Window, which starts a new renderer
   and redraws from the Screen. When the user closes the window the renderer
   exits with status 0 and this process stops normally, closing every tab
-  that isn't locked (Ctrl+Shift+L). With none locked, guiltty ends; locked
-  tabs keep running, and the next window shows them again (detach and
-  reattach).
+  of its desk that isn't locked (Ctrl+Shift+L). With none locked, the desk
+  ends (and guiltty, if it was the last); locked tabs keep running.
 
   ## Frames
 
@@ -42,7 +41,7 @@ defmodule Guiltty.Window do
 
   require Logger
 
-  alias Guiltty.{Cheatsheet, Config, Keymap, Session, Tabs}
+  alias Guiltty.{Cheatsheet, Config, Keymap, Lifeline, Session, Tabs}
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.Protocol
 
@@ -61,16 +60,12 @@ defmodule Guiltty.Window do
   }
 
   @doc """
-  Options: `:renderer` (a binary in priv/), `:env` (extra environment for
-  the renderer, as `[{charlist, charlist}]`) and `:name` (defaults to
-  `Guiltty.Window`; `false` for none).
+  Options: `:tabs` (its desk's `Guiltty.Tabs`, required), `:renderer` (a
+  binary in priv/) and `:env` (extra environment for the renderer, as
+  `[{charlist, charlist}]`). Windows have no global name: there can be
+  many, one per desk.
   """
-  def start_link(opts) do
-    case Keyword.get(opts, :name, __MODULE__) do
-      false -> GenServer.start_link(__MODULE__, opts)
-      name -> GenServer.start_link(__MODULE__, opts, name: name)
-    end
-  end
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
   @impl true
   def init(opts) do
@@ -92,6 +87,8 @@ defmodule Guiltty.Window do
     )
 
     state = %{
+      # this window's tabs (Guiltty.Tabs): every window has its own
+      desk_tabs: Keyword.fetch!(opts, :tabs),
       port: port,
       # the renderer binary, and its environment (for a fallback)
       renderer: renderer,
@@ -220,7 +217,7 @@ defmodule Guiltty.Window do
   # last one ending stops guiltty; locked tabs keep running, and
   # the next window shows them again.
   def handle_info({port, {:exit_status, 0}}, %{port: port} = state) do
-    catch_exit(fn -> Tabs.close_unlocked() end)
+    catch_exit(fn -> Tabs.close_unlocked(state.desk_tabs) end)
     {:stop, {:shutdown, :window_closed}, %{state | port: nil}}
   end
 
@@ -279,7 +276,7 @@ defmodule Guiltty.Window do
   defp handle_event({:hello, version, backend}, state) do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
-      info = Tabs.attach_window(self())
+      info = Tabs.attach_window(state.desk_tabs, self())
       {cols, rows} = Session.size(info.active)
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
@@ -303,7 +300,7 @@ defmodule Guiltty.Window do
 
   # The user resized the window and the renderer worked out the new grid.
   defp handle_event({:resize, cols, rows}, state) do
-    Tabs.resize(cols, rows)
+    Tabs.resize(state.desk_tabs, cols, rows)
     state = %{state | size: {cols, rows}}
 
     {:noreply,
@@ -336,7 +333,7 @@ defmodule Guiltty.Window do
     do: {:noreply, state}
 
   defp handle_event({:tab_click, index}, state) do
-    Tabs.switch(index)
+    Tabs.switch(state.desk_tabs, index)
     {:noreply, state}
   end
 
@@ -375,7 +372,7 @@ defmodule Guiltty.Window do
   defp input(state, bytes) do
     if Map.has_key?(state.group, state.active) do
       if state.scroll > 0 or state.view_moved, do: on_screen(state, &Screen.scroll(&1, :bottom))
-      catch_exit(fn -> Tabs.send_input(state.active, bytes) end)
+      catch_exit(fn -> Tabs.send_input(state.desk_tabs, state.active, bytes) end)
       %{state | view_moved: false}
     else
       write(state, bytes)
@@ -473,13 +470,22 @@ defmodule Guiltty.Window do
 
   ## guiltty's own keys
 
+  # A new window, fresh, on the same display as this one: the renderer
+  # gets this window's environment (DISPLAY and the rest).
+  defp run(:new_window, state) do
+    case Lifeline.open(window: [env: state.env], fresh: true) do
+      {:ok, _desk} -> state
+      {:error, reason} -> flash(state, "couldn't open a window: #{inspect(reason)}")
+    end
+  end
+
   defp run(:new_tab, state) do
-    Tabs.new_tab()
+    Tabs.new_tab(state.desk_tabs)
     state
   end
 
   defp run(:close_tab, state) do
-    if state.active, do: Tabs.close(state.active)
+    if state.active, do: Tabs.close(state.desk_tabs, state.active)
     state
   end
 
@@ -544,7 +550,9 @@ defmodule Guiltty.Window do
     programs = state.config.broadcast_programs
     local? = state.confirm_local == state.active
 
-    case catch_exit(fn -> Tabs.toggle_broadcast(state.active, programs, local: local?) end) do
+    case catch_exit(fn ->
+           Tabs.toggle_broadcast(state.desk_tabs, state.active, programs, local: local?)
+         end) do
       {:error, {:not_allowed, program}} ->
         state = %{state | confirm_local: state.active}
         flash(state, "this tab is local (#{program}): Ctrl+Shift+B again adds it as a local tab")
@@ -555,7 +563,7 @@ defmodule Guiltty.Window do
   end
 
   defp run(:lock_tab, state) do
-    if state.active, do: catch_exit(fn -> Tabs.toggle_lock(state.active) end)
+    if state.active, do: catch_exit(fn -> Tabs.toggle_lock(state.desk_tabs, state.active) end)
     state
   end
 
@@ -626,7 +634,7 @@ defmodule Guiltty.Window do
   end
 
   defp switch(state, to) do
-    Tabs.switch(to)
+    Tabs.switch(state.desk_tabs, to)
     state
   end
 

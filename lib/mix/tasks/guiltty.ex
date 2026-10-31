@@ -1,14 +1,12 @@
 defmodule Mix.Tasks.Guiltty do
   @shortdoc "Opens a guiltty window"
   @moduledoc """
-  Starts guiltty and returns when you close the window, or when the last
-  tab's shell exits.
+  Starts guiltty and returns when guiltty stops: when the last window is
+  closed (with no locked tabs left), or the last tab's shell exits.
 
       mix guiltty
 
-  This is the development launcher: closing the window ends it (and the
-  tabs with it). Detaching, closing the window and coming back to the same
-  tabs, is what the release's `guiltty` command does.
+  This is the development launcher.
   """
 
   use Mix.Task
@@ -19,10 +17,10 @@ defmodule Mix.Tasks.Guiltty do
     wait()
   end
 
-  # Wait for the window. A crashed renderer comes back as a new Window, so
-  # when one goes down, look for its replacement before giving up.
+  # Wait until guiltty stops: when the last window (and its tabs) is gone,
+  # Lifeline stops, and the application with it.
   defp wait do
-    case find_window(20) do
+    case Process.whereis(Guiltty.Lifeline) do
       nil ->
         :ok
 
@@ -30,15 +28,8 @@ defmodule Mix.Tasks.Guiltty do
         ref = Process.monitor(pid)
 
         receive do
-          {:DOWN, ^ref, :process, _pid, _reason} -> wait()
+          {:DOWN, ^ref, :process, _pid, _reason} -> Process.sleep(100) && wait()
         end
     end
-  end
-
-  defp find_window(0), do: nil
-
-  defp find_window(tries) do
-    Process.whereis(Guiltty.Window) ||
-      (Process.whereis(Guiltty.Supervisor) && Process.sleep(50) && find_window(tries - 1))
   end
 end

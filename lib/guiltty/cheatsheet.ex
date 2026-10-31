@@ -29,6 +29,7 @@ defmodule Guiltty.Cheatsheet do
     [
       {"Tabs",
        [
+         {"New window", k.(:new_window)},
          {"New tab", k.(:new_tab)},
          {"Close tab", k.(:close_tab)},
          {"Next tab", k.(:next_tab)},

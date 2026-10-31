@@ -19,7 +19,8 @@ defmodule Guiltty.Session.Supervisor do
     Session.start_named(
       opts[:id],
       :supervisor,
-      &Supervisor.start_link(__MODULE__, opts, name: &1)
+      &Supervisor.start_link(__MODULE__, opts, name: &1),
+      opts[:desk]
     )
   end
 

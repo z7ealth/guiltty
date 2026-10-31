@@ -52,6 +52,7 @@ defmodule Guiltty.Config do
   @poll_ms 1_000
 
   @default_keys %{
+    new_window: ["ctrl+shift+n"],
     new_tab: ["ctrl+shift+t"],
     close_tab: ["ctrl+shift+w"],
     next_tab: ["ctrl+page_down", "ctrl+tab"],

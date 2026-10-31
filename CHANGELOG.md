@@ -8,6 +8,21 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.13.0 — 2026-10-30 — Multi window
+
+### Added
+- Several windows at once, each completely independent: its own tabs,
+  locked tabs and broadcast group. Closing one never touches the others,
+  and guiltty stops after the last.
+- Ctrl+Shift+N opens a new window (`new_window` in `keys`).
+- A window closed with locked tabs comes back as it was, with those tabs,
+  the next time you run `guiltty`.
+
+### Changed
+- Running `guiltty` while guiltty is open opens another window (or brings
+  back a closed one that kept locked tabs) instead of raising the open
+  one.
+
 ## 0.12.4 — 2026-10-30 — Security
 
 ### Changed

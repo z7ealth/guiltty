@@ -6,16 +6,16 @@ defmodule Guiltty.Application do
   use Application
 
   #   Guiltty.Supervisor (rest_for_one)
-  #   |-- Guiltty.Registry      names of every session's processes
+  #   |-- Guiltty.Registry      names of every session's and desk's processes
   #   |-- Guiltty.Config        ~/.config/guiltty/config.exs, reloaded on save
   #   |-- Guiltty.Sessions      DynamicSupervisor: one Session.Supervisor per tab
-  #   |-- Guiltty.Tabs          tab order, active tab, titles (significant)
-  #   |-- Guiltty.Windows       DynamicSupervisor: the Window, when one is open
+  #   |-- Guiltty.Desks         DynamicSupervisor: one Desk per window (its
+  #   |                         Tabs and its Window)
+  #   |-- Guiltty.Lifeline      watches the desks (significant)
   #   `-- (a Task)              opens the first window at boot
   #
-  # rest_for_one: each child depends on the ones before it. Tabs is
-  # significant: when the last tab closes, guiltty stops. Windows are not:
-  # closing the window leaves the tabs running.
+  # rest_for_one: each child depends on the ones before it. Lifeline is
+  # significant: when the last desk ends, guiltty stops.
   @impl true
   def start(_type, _args) do
     children =
@@ -24,8 +24,8 @@ defmodule Guiltty.Application do
           [
             Guiltty.Config,
             {DynamicSupervisor, name: Guiltty.Sessions, strategy: :one_for_one},
-            Supervisor.child_spec(Guiltty.Tabs, significant: true),
-            {DynamicSupervisor, name: Guiltty.Windows, strategy: :one_for_one},
+            {DynamicSupervisor, name: Guiltty.Desks, strategy: :one_for_one},
+            Supervisor.child_spec(Guiltty.Lifeline, significant: true),
             {Task, fn -> Guiltty.open_window() end}
           ]
         else

@@ -2,7 +2,8 @@ defmodule Guiltty.Session do
   @moduledoc """
   Helpers for working with a session from iex.
 
-      iex> id = Guiltty.Tabs.active()
+      iex> [desk | _] = Guiltty.Desk.all()
+      iex> id = Guiltty.Tabs.active(Guiltty.Desk.tabs(desk))
       iex> Guiltty.Session.write(id, "ls\\r")
       iex> Guiltty.Session.dump(id) |> IO.puts()
   """
@@ -21,8 +22,10 @@ defmodule Guiltty.Session do
   before its old children have finished exiting, this waits up to a second
   for that process to die and tries once more.
   """
-  def start_named(id, role, start) do
-    name = via(id, role)
+  def start_named(id, role, start, value \\ nil) do
+    # The value is stored with the name: a session's supervisor keeps its
+    # desk's id there, so a desk can find its own sessions again.
+    name = {:via, Registry, {Guiltty.Registry, {id, role}, value}}
 
     case start.(name) do
       {:error, {:already_started, old}} ->

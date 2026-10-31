@@ -1,14 +1,17 @@
 defmodule Guiltty.Tabs do
   @moduledoc """
-  The tabs: which sessions exist, in which order, which one is active, and
-  their titles.
+  One window's tabs: which sessions it has, in which order, which one is
+  active, and their titles. Every window has its own (`Guiltty.Desk`), so
+  windows are independent: their tabs, locked tabs and broadcast groups
+  never mix. Every function takes the desk's Tabs (`Guiltty.Desk.tabs/1`,
+  or a pid).
 
   Each tab is a session (`Guiltty.Session.Supervisor`) started under the
-  `Guiltty.Sessions` DynamicSupervisor, with an integer id. The tabs don't
-  belong to a window: closing the window leaves them running, and the next
-  window shows them again. That's detach and reattach.
+  `Guiltty.Sessions` DynamicSupervisor, with an integer id unique across
+  all desks. The session is registered with its desk's id, so if this
+  process crashes, the new one takes back its own sessions, and only those.
 
-  A window registers with `attach_window/1` and then gets `{:tabs, info}`
+  A window registers with `attach_window/2` and then gets `{:tabs, info}`
   whenever something changes. `info` is a map:
 
     * `:list` - `[{id, title}]`, in order
@@ -35,12 +38,9 @@ defmodule Guiltty.Tabs do
   checked, since there's no connection to lose. (Checking would not work
   either: in a local tab every command you run takes the foreground.)
 
-  A tab ends when its shell exits (or `close/1`). When the last one ends,
-  this process stops; it's significant in the application supervisor, so
-  guiltty stops with it.
-
-  If this process crashes, the sessions keep running: the new one finds
-  them in the Registry and takes them back as tabs.
+  A tab ends when its shell exits (or `close/2`). When the last one ends,
+  this process stops; it's significant in its desk, so the desk stops with
+  it (and guiltty, if it was the last desk: `Guiltty.Lifeline`).
   """
 
   use GenServer, restart: :transient
@@ -52,25 +52,30 @@ defmodule Guiltty.Tabs do
 
   @sessions Guiltty.Sessions
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  @doc """
+  Options: `:desk` (the desk's id; its sessions are registered with it),
+  `:name`, and `:session_opts` (merged into every session's, for tests).
+  """
+  def start_link(opts),
+    do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
 
   @doc "Opens a new tab after the active one and makes it active. Returns its id."
-  def new_tab, do: GenServer.call(__MODULE__, :new_tab)
+  def new_tab(tabs), do: GenServer.call(tabs, :new_tab)
 
   @doc "Closes a tab: its shell gets SIGHUP."
-  def close(id), do: GenServer.call(__MODULE__, {:close, id})
+  def close(tabs, id), do: GenServer.call(tabs, {:close, id})
 
   @doc """
   Locks or unlocks a tab. Closing the window closes every tab but the
-  locked ones; those keep running, and the next window shows them.
+  locked ones; those keep running, and the window comes back with them.
   """
-  def toggle_lock(id), do: GenServer.call(__MODULE__, {:toggle_lock, id})
+  def toggle_lock(tabs, id), do: GenServer.call(tabs, {:toggle_lock, id})
 
   @doc """
   Closes every tab that isn't locked (each shell gets SIGHUP). If none is
-  locked, the last one ending stops Tabs, and guiltty with it.
+  locked, the last one ending stops Tabs, and its desk with it.
   """
-  def close_unlocked, do: GenServer.call(__MODULE__, :close_unlocked)
+  def close_unlocked(tabs), do: GenServer.call(tabs, :close_unlocked)
 
   @doc """
   Puts a tab in the broadcast group, or takes it out. To join, its
@@ -78,8 +83,8 @@ defmodule Guiltty.Tabs do
   joins as a local tab whatever it runs. Returns `{:ok, :joined}`,
   `{:ok, :left}` or `{:error, {:not_allowed, program}}`.
   """
-  def toggle_broadcast(id, programs, opts \\ []),
-    do: GenServer.call(__MODULE__, {:toggle_broadcast, id, programs, opts})
+  def toggle_broadcast(tabs, id, programs, opts \\ []),
+    do: GenServer.call(tabs, {:toggle_broadcast, id, programs, opts})
 
   @doc """
   Sends typed input from tab `id`. In a broadcast group of two or more, it
@@ -87,26 +92,28 @@ defmodule Guiltty.Tabs do
   joined with; otherwise to nobody, and `{:paused, lost_ids}` comes back.
   Outside a group it goes to that tab alone.
   """
-  def send_input(id, bytes), do: GenServer.call(__MODULE__, {:send_input, id, bytes})
+  def send_input(tabs, id, bytes), do: GenServer.call(tabs, {:send_input, id, bytes})
 
   @doc "Switches to `:next`, `:prev`, or the tab at a 0-based index."
-  def switch(to), do: GenServer.call(__MODULE__, {:switch, to})
+  def switch(tabs, to), do: GenServer.call(tabs, {:switch, to})
 
   @doc "The active tab's session id."
-  def active, do: GenServer.call(__MODULE__, :active)
+  def active(tabs), do: GenServer.call(tabs, :active)
 
   @doc "`{[{id, title}], active_id}`."
-  def list, do: GenServer.call(__MODULE__, :list)
+  def list(tabs), do: GenServer.call(tabs, :list)
 
   @doc "Resizes every tab, and makes it the size of tabs opened from now on."
-  def resize(cols, rows), do: GenServer.call(__MODULE__, {:resize, cols, rows})
+  def resize(tabs, cols, rows), do: GenServer.call(tabs, {:resize, cols, rows})
 
   @doc "Registers a window: it gets the tab list now and on every change."
-  def attach_window(pid), do: GenServer.call(__MODULE__, {:attach_window, pid})
+  def attach_window(tabs, pid), do: GenServer.call(tabs, {:attach_window, pid})
 
   @impl true
   def init(opts) do
     state = %{
+      # sessions are registered with it: see running_sessions/1
+      desk: Keyword.get(opts, :desk),
       tabs: [],
       titles: %{},
       locked: MapSet.new(),
@@ -116,7 +123,6 @@ defmodule Guiltty.Tabs do
       lost: MapSet.new(),
       check_scheduled: false,
       active: nil,
-      next_id: 1,
       size: {Config.get().window.columns, Config.get().window.rows},
       windows: MapSet.new(),
       # monitor ref => session id
@@ -129,7 +135,7 @@ defmodule Guiltty.Tabs do
 
   @impl true
   def handle_continue(:first_tab, state) do
-    case running_sessions() do
+    case running_sessions(state.desk) do
       [] ->
         case open_tab(state) do
           {:ok, _id, state} -> {:noreply, state}
@@ -142,11 +148,13 @@ defmodule Guiltty.Tabs do
     end
   end
 
-  # Sessions already running (this process restarted): {id, supervisor pid}.
-  defp running_sessions do
+  # This desk's sessions that are already running (this process restarted):
+  # {id, supervisor pid}, in the order they were opened (ids only grow).
+  defp running_sessions(desk) do
     Guiltty.Registry
     |> Registry.select([
-      {{{:"$1", :supervisor}, :"$2", :_}, [{:is_integer, :"$1"}], [{{:"$1", :"$2"}}]}
+      {{{:"$1", :supervisor}, :"$2", :"$3"}, [{:is_integer, :"$1"}, {:"=:=", :"$3", desk}],
+       [{{:"$1", :"$2"}}]}
     ])
     |> Enum.sort()
   end
@@ -158,8 +166,7 @@ defmodule Guiltty.Tabs do
       state
       | tabs: state.tabs ++ [id],
         titles: Map.put(state.titles, id, title),
-        active: state.active || id,
-        next_id: max(state.next_id, id + 1)
+        active: state.active || id
     }
     |> monitor_session(id, pid)
   end
@@ -326,12 +333,14 @@ defmodule Guiltty.Tabs do
   defp start_dir(dir, _active), do: dir
 
   defp open_tab(state) do
-    id = state.next_id
+    # Unique across every desk, and increasing: the Registry names sessions
+    # by id, and running_sessions/1 sorts by it.
+    id = System.unique_integer([:positive, :monotonic])
     {cols, rows} = state.size
     # The config says which shell and where; the session_opts given at
     # start (tests use them) win over it.
     opts =
-      [id: id, cols: cols, rows: rows, owner: self()]
+      [id: id, desk: state.desk, cols: cols, rows: rows, owner: self()]
       |> Keyword.merge(config_opts(state))
       |> Keyword.merge(state.session_opts)
 
@@ -344,8 +353,7 @@ defmodule Guiltty.Tabs do
           state
           | tabs: List.insert_at(state.tabs, index, id),
             titles: Map.put(state.titles, id, ""),
-            active: id,
-            next_id: id + 1
+            active: id
         }
 
         {:ok, id, monitor_session(state, id, pid)}

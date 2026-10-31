@@ -86,6 +86,8 @@
   # punctuation character like = or -, with any of the ctrl+, shift+ and
   # alt+ modifiers.
   keys: [
+    # A new window, with its own tabs (closing it never touches the others).
+    new_window: ["ctrl+shift+n"],
     new_tab: ["ctrl+shift+t"],
     close_tab: ["ctrl+shift+w"],
     next_tab: ["ctrl+page_down", "ctrl+tab"],
@@ -104,7 +106,8 @@
     # Shows every key (this list, as you bound it).
     cheatsheet: ["ctrl+shift+/"],
     # Locks the tab: closing the window ends every tab but the locked ones,
-    # which keep running; the next guiltty opens them where you left them.
+    # which keep running; the next `guiltty` brings that window back with
+    # them, where you left them.
     lock_tab: ["ctrl+shift+l"],
     # Puts the tab in the broadcast group, or takes it out.
     broadcast: ["ctrl+shift+b"]

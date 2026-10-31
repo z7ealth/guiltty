@@ -2,31 +2,21 @@ defmodule Guiltty do
   @moduledoc """
   guiltty, a GPU terminal on the BEAM.
 
-  The tabs (`Guiltty.Tabs`) live as long as guiltty runs; windows come and
-  go. `open_window/1` shows them, starting a window or bringing the open one
-  to the front.
+  Every window is a desk (`Guiltty.Desk`): its own tabs and its own
+  renderer, independent of the others. `open_window/1` opens a new one.
   """
 
   @doc """
-  Opens a window on the running tabs, or raises the open one.
+  Opens a new window, with one new tab.
 
   Options are passed to `Guiltty.Window`. `env64:` is the release
   launcher's way to pass the caller's display variables (base64 of
   `NAME=value` lines), so a window opens on the display it was asked from.
   """
   def open_window(opts \\ []) do
-    opts = decode_env(opts)
-
-    case Process.whereis(Guiltty.Window) do
-      nil ->
-        case DynamicSupervisor.start_child(Guiltty.Windows, {Guiltty.Window, opts}) do
-          {:ok, _pid} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
-
-      pid ->
-        send(pid, :raise)
-        :ok
+    case Guiltty.Lifeline.open(window: decode_env(opts)) do
+      {:ok, _desk} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

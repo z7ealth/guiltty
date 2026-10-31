@@ -84,8 +84,9 @@ a restarted renderer redraws.
 From iex:
 
 #+begin_src elixir
-Guiltty.Session.write(Guiltty.Tabs.active(), "ls\r")
-Guiltty.Session.dump(Guiltty.Tabs.active()) |> IO.puts()
+id = Guiltty.Tabs.active(Guiltty.Desk.tabs(hd(Guiltty.Desk.all())))
+Guiltty.Session.write(id, "ls\r")
+Guiltty.Session.dump(id) |> IO.puts()
 #+end_src
 
 * One session, three processes
@@ -170,10 +171,10 @@ session comes back and the window follows it.
 The Pty is marked *significant*. When it stops with ={:shutdown, _}= (bash
 exited), its =:transient= restart policy says don't restart, and
 =auto_shutdown: :any_significant= shuts down the whole session. The session
-supervisor's exit tells =Guiltty.Tabs= the tab is gone. In MVP 1 the
-session itself was significant, so =exit= closed the window; since MVP 4
-only the *last* tab ending stops guiltty, and closing the window stops
-nothing but the window.
+supervisor's exit tells its window's =Guiltty.Tabs= the tab is gone. In
+MVP 1 the session itself was significant, so =exit= closed the window;
+since MVP 4 only the *last* tab ending stops guiltty (since v0.13.0, the
+last tab of the last window: chapter 21).
 
 * Loot
 
