@@ -113,4 +113,33 @@ defmodule Guiltty.SessionTest do
     Session.write(id, "exit\r")
     assert_receive {:DOWN, ^ref, :process, ^sup, :shutdown}, 5000
   end
+
+  test "answers a program never reads can't pile up" do
+    # In raw mode the kernel stops taking input once its buffer is full,
+    # so guiltty's answers to 300,000 queries would wait in the Pty: about
+    # 2.7 MB, and more for every query. Past 64 KB they're dropped.
+    script = """
+    stty raw -echo
+    i=0; while [ $i -lt 300 ]; do printf '\\033[c%.0s' $(seq 1000); i=$((i+1)); done
+    sleep 30
+    """
+
+    start_supervised!(
+      {Session.Supervisor, id: :answer_flood, shell: "/bin/sh", args: ["-c", script]},
+      id: :answer_flood
+    )
+
+    pty = GenServer.whereis(Session.via(:answer_flood, :pty))
+
+    pending = fn -> byte_size(:sys.get_state(pty).pending) end
+
+    # Wait until the flood is over: the backlog stops changing.
+    Enum.reduce_while(1..100, -1, fn _, last ->
+      Process.sleep(100)
+      now = pending.()
+      if now == last and now > 0, do: {:halt, now}, else: {:cont, now}
+    end)
+
+    assert pending.() <= 64 * 1024
+  end
 end

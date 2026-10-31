@@ -29,6 +29,12 @@ the tab bar instead of ignoring them.
   another tab's shell).
 - Two calls on the same terminal from different threads could race when
   one closed it; each terminal now has a lock.
+- A program that asked the terminal questions without reading the
+  answers could make them pile up until guiltty ran out of memory. At most
+  64 KB of answers now wait; the rest are dropped.
+- Window and tab titles set by programs can no longer show guiltty's own
+  markers (🔒 📡 🏠 ⚠), so a server can't make its tab look locked or in
+  the broadcast group. Bidi and other control characters are removed too.
 - The renderer used the window's size without checking that SDL could
   tell it; if it couldn't (a window gone mid-change), the grid size came
   from garbage. It now keeps the grid it has.

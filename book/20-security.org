@@ -223,6 +223,65 @@ crash, to:
 - fifty open-and-close cycles, then counting the BEAM's open files
   (=/proc/self/fd=): none may be left over.
 
+* Layer 7: what a program can make guiltty do
+
+Everything above is about the C. The other door is the bytes programs
+print: a file you =cat=, or a server at the other end of =ssh=, can send
+any escape sequence. The classic terminal attacks make the terminal
+*type something back*. Some terminals answer "what's your title?" with
+the title, so a program sets the title to a command, asks, and the
+answer lands at your shell's prompt.
+
+guiltty answers four questions, all with text it makes itself (chapter
+11): =CSI c=, =CSI > c=, =CSI 5 n= and =CSI 6 n=. It never reports the
+title, never reads or writes the clipboard for a program (OSC 52), and
+ignores window operations (=CSI t=). A property test feeds thousands of
+random escape sequences, with random parameters and strings, and checks
+that every answer is one of those four shapes.
+
+The audit still found two things.
+
+** Answers nobody reads
+
+Each =ESC [ c= (3 bytes) makes guiltty queue a 9-byte answer. A program
+that switches its terminal to raw mode, sends queries and never reads
+leaves the answers waiting in the =Pty=: in raw mode the kernel takes only
+a few KB of input and then refuses more. Measured: 300,000 queries left
+*2.7 MB* waiting, and it grows with every query, until the BEAM runs out
+of memory and every tab is gone.
+
+#+begin_example
+  program (raw mode, never reads)       guiltty
+    ESC [ c  ESC [ c  ESC [ c ... ──>  Screen: 3 answers
+                                         │ Pty.answer([a, a, a])
+                                         v
+                           Pty pending: kept while under 64 KB,
+                                        whole answers only
+                                         │ write, when the kernel takes it
+                                         v
+                           kernel input buffer (full: the program
+                                        doesn't read)
+#+end_example
+
+=Pty.answer/2= now drops an answer that would take the backlog past 64 KB,
+whole, so the program never gets half an escape sequence. What you type
+and paste goes through =Pty.write/2=, which drops nothing.
+
+** Titles that pretend
+
+guiltty draws its own markers at the start of a tab's title: 🔒 locked,
+📡 in the broadcast group, 🏠 local, ⚠ lost. The rest of the title is the
+program's. A server could set its title to =📡 prod= and look like a tab
+you're broadcasting to, or use a bidi control (U+202E) to make text read
+backwards. Titles are now stripped of guiltty's markers, of bidi controls
+and of control characters, made valid UTF-8 and cut on a character
+boundary (=Terminal.clean_title/1=).
+
+#+begin_example
+  program sends   OSC 0 ; 📡 prod 🔒 <U+202E>lmth.exe BEL
+  tab shows       prod lmth.exe
+#+end_example
+
 * Loot
 
 - =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,
@@ -243,6 +302,13 @@ crash, to:
   hand each input to the renderer as stdin.
 - =pidfd_open(2)= and =ioctl_tty(2)= =TIOCGPTPEER=; chapter 2's loot for the
   rest of the NIF audit.
+- XTerm Control Sequences (ctlseqs), "Operating System Commands" and
+  "Window manipulation": the queries other terminals answer, and why some
+  are dangerous.
+- "Trojan Source" (trojansource.codes): bidi controls that make text read
+  differently than it is.
+- =termios(3)=: =ICANON= (canonical mode, whose line buffer discards
+  overflow) against raw mode.
 
 * Questions
 
@@ -257,6 +323,8 @@ crash, to:
    being told the protocol?
 8. Why does the fuzz backend check the slots and the cursor, when no
    GPU is there to be hurt?
+9. Why are answers capped, but not what you type or paste?
+10. Why strip 📡 from a program's title?
 
 ** Answers
 :PROPERTIES:
@@ -290,3 +358,9 @@ crash, to:
    atlas and the cell buffer with them. A bad one wouldn't crash the
    core, it would crash (or garble) the GPU backend later, where it's
    much harder to trace back.
+9. Answers are made by guiltty when a program asks, so a program decides
+   how many there are; it can ask millions of times. What you type and
+   paste is yours, and dropping it would lose your input.
+10. guiltty puts 📡 in front of tabs that are in the broadcast group. If a
+    program could show it too, you couldn't tell which tabs your typing
+    goes to.

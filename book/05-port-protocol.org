@@ -61,7 +61,7 @@ one byte.
 |   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u8 cursor style, u16 cluster count, then per cluster: u32 id, u8 length, UTF-8; u16 row count, then per row: u16 index, cols x 14-byte cells |
 |   4 | TEXT  | renderer->Elixir | UTF-8 text the user typed                                     |
 |   5 | KEY   | renderer->Elixir | u32 SDL keycode, u16 SDL modifier bits                        |
-|   6 | RESIZE| renderer->Elixir | u16 cols, u16 rows that fit the window now                    |
+|   6 | RESIZE| renderer->Elixir | u16 cols, u16 rows that fit the window now (each 1..4096)     |
 |   7 | TITLE | Elixir->renderer | the window title, UTF-8                                       |
 |   8 | PASTE | renderer->Elixir | clipboard text, UTF-8                                         |
 |   9 | MOUSE | renderer->Elixir | u8 kind (press, release, motion, wheel), u8 button, u16 col, u16 row, u16 modifiers, u8 clicks |

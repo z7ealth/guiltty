@@ -197,12 +197,28 @@ defmodule Guiltty.Terminal do
 
   defp osc(_data, grid), do: grid
 
-  # Titles come from programs: keep them short and free of control bytes.
-  defp clean_title(title) do
+  # Titles come from programs, maybe from a server at the other end of
+  # ssh. Keep them short, valid UTF-8, and free of:
+  # - control characters, C0 and C1;
+  # - bidi controls, which reorder how the text around them reads (the
+  #   "Trojan Source" trick);
+  # - guiltty's own tab markers (🔒 locked, 📡 broadcast, 🏠 local, ⚠
+  #   lost), so a title can't pretend a tab is locked or in the group.
+  @title_junk ~r/[\x{00}-\x{1f}\x{7f}-\x{9f}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}\x{1f512}\x{1f4e1}\x{1f3e0}\x{26a0}\x{fe0f}]/u
+
+  @doc false
+  def clean_title(title) do
     title
-    |> binary_part(0, min(byte_size(title), @max_title))
-    |> String.replace(~r/[\x00-\x1f\x7f]/, "")
+    |> String.replace_invalid()
+    |> String.replace(@title_junk, "")
+    |> String.trim()
+    |> truncate_utf8(@max_title)
   end
+
+  defp truncate_utf8(text, max) when byte_size(text) <= max, do: text
+
+  defp truncate_utf8(text, max),
+    do: text |> binary_part(0, max) |> String.chunk(:valid) |> List.first("")
 
   ## Parameters
 

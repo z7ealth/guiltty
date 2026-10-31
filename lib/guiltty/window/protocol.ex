@@ -34,6 +34,7 @@ defmodule Guiltty.Window.Protocol do
   @open_url 21
 
   @max_tab_title 255
+  @max_grid 4096
 
   @type event ::
           {:hello, version :: non_neg_integer(), backend :: binary()}
@@ -159,8 +160,11 @@ defmodule Guiltty.Window.Protocol do
   def decode(<<@text, text::binary>>), do: {:ok, {:text, text}}
   def decode(<<@key, keycode::32, mods::16>>), do: {:ok, {:key, keycode, mods}}
 
-  def decode(<<@resize, cols::16, rows::16>>) when cols > 0 and rows > 0,
-    do: {:ok, {:resize, cols, rows}}
+  # The renderer's own limit (max_grid in main.c): a grid bigger than that
+  # is a broken message, not a window.
+  def decode(<<@resize, cols::16, rows::16>>)
+      when cols in 1..@max_grid and rows in 1..@max_grid,
+      do: {:ok, {:resize, cols, rows}}
 
   def decode(<<@paste, text::binary>>), do: {:ok, {:paste, text}}
 

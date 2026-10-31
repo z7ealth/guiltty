@@ -804,3 +804,30 @@ closed pty and a dead one, hammer one pty from sixteen processes while
 one closes it, and count the BEAM's open files after fifty open/close
 cycles. Against the old NIF, only the signal-range test fails: the races
 can't be provoked on demand.
+
+## 2026-10-30 — Security, step 4: what programs can make guiltty do
+
+_Draft: agent, awaiting user_
+
+The good news first: guiltty answers only four queries, all with text it
+makes itself. No title reports, no clipboard for programs, no window
+operations. A property test now feeds thousands of random escape
+sequences and checks every answer is one of those four shapes.
+
+Two real findings. The first: answers nobody reads. I expected the
+kernel to hold them, and in line mode it does (it discards what doesn't
+fit). In raw mode it refuses them instead, so they waited in the Pty: a
+program sending 300,000 queries left 2.7 MB behind, three times what it
+sent, with no limit. A server over ssh could run guiltty out of memory
+that way. Answers now go through `Pty.answer/2`, which keeps whole
+answers while the backlog is under 64 KB. The first version of the cap
+let one batch through on top (73 KB), because a single read of queries
+makes about 190 KB of answers at once; the test caught it.
+
+The second: tab titles could wear guiltty's own markers. A server
+calling itself "📡 prod" would look like a tab in the broadcast group.
+Titles now lose the markers, bidi controls (Elixir itself refuses those
+in source code, I found out trying to test it) and control characters,
+and are made valid UTF-8.
+
+Also: `RESIZE` from the renderer is capped at 4096 x 4096, its own limit.

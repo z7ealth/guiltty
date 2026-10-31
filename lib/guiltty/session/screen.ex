@@ -320,7 +320,7 @@ defmodule Guiltty.Session.Screen do
 
   defp answer_queries(state) do
     {responses, grid} = Grid.take_responses(state.grid)
-    if responses != [], do: Pty.write(state.id, IO.iodata_to_binary(responses))
+    if responses != [], do: Pty.answer(state.id, Enum.map(responses, &IO.iodata_to_binary/1))
     %{state | grid: grid}
   end
 

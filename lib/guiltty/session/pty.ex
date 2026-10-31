@@ -34,6 +34,10 @@ defmodule Guiltty.Session.Pty do
   @max_reads 16
   # Chunks sent to the parser and not yet acknowledged.
   @max_in_flight 4
+  # Answers to terminal queries (Guiltty.Terminal) waiting for the program
+  # to read them. A program that asks millions of times and never reads
+  # would otherwise grow this without end, and take the BEAM with it.
+  @max_answer_backlog 64 * 1024
   @sighup 1
   @sigkill 9
 
@@ -43,6 +47,14 @@ defmodule Guiltty.Session.Pty do
 
   @doc "Sends bytes to the shell, as if typed."
   def write(id, bytes), do: GenServer.cast(Session.via(id, :pty), {:write, bytes})
+
+  @doc """
+  Sends the terminal's answers to queries (cursor position, device
+  attributes), in order. Unlike `write/2`, an answer that would take what's
+  waiting past 64 KB is dropped, whole: a program that doesn't read its
+  answers can't make them pile up, and never gets half of one.
+  """
+  def answer(id, answers), do: GenServer.cast(Session.via(id, :pty), {:answer, answers})
 
   @doc """
   Tells the kernel the terminal's new size (TIOCSWINSZ). The kernel then
@@ -211,6 +223,17 @@ defmodule Guiltty.Session.Pty do
   @impl true
   def handle_cast({:write, bytes}, state) do
     {:noreply, flush(%{state | pending: state.pending <> bytes})}
+  end
+
+  def handle_cast({:answer, answers}, state) do
+    pending =
+      Enum.reduce(answers, state.pending, fn answer, pending ->
+        if byte_size(pending) + byte_size(answer) <= @max_answer_backlog,
+          do: pending <> answer,
+          else: pending
+      end)
+
+    {:noreply, flush(%{state | pending: pending})}
   end
 
   def handle_cast(:ack, state) do

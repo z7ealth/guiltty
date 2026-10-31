@@ -112,17 +112,23 @@ the answer from their input, as if you had typed it:
 | are you OK?   | =CSI 5 n=      | =CSI 0 n=          | yes                           |
 | where's the cursor? | =CSI 6 n= | =CSI row ; col R=  | 1-based                       |
 
-The answers collect in the grid's =responses=, and the Screen writes them
-back through the =Pty=. The version 10 answer is deliberately old: =vim=
+The answers collect in the grid's =responses=, and the Screen hands them
+to the =Pty= (=Pty.answer/2=), which writes them to the program. If the
+program doesn't read them, they wait in the Pty, but never more than 64
+KB: past that, new answers are dropped, whole (chapter 20). The version 10
+answer is deliberately old: =vim=
 looks at it to decide which newer xterm features to ask for, and guiltty
 doesn't have those yet.
 
 * The window title
 
 =OSC 0 ; text BEL= and =OSC 2 ; text BEL= set the title. Your prompt does it
-on every command, =vim= can too. The title comes from a program, so it's
-cut to 256 bytes and stripped of control characters before it reaches the
-renderer, which sets it with =SDL_SetWindowTitle=.
+on every command, =vim= can too. The title comes from a program, maybe a
+server at the other end of =ssh=, so before it reaches the renderer (which
+sets it with =SDL_SetWindowTitle=) it's made valid UTF-8, stripped of
+control characters, of bidi controls and of guiltty's own tab markers
+(🔒 📡 🏠 ⚠), and cut to 256 bytes on a character boundary
+(=Terminal.clean_title/1=; chapter 20 says why).
 
 * Loot
 
