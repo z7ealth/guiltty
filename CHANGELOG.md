@@ -10,6 +10,12 @@ the tab bar instead of ignoring them.
 
 ## Unreleased
 
+### Changed
+- The README says what guiltty has been tried on (openSUSE, X11, AMD and
+  Mesa's software renderers) and how fast it is at heavy output (about
+  3 to 4 MB/s), and that it's Elixir and C in nearly equal parts, not "Elixir
+  with a little C". The menu entry's description says the same.
+
 ### Fixed
 - `guiltty` typed in a guiltty tab printed the release's usage instead of
   opening a window: the tab's `PATH` started with the release's own
@@ -38,8 +44,8 @@ the tab bar instead of ignoring them.
 
 ### Changed
 - Programs that print many short lines (`seq`, logs, `cat` of a big file)
-  show up about 3x faster: the screen lays such lines down together and
-  scrolls once.
+  show up about 3x faster (`make bench`, a real window: 1.2 to 4.0 MB/s):
+  the screen lays such lines down together and scrolls once.
 - guiltty starts about 100 ms sooner: the release loads each module the
   first time it's used instead of all of them at boot.
 - The Vulkan renderer uploads only the rows that changed each frame, like
@@ -53,8 +59,8 @@ the tab bar instead of ignoring them.
 ## 0.13.0 — 2026-10-30 — Multi window
 
 ### Added
-- Several windows at once, each completely independent: its own tabs,
-  locked tabs and broadcast group. Closing one never touches the others,
+- Several windows at once, each with its own tabs, locked tabs and
+  broadcast group. Closing one never touches the others,
   and guiltty stops after the last.
 - Ctrl+Shift+N opens a new window (`new_window` in `keys`).
 - A window closed with locked tabs comes back as it was, with those tabs,
@@ -108,12 +114,12 @@ the tab bar instead of ignoring them.
 
 ### Added
 - `CHANGELOG.md`.
-- Ligatures: with a font that has them (JetBrains Mono, Fira Code),
+- Ligatures: with a font that has them (tried with JetBrains Mono),
   `->`, `!=`, `|>`, `=>`, `===` and the like are drawn as one symbol.
   On by default; `ligatures: false` turns them off.
-- Complete install instructions in the README: what to install first,
-  what each dependency is for, and the commands for openSUSE, Fedora,
-  Ubuntu and Arch.
+- Install instructions in the README: what to install first, what each
+  dependency is for, and the commands for openSUSE, Fedora, Ubuntu and
+  Arch (only openSUSE's have been tried).
 
 ### Changed
 - The renderer protocol is now version 9 (the ligatures option). Build
@@ -131,8 +137,9 @@ the tab bar instead of ignoring them.
 ## 0.10.0 — 2026-10-30 — Vulkan
 
 ### Added
-- A Vulkan 1.3 renderer, `guiltty_vk`, now the default. It draws the same
-  picture as the OpenGL one, pixel for pixel.
+- A Vulkan 1.3 renderer, `guiltty_vk`, now the default. On the recorded
+  test session it draws the same picture as the OpenGL one: no pixel
+  differs.
 - `renderer: :vulkan | :gl` setting (applies to the next window).
 - Automatic fallback: if Vulkan can't start (no driver, no GPU that can
   show the window), guiltty draws with OpenGL and says so in the tab bar.

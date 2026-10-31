@@ -6,7 +6,8 @@
 =~/.config/guiltty/config.exs= (or =$GUILTTY_CONFIG=) is an Elixir file
 whose last expression is a keyword list. Anything it leaves out keeps its
 default. guiltty checks the file every second and applies changes to the
-open window (how, and why the evaluation can't crash anything, is in
+open window (how, and why a config with a mistake in it can't crash
+guiltty, is in
 [[file:12-beam-advantage.org][chapter 12]]). Ctrl+, opens it in your editor, creating it from
 [[file:../priv/config.example.exs][the example]] first; the example lists every setting with a comment.
 

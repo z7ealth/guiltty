@@ -3,8 +3,10 @@
 
 * Why a second backend
 
-The OpenGL backend ([[file:06-renderer.org][chapter 6]]) works. Vulkan draws exactly the same
-picture, pixel for pixel. What changes is who does the bookkeeping. OpenGL
+The OpenGL backend ([[file:06-renderer.org][chapter 6]]) works. Vulkan draws the same picture: on
+the recorded test session, not one pixel differs (the table under
+"Testing: replay, screenshots, parity"; GPUs are allowed to round a blend
+differently, so the test permits 1 pixel in 1000). What changes is who does the bookkeeping. OpenGL
 is a big state machine with a driver behind it that guesses what you
 meant: when a texture is safe to overwrite, when a frame is done, where
 memory lives. Vulkan guesses nothing. Each of those is a line of code in

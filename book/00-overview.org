@@ -45,16 +45,30 @@ adding new boxes.
   +-------------+                                  pixels
 #+end_example
 
-Three pieces are C, everything else is Elixir:
+Three pieces are C, the rest of the program is Elixir. That doesn't make
+the C small: it's about 5,600 lines (plus 320 of shaders) next to about
+6,500 of Elixir, so a bit under half. Most of it is the renderer, since
+fonts, glyphs and two GPU APIs take a lot of code.
+
+| Part          | Language | Lines (about) |
+|---------------+----------+---------------|
+| everything that decides: parser, screen, tabs, windows, config | Elixir | 6,500 |
+| the renderer: core 3,000, Vulkan 1,200, OpenGL 400 | C  | 4,500 |
+| the PTY NIF   | C        | 530           |
+| the client    | C        | 250           |
+| fuzz targets and tools (development only) | C | 280 |
+
+(Counted with =wc -l=, comments and blank lines included, without the
+generated width table; the tests are another 3,600 lines of Elixir.)
 
 - *The PTY NIF* lives inside the BEAM because it has to make syscalls
-  (=openpty=, =fork=, =read=, =write=). It is kept tiny, since a crash there
-  takes down the whole VM.
+  (=openpty=, =fork=, =read=, =write=). It is kept small (about 530 lines),
+  since a crash there takes down the whole VM.
 - *The renderer* is a separate program. If it segfaults, only the window dies;
   bash and the screen contents survive in Elixir and can be redrawn. It
   comes in two builds with the same core: =guiltty_vk= (Vulkan, the
   default) and =guiltty_gl= (OpenGL, the fallback). See [[file:19-vulkan.org][chapter 19]].
-- *The client* (since MVP 15) is the =guiltty= command itself: a tiny
+- *The client* (since MVP 15) is the =guiltty= command itself: a small
   program that asks the running guiltty for a window over a Unix socket,
   or starts guiltty. It decides nothing. See [[file:23-client-server.org][chapter 23]].
 

@@ -7,7 +7,9 @@ Until v0.13.0 guiltty had one window. Running =guiltty= again only raised
 it, and every tab belonged to it. Now there can be as many windows as you
 like, and each is *independent*: its own tabs, its own active tab, its own
 locked tabs, its own broadcast group. Closing one never touches another,
-and a crash in one never reaches another.
+and a crash in one window's processes or renderer never reaches another.
+They do share one BEAM: if that goes (see "What stays shared"), every
+window goes with it.
 
 | You do                               | guiltty does                                   |
 |--------------------------------------+------------------------------------------------|
@@ -137,7 +139,11 @@ and these are shared on purpose:
 - the config (=Guiltty.Config=): a change applies to every window;
 - the fallback to OpenGL: once Vulkan has failed, later windows start
   with OpenGL;
-- the sessions' supervisor, so a desk's crash doesn't take its shells.
+- the sessions' supervisor, so a desk's crash doesn't take its shells;
+- the VM itself, and the PTY NIF inside it. A crash in the NIF, or the
+  BEAM running out of memory, stops every window and every tab at once.
+  That's the price of one program instead of one per window, and why the
+  NIF is kept small and audited (chapter 20).
 
 Each window still has its own renderer process, so a renderer crash takes
 down only its own window.

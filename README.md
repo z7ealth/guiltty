@@ -4,11 +4,21 @@
 
 # guiltty
 
-A GPU terminal emulator in Elixir, with a little C: a PTY NIF and a
-renderer (Vulkan, or OpenGL) that runs as its own process.
+A GPU terminal emulator in Elixir and C. Elixir holds the behavior: the
+parser, the screen, tabs, windows, config. C does the syscalls and the
+pixels: a PTY NIF, a renderer (Vulkan, or OpenGL) that runs as its own
+process, and the small `guiltty` command. By lines of code it's a bit
+more than half Elixir (about 6,500 lines) and a bit less than half C
+(about 5,600, plus 320 of shaders).
 
-Linux only. Tested on X11; Wayland should work through SDL but hasn't
-been tried.
+What it's been tried on, so far: Linux only (openSUSE Tumbleweed), X11,
+an AMD GPU (Mesa's RADV) and Mesa's software renderers. Wayland, Intel
+and NVIDIA GPUs and other distributions should work but haven't been
+tried.
+
+It isn't fast at heavy output: a big `cat` goes by at about 3 to 4 MB/s
+(book chapter 22), where native terminals are known to be much faster. It's meant to be
+read and understood (see [book/](book/index.org)) as much as used.
 
 ## Install
 
@@ -72,10 +82,11 @@ sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz \
 
 guiltty itself is developed on Elixir 1.20.4 with Erlang/OTP 29, both
 from asdf; a distribution's Elixir 1.20 may come with an older Erlang,
-which should work but is less tested.
+which should work but hasn't been tried.
 
-guiltty also needs a GPU driver with OpenGL 3.3, which any desktop has.
-For Vulkan it needs a Vulkan 1.3 driver (for AMD and Intel GPUs, Mesa's).
+guiltty also needs a GPU driver with OpenGL 3.3, which almost any desktop
+from the last decade has. For Vulkan it needs a Vulkan 1.3 driver (for
+AMD and Intel GPUs, Mesa's; only AMD has been tried).
 Without one, guiltty draws with OpenGL.
 
 Fonts come from fontconfig. guiltty looks best with a Nerd Font (for

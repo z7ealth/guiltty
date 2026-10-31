@@ -1041,3 +1041,28 @@ script *was* the launcher, which is why nobody noticed. Shells now get
 PATH without those two leading folders. And `time_to_window.sh` prints
 what the command said when no window comes, so the next failure of this
 kind explains itself.
+
+## 2026-10-31 — Checking what the docs claim
+
+_Draft: agent, awaiting user_
+
+**Tried.** Went through the README, AGENTS.md, the CHANGELOG and the book
+looking for anything a reader could call out as untrue. The first one
+was the intro itself: "Elixir, with a little C". Counting lines said
+otherwise: about 6,500 lines of Elixir and 5,600 of C (plus 320 of
+shaders). The renderer alone is 4,500. "A little C" stopped being true
+somewhere around fonts and the second GPU backend.
+
+**Broke.** Nothing in the code, but several sentences said more than was
+measured: Vulkan "pixel for pixel" (true for one recorded session, and
+the test allows 1 in 1000), windows "completely independent" (they share
+one BEAM, so a NIF crash takes them all), a config that "can't crash
+anything" (it can call `System.halt/0`), Fira Code ligatures (never
+tried), "complete" install commands for four distributions (one tried),
+"any desktop has OpenGL 3.3", a client of "about 200 lines" (245) that
+"starts in a millisecond" (never measured alone).
+
+**Clicked.** Saying where something was measured costs a few words and
+makes the number worth more, not less. The README now says up front
+what guiltty has been tried on and that it's slow at heavy output: a
+critic can't "discover" what the first paragraph already admits.

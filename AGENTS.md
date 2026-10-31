@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Instructions for coding agents working on **guiltty**, a GPU terminal emulator
-written in Elixir with two pieces of C: a PTY NIF and a renderer that runs as a
-separate OS process.
+written in Elixir and C. The C is a PTY NIF, a renderer that runs as a separate
+OS process, and the `guiltty` client, plus fuzz targets and tools for
+development. By lines, C is a bit under half the code: don't describe it as "a
+little C".
 
 The build plan (`guiltty — build plan`, Oct 27 2026) is the source of truth for
 scope. This file covers how to carry it out.

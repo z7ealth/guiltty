@@ -54,7 +54,7 @@ client's job is to find that BEAM, or start it.
 
 * The client: a doorbell
 
-[[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]], about 200 lines, decides nothing:
+[[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]], about 250 lines, decides nothing:
 
 1. With arguments (=guiltty stop=, =pid=, =remote=), it =execv= s the
    release's own script with them, as the old wrapper did.
@@ -76,9 +76,10 @@ client's job is to find that BEAM, or start it.
 
 It finds the release from =/proc/self/exe=: it lives in
 =lib/guiltty-VERSION/priv/= inside it, and =~/.local/bin/guiltty= is a link
-to it, so the real path is always the right release. It uses no
-libraries, so it starts in about a millisecond, and it's built like the
-rest of the C: C23, the hardening flags, both analyzers.
+to it, so the real path is always the right release. It links only the
+C library, so it starts quickly: almost all of the 85 ms of a warm
+launch is the window opening, not the client. It's built like the rest
+of the C: C23, the hardening flags, both analyzers.
 
 * The server: Guiltty.Launcher
 
@@ -121,7 +122,7 @@ old launcher asked a node that was already going, or started a new node
 whose name (=guiltty@127.0.0.1=) the old one still held, so the new one
 couldn't start.
 
-Two things fix it for good:
+Two things fix it:
 
 #+begin_example
   last window closes

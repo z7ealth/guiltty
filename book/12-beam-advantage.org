@@ -35,7 +35,12 @@ v0.13.0 there can be many windows, each a *desk* with its own tabs
 - *Lifeline* ([[file:../lib/guiltty/lifeline.ex][Guiltty.Lifeline]]) watches the desks. When the last one
   ends, it stops; it's significant, so guiltty stops.
 
-* Crash-proof, part by part
+* What survives a crash, part by part
+
+Every Elixir part can crash and come back without taking the rest. Two
+things can't: the PTY NIF runs inside the BEAM, so its crash stops the
+whole VM, and so does the VM itself running out of memory. Then every
+tab goes (chapter 20 is how the NIF is kept from crashing).
 
 | What crashes            | What restarts                          | What you see                       |
 |-------------------------+----------------------------------------+------------------------------------|
@@ -237,4 +242,7 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+/,
 4. Without it, a fast program would queue updates faster than the renderer
    draws them. One update per frame keeps memory flat and latency low.
 5. A linked process that raises takes its caller down. A monitor only
-   reports the death, so a bad config can't crash guiltty.
+   reports the death, so a config that raises can't crash guiltty. (A
+   config is still code that runs as you: one that calls =System.halt/0=
+   does stop guiltty. The check is against mistakes, not against
+   yourself.)

@@ -122,7 +122,7 @@ cat >"$DESKTOP" <<EOF
 Type=Application
 Name=guiltty
 GenericName=Terminal
-Comment=A GPU terminal emulator in Elixir
+Comment=A GPU terminal emulator in Elixir and C
 Exec=$BIN
 Icon=guiltty
 Terminal=false
