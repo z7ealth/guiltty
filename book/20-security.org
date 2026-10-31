@@ -119,6 +119,82 @@ None of these crashed guiltty: each was a place that was safe only
 because of something somewhere else. That's the kind of bug that
 appears later, when the something else changes.
 
+* Layer 4: fuzzing
+
+An analyzer reasons about the code; a fuzzer just *tries* it, millions
+of times, with inputs nobody would write by hand. libFuzzer (part of
+Clang) does it cleverly: it watches which branches each input reaches
+(coverage) and keeps mutating the inputs that reached something new. So
+it works its way past the length checks and tag switches into deep
+code, and AddressSanitizer and UBSan stop it at the first bad memory
+access or undefined operation.
+
+** What gets fuzzed
+
+The renderer's door is the port: every byte it acts on comes in as a
+message. =make fuzz= builds two targets, in [[file:../c_src/fuzz/][c_src/fuzz/]]:
+
+#+begin_example
+  fuzz_framing    bytes ──> proto_read ──> whole messages, or an error
+                  (the {:packet, 4} framing: lengths are never trusted)
+
+  fuzz_messages   bytes ──> read_setup ──> apply_message ... ──> draw
+                  │          (the renderer's own code, included whole)
+                  └── a stub backend instead of the GPU, which checks
+                      what it's asked to draw: every atlas slot in range,
+                      the cursor inside the grid, the dirty rows inside
+                      the frame. Breaking any of those aborts.
+#+end_example
+
+An input to =fuzz_messages= is a replay file, the same format
+=GUILTTY_RECORD= writes, put on stdin. So a crash it finds can be
+replayed in the real renderer, =guiltty_gl-dbg --replay crash-file=, and
+watched. Two messages are left out on purpose: OPEN_URL (it would really
+open URLs with =xdg-open=) and FONT (only parsed: loading a font for
+every input would slow the fuzzer many times over).
+
+** Seeds, corpus, crashes
+
+A fuzzer starts from *seeds*: real inputs, so it doesn't spend hours
+discovering the SETUP message. They're in =test/fixtures/fuzz/<target>/=:
+the recorded session, plus =all.msgs= and =resize.msgs=, made by
+[[file:../test/fixtures/fuzz/make_seeds.exs][make_seeds.exs]] with the
+real encoders, with one of every message Elixir sends. What the fuzzer
+learns (its corpus) goes in =_build/fuzz/corpus/=, and crashes in
+=_build/fuzz/crashes/=. A crash, once fixed, is copied into the seeds:
+=mix test= replays every seed in the debug renderer, so it stays fixed.
+
+** A false alarm, and what it taught
+
+The first run stopped at once: LeakSanitizer reported memory allocated
+by fontconfig, from its config files, as leaked. It wasn't. fontconfig
+keeps some of its pointers as encoded offsets, which a leak checker can't
+follow, and =fonts_close= frees it all (=FcFini=). The fix was to excuse
+exactly that path (=leak:XML_ParseBuffer=), which needs full stack
+traces, at about half the speed: a leak of something guiltty allocates
+through fontconfig would still be caught.
+
+* Layer 5: Valgrind
+
+Valgrind runs a program on a simulated CPU and checks every memory
+access, with no recompiling. It's slow (dozens of times), but it catches
+what ASan can't, like a branch that depends on a value never set.
+=make valgrind= replays the recordings in both release renderers, on
+SDL's offscreen driver and Mesa's software Vulkan (lavapipe), so it
+needs no GPU or window:
+
+#+begin_example
+  $ make valgrind
+  == priv/guiltty_gl test/fixtures/replay/session.msgs
+  == priv/guiltty_gl test/fixtures/fuzz/messages/all.msgs
+  == priv/guiltty_vk test/fixtures/replay/session.msgs
+  == priv/guiltty_vk test/fixtures/fuzz/messages/all.msgs
+#+end_example
+
+No output after each line means no errors and no leaks. Mesa and SDL
+were expected to be noisy enough to need a suppressions file; they
+weren't.
+
 * Loot
 
 - =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,
@@ -130,6 +206,13 @@ appears later, when the something else changes.
 - Clang Static Analyzer manual, "Available Checkers".
 - The OpenSSF "Compiler Options Hardening Guide for C and C++", the
   source of the flag list.
+- libFuzzer docs (llvm.org/docs/LibFuzzer.html): "Fuzz target",
+  "Corpus", "Options" (=-max_total_time=, =-artifact_prefix=).
+- AddressSanitizer and LeakSanitizer wikis (github.com/google/sanitizers):
+  suppressions, =fast_unwind_on_malloc=.
+- =valgrind(1)=, and the Memcheck manual: "Use of uninitialised values".
+- =memfd_create(2)=: a file that lives in memory, how the fuzz targets
+  hand each input to the renderer as stdin.
 
 * Questions
 
@@ -139,6 +222,11 @@ appears later, when the something else changes.
 3. What does RELRO with =now= protect, and why does it need =now=?
 4. =block()= never read past its table in practice. Why fix it anyway?
 5. Why run two analyzers instead of one?
+6. Why is a fuzz input a replay file, and not just a message?
+7. How does libFuzzer get past the renderer's first checks without
+   being told the protocol?
+8. Why does the fuzz backend check the slots and the cursor, when no
+   GPU is there to be hurt?
 
 ** Answers
 :PROPERTIES:
@@ -162,3 +250,13 @@ appears later, when the something else changes.
 5. They use different techniques and checkers; in guiltty's first run,
    GCC found the sprite over-read and Clang the uninitialized values,
    and neither found the other's.
+6. So that any crash it finds replays in the real renderer, unchanged
+   (=--replay=), and so that sequences of messages get tested: many bugs
+   only show after a resize, a theme or a second update.
+7. Seeds give it valid messages to start from, and coverage feedback
+   keeps the mutations that reach new branches, so it learns the shape
+   of valid input step by step.
+8. Those are what a real backend trusts the core for: it indexes the
+   atlas and the cell buffer with them. A bad one wouldn't crash the
+   core, it would crash (or garble) the GPU backend later, where it's
+   much harder to trace back.

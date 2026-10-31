@@ -79,8 +79,9 @@ running sessions but forgets which were locked.)
 
 #+begin_example
   $ guiltty                 bin/guiltty, no command -> rel/env.sh.eex:
-                              not running? start the release as a daemon
-                              then: rpc Guiltty.open_window(env64: <DISPLAY...>)
+                              not running? start the release as a daemon,
+                                and return: it opens its first window itself
+                              running? rpc Guiltty.open_window(env64: <DISPLAY...>)
   ... work in three tabs ...
   close the window          Window stops normally; Tabs and sessions run on
   $ guiltty                 running: rpc open_window -> a new Window
@@ -89,9 +90,16 @@ running sessions but forgets which were locked.)
 
 The launcher is [[file:../rel/env.sh.eex][rel/env.sh.eex]]: the release's start script sources
 =env.sh= before every command, so with no command it can find or start the
-node and then ask it for a window. The caller's =DISPLAY= (and Wayland,
-XAUTHORITY) travel with the request, so the window opens on the display you
-ran =guiltty= from. If a window is already open, it's raised instead.
+node. A node it starts opens its first window as it boots, on the display
+it inherited. A node already running is asked for a window: the caller's
+=DISPLAY= (and Wayland, XAUTHORITY) travel with the request, so the window
+opens on the display you ran =guiltty= from. If a window is already open,
+it's raised instead.
+
+(Until v0.12.0 the launcher also waited for a node it had started, and
+then asked it for a window it had already opened. That added about two
+seconds, and if the window was closed in the meantime, the node was gone
+and the launcher failed with status 1: what =hyperfine guiltty= hit.)
 
 * Backpressure, end to end
 

@@ -20,6 +20,13 @@ the tab bar instead of ignoring them.
 - Two places in the renderer that relied on their callers to stay in
   bounds now check for themselves (block characters, ligatures), as the
   static analyzers asked.
+- `guiltty` returns as soon as it has started guiltty, about two seconds
+  sooner. Before, it waited for the window that was already opening, and
+  failed with status 1 if that window was closed in the meantime
+  (`hyperfine guiltty` did).
+- The renderer used the window's size without checking that SDL could
+  tell it; if it couldn't (a window gone mid-change), the grid size came
+  from garbage. It now keeps the grid it has.
 
 ## 0.11.0 — 2026-10-30 — Ligatures
 

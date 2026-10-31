@@ -778,7 +778,8 @@ static void set_minimum_size(struct renderer *r) {
     atlas_mark_clean(&r->atlas);
     set_minimum_size(r);
     int w, h;
-    SDL_GetWindowSizeInPixels(r->window, &w, &h);
+    if (!SDL_GetWindowSizeInPixels(r->window, &w, &h))
+        return true; // no size to fit: keep the grid we have
     // Force a new grid even if cols and rows happen to stay the same.
     r->cols = 0;
     return on_pixel_size(r, w, h);
@@ -928,7 +929,8 @@ static void set_clipboard(struct reader *rd) {
             r->padding = (int)lroundf((float)r->padding_option * r->scale);
             set_minimum_size(r);
             int w, h;
-            SDL_GetWindowSizeInPixels(r->window, &w, &h);
+            if (!SDL_GetWindowSizeInPixels(r->window, &w, &h))
+                return true; // no size to fit: keep the grid we have
             r->cols = 0;
             return on_pixel_size(r, w, h);
         }
@@ -1400,7 +1402,8 @@ static bool wait_event(struct renderer *r, SDL_Event *ev) {
 // short text header and then the RGB bytes.
 [[nodiscard]] static bool save_screenshot(struct renderer *r) {
     int w, h;
-    SDL_GetWindowSizeInPixels(r->window, &w, &h);
+    if (!SDL_GetWindowSizeInPixels(r->window, &w, &h))
+        return false;
     size_t bytes;
     if (w <= 0 || h <= 0 || ckd_mul(&bytes, (size_t)w * (size_t)h, (size_t)4))
         return false;
@@ -1558,8 +1561,8 @@ int main(int argc, char *argv[]) {
     // tiling one never does): start from what we actually got. And the
     // window may be on another screen than the primary one.
     int pw, ph;
-    SDL_GetWindowSizeInPixels(r.window, &pw, &ph);
-    if (!on_pixel_size(&r, pw, ph) || !on_scale(&r))
+    if (!SDL_GetWindowSizeInPixels(r.window, &pw, &ph) || !on_pixel_size(&r, pw, ph) ||
+        !on_scale(&r))
         goto out_backend;
     SDL_StartTextInput(r.window);
     update_text_area(&r);

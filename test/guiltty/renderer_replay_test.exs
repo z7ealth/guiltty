@@ -60,6 +60,27 @@ defmodule Guiltty.RendererReplayTest do
     assert differ <= div(w * h, 1000), "#{differ} of #{w * h} pixels differ"
   end
 
+  # The fuzz seeds, and any crash the fuzzer found, saved next to them
+  # (test/fixtures/fuzz/messages/, see book chapter 20): the real
+  # renderer must get through each one with no sanitizer report. It may
+  # refuse a message and exit, but never crash.
+  test "the fuzz inputs replay without a sanitizer report", %{tmp_dir: dir} do
+    bin = Path.join(:code.priv_dir(:guiltty), "guiltty_gl-dbg")
+
+    for input <- Path.wildcard(Path.expand("../fixtures/fuzz/messages/*", __DIR__)) do
+      out = Path.join(dir, "fuzz.ppm")
+
+      {log, status} =
+        System.cmd(bin, ["--replay", input, "--screenshot", out],
+          env: @env,
+          stderr_to_stdout: true
+        )
+
+      refute log =~ "Sanitizer", "#{input}:\n#{log}"
+      assert status < 128, "#{input} killed by signal #{status - 128}:\n#{log}"
+    end
+  end
+
   # Ligatures need a font that has them; JetBrains Mono does (its "NL"
   # builds don't). The messages are made here, as a Window would send them.
   @tag :ligature_font

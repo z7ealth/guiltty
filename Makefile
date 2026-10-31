@@ -8,6 +8,9 @@
 #   make analyze     GCC's and Clang's static analyzers over all the C:
 #                    paths that leak, use freed memory, dereference null,
 #                    read uninitialized values
+#   make fuzz        the fuzz targets (Clang's libFuzzer), into _build/fuzz/
+#   make fuzz-run    run each for FUZZ_TIME seconds (default 600)
+#   make valgrind    replay the recordings in both renderers under Valgrind
 #   make width-table regenerate the Unicode width table from glibc
 #   make icons       regenerate the icons from priv/icons/logo.svg
 
@@ -96,6 +99,51 @@ analyze: $(VK_SPV)
 	$(ANALYZE_GCC) $(RENDERER_CFLAGS) $(VK_CFLAGS) $(VK_SRC)
 	$(ANALYZE_CLANG) $(RENDERER_CFLAGS) $(VK_CFLAGS) $(VK_SRC)
 
+# Fuzzing: libFuzzer feeds each target millions of inputs, mutating the
+# ones that reach new code, under ASan and UBSan. Built with Clang (GCC has
+# no libFuzzer), without the hardening flags: they'd hide bugs from the
+# sanitizers. Seeds are in test/fixtures/fuzz/<target>/; what the fuzzer
+# learns goes in _build/fuzz/corpus/, crashes in _build/fuzz/crashes/.
+FUZZ_DIR = _build/fuzz
+FUZZ_CC = clang -std=c23 -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
+FUZZ_TARGETS = $(FUZZ_DIR)/fuzz_messages $(FUZZ_DIR)/fuzz_framing
+FUZZ_TIME ?= 600
+FUZZ_CORE = $(filter-out c_src/renderer/core/main.c,$(RENDERER_CORE))
+
+fuzz: $(FUZZ_TARGETS)
+
+$(FUZZ_DIR)/fuzz_messages: c_src/fuzz/fuzz_messages.c $(RENDERER_CORE) $(RENDERER_HEADERS)
+	@mkdir -p $(FUZZ_DIR)
+	$(FUZZ_CC) $(RENDERER_CFLAGS) -o $@ $< $(FUZZ_CORE) $(RENDERER_LIBS) -lm
+
+$(FUZZ_DIR)/fuzz_framing: c_src/fuzz/fuzz_framing.c c_src/renderer/core/protocol.c c_src/renderer/core/protocol.h
+	@mkdir -p $(FUZZ_DIR)
+	$(FUZZ_CC) -o $@ $< c_src/renderer/core/protocol.c
+
+fuzz-run: $(FUZZ_TARGETS)
+	for t in messages framing; do \
+	  mkdir -p $(FUZZ_DIR)/corpus/$$t $(FUZZ_DIR)/crashes; \
+	  $(FUZZ_DIR)/fuzz_$$t -max_total_time=$(FUZZ_TIME) -artifact_prefix=$(FUZZ_DIR)/crashes/$$t- \
+	    $(FUZZ_DIR)/corpus/$$t test/fixtures/fuzz/$$t || exit 1; \
+	done
+
+# Valgrind runs the release renderers (no sanitizers: they don't mix) on
+# the recorded sessions, on SDL's offscreen driver and Mesa's software
+# Vulkan (lavapipe), so no GPU or display is needed. It catches what ASan
+# can't, like branching on uninitialized memory. Any error or leak fails.
+VALGRIND = SDL_VIDEO_DRIVER=offscreen \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite \
+  --track-origins=yes --num-callers=30 --quiet
+REPLAYS = test/fixtures/replay/session.msgs test/fixtures/fuzz/messages/all.msgs
+
+valgrind: $(RENDERER_GL) $(RENDERER_VK)
+	@mkdir -p $(FUZZ_DIR)
+	for r in $(RENDERER_GL) $(RENDERER_VK); do for f in $(REPLAYS); do \
+	  echo "== $$r $$f"; \
+	  $(VALGRIND) $$r --replay $$f --screenshot $(FUZZ_DIR)/valgrind.ppm || exit 1; \
+	done; done
+
 # The Unicode width table comes from glibc's wcwidth(3). It's checked in;
 # rebuild it after a glibc upgrade.
 WIDTH_TABLE = lib/guiltty/unicode/width_table.ex
@@ -116,4 +164,4 @@ icons:
 clean:
 	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
-.PHONY: all debug clean analyze width-table icons
+.PHONY: all debug clean analyze fuzz fuzz-run valgrind width-table icons

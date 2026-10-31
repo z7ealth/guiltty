@@ -413,8 +413,9 @@ static void destroy_swapchain_views(struct vk *vk) {
     VkExtent2D extent = caps.currentExtent;
     if (extent.width == UINT32_MAX) {
         // The window lets us choose: its size in pixels.
-        int w, h;
-        SDL_GetWindowSizeInPixels(vk->window, &w, &h);
+        int w = 0, h = 0;
+        if (!SDL_GetWindowSizeInPixels(vk->window, &w, &h) || w < 0 || h < 0)
+            w = h = 0; // no size: treated as minimized, below
         extent = (VkExtent2D){(uint32_t)w, (uint32_t)h};
     }
     if (extent.width == 0 || extent.height == 0)

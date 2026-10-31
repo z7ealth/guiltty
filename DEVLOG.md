@@ -733,3 +733,39 @@ Also decided: distribution stays on for the launcher, but locked down
   0.7 s cold and near-instant warm after.
 - Throughput benchmarks and profiling; upload only the rows that
   changed.
+
+## 2026-10-30 — Security, step 2: fuzzing, Valgrind, and a launcher race
+
+_Draft: agent, awaiting user_
+
+Two fuzz targets now hammer the renderer's input. `fuzz_framing` is the
+`{:packet, 4}` reader; `fuzz_messages` is the whole message path,
+`read_setup` then `apply_message` and `draw`, the real code included
+whole, with the GPU swapped for a backend that checks what it's asked
+to draw. A fuzz input is a replay file, so any crash replays in the real
+renderer. Ten minutes each: 248 thousand message inputs and 8.5 million
+framing inputs, no crash. Writing the harness found a real bug first:
+the renderer used `SDL_GetWindowSizeInPixels`'s results without checking
+it had succeeded, in five places.
+
+The first run "found" a leak that wasn't one: fontconfig keeps some
+pointers as encoded offsets, so LeakSanitizer can't follow them. The fix
+excuses exactly that path, which needs full stack traces, at about half
+the speed. Valgrind was expected to drown in Mesa noise; it reported
+nothing at all, on both renderers.
+
+Then you benchmarked against alacritty and ghostty and `hyperfine
+guiltty` failed with status 1. Two things were going on. Alacritty's
+times are how long each window stayed open; guiltty's launcher hands the
+window to a background node and returns, so the numbers don't compare.
+And the launcher had a race: if the window closed while it was talking
+to the node, it reached a node that was shutting down, and failed. A
+test that closes the window at different moments during a launch caught
+it (2 failures in 8 with the old launcher, 0 in 16 with the new one).
+The new launcher returns as soon as it has started a node (that node
+opens its own window), and if a running node can't open a window, it
+waits for it to finish and starts a new one.
+
+### Later
+- Several windows, each with its own tabs (today `guiltty` raises the
+  one window).

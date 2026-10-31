@@ -219,6 +219,10 @@ Every new setting in `config.exs` needs all of these, in the same change:
   parser, and any chunking of the same bytes gives the same grid.
 - **Renderer replay:** save port messages to a file and replay them into the
   renderer on its own, under ASan, UBSan and Valgrind.
+- **Fuzzing** (from MVP 12): `c_src/fuzz/` targets take replay files.
+  A crash the fuzzer finds is fixed, then copied (minus any OPEN_URL
+  message) into `test/fixtures/fuzz/messages/`, where `mix test` replays
+  it. After a protocol change, regenerate the seeds.
 - Run the relevant tests before handing over a change, and report failures
   as they are. Don't hide them.
 
@@ -234,6 +238,9 @@ _build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
 make analyze                # GCC and Clang static analyzers over all C; any finding fails
+make fuzz-run               # libFuzzer on the renderer's input (FUZZ_TIME=600 s per target)
+make valgrind               # both release renderers replay the recordings under Valgrind
+mix run --no-start test/fixtures/fuzz/make_seeds.exs   # regenerate fuzz seeds (protocol change)
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
 ./install.sh                # install for the user into ~/.local (--uninstall to remove)
