@@ -137,11 +137,14 @@ the rows that changed since the previous one. The core tracks the range
 (=dirty_first= .. =dirty_last=) as ROWS messages arrive, and the backend
 uploads just that slice with =glBufferSubData=. Both passes still draw every
 cell: drawing is cheap, uploading is what costs. A new grid size moves
-every cell, so then everything is uploaded.
+every cell, so then everything is uploaded. The Vulkan backend does the
+same since v0.14.0, once per frame in flight ([[file:19-vulkan.org][chapter 19]]).
 
 Draws are batched by vsync: =SDL_GL_SwapWindow= waits for the screen's
 refresh, messages pile up meanwhile, and the next loop applies them all
-before drawing once.
+before drawing once. A replay (=--replay=) draws a frame after each ROWS
+message instead, the way a live window does: Elixir sends the next update
+only after the frame report.
 
 The shaders are compiled into the binary with C23 =#embed=, so the renderer
 is a single file with nothing to find at runtime.

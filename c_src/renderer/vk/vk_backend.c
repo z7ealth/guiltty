@@ -18,6 +18,7 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 
+#include <limits.h>
 #include <stdckdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,11 @@ struct frame_slot {
     VkFence done; // signaled when the GPU has finished this slot's last frame
     VkSemaphore acquired; // the swapchain image is ready to be drawn into
     struct buffer cells; // this frame's copy of the cells
+    // What that copy is behind on: the grid size it holds, and the rows
+    // that changed since it was last written (none if first > last). A
+    // row that changes in one frame must reach every slot's copy in turn.
+    uint16_t cols, rows;
+    int stale_first, stale_last;
 };
 
 struct vk {
@@ -970,6 +976,15 @@ static void record_capture(struct vk *vk, VkCommandBuffer cmd, VkImage image) {
 
 static void vk_draw_frame(void *state, const struct frame *frame) {
     struct vk *vk = state;
+    // The rows this frame changed are behind in every slot's copy of the
+    // cells. Noted first, before anything below can return early: the
+    // core forgets them once this call returns, drawn or not.
+    if (frame->dirty_first <= frame->dirty_last)
+        for (uint32_t i = 0; i < frames_in_flight; i++) {
+            struct frame_slot *s = &vk->slots[i];
+            s->stale_first = frame->dirty_first < s->stale_first ? frame->dirty_first : s->stale_first;
+            s->stale_last = frame->dirty_last > s->stale_last ? frame->dirty_last : s->stale_last;
+        }
     if (vk->stale) {
         vkDeviceWaitIdle(vk->device);
         if (!create_swapchain(vk))
@@ -1000,11 +1015,26 @@ static void vk_draw_frame(void *state, const struct frame *frame) {
         free_buffer(vk, &slot->cells);
         if (!make_buffer(vk, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &slot->cells))
             return;
+        slot->cols = 0; // a new buffer holds nothing yet: copy everything
     }
-    // Every frame copies all the cells into this slot's buffer: a few
-    // hundred kilobytes at most, and simpler than tracking each slot's
-    // dirty rows.
-    memcpy(slot->cells.map, frame->cells, bytes);
+    // Damage tracking, per slot: each slot's buffer keeps the cells of the
+    // last frame drawn with it, two frames ago. This slot catches up on
+    // every row it's behind on (noted at the top), and only those rows are
+    // copied. A new grid size moves every cell, so then the whole grid goes.
+    if (slot->cols != frame->cols || slot->rows != frame->rows) {
+        memcpy(slot->cells.map, frame->cells, bytes);
+        slot->cols = frame->cols;
+        slot->rows = frame->rows;
+    } else if (slot->stale_first <= slot->stale_last) {
+        size_t row_bytes = (size_t)frame->cols * sizeof(struct cell);
+        int last = slot->stale_last < frame->rows ? slot->stale_last : frame->rows - 1;
+        if (slot->stale_first <= last)
+            memcpy((uint8_t *)slot->cells.map + (size_t)slot->stale_first * row_bytes,
+                   frame->cells + (size_t)slot->stale_first * frame->cols,
+                   (size_t)(last - slot->stale_first + 1) * row_bytes);
+    }
+    slot->stale_first = INT_MAX;
+    slot->stale_last = -1;
 
     bool capture = frame->capture != nullptr && vk->can_capture;
     VkDeviceSize capture_bytes = (VkDeviceSize)vk->extent.width * vk->extent.height * 4;

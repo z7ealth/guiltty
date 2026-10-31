@@ -336,7 +336,7 @@ defmodule Guiltty.Session.Screen do
   defp notify(%{notified: true} = state), do: state
 
   defp notify(state) do
-    if MapSet.size(state.grid.dirty) > 0 or viewer_state(state, state.grid) != state.sent_state do
+    if Grid.dirty?(state.grid) or viewer_state(state, state.grid) != state.sent_state do
       send(state.viewer, {:screen_dirty, state.id})
       %{state | notified: true}
     else

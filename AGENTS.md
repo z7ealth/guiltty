@@ -243,6 +243,7 @@ make debug                  # renderer with ASan + UBSan (also built by `make`)
 make analyze                # GCC and Clang static analyzers over all C; any finding fails
 make fuzz-run               # libFuzzer on the renderer's input (FUZZ_TIME=600 s per target)
 make valgrind               # both release renderers replay the recordings under Valgrind
+make bench                  # throughput: parser + grid alone, then a real window (book chapter 22)
 mix run --no-start test/fixtures/fuzz/make_seeds.exs   # regenerate fuzz seeds (protocol change)
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)

@@ -135,6 +135,10 @@ frame. [[file:../test/fixtures/replay/session.msgs][session.msgs]] is one such r
 sanitizers (and Vulkan's validation layers), and checks that OpenGL and
 Vulkan draw the same pixels. Details in [[file:19-vulkan.org][chapter 19]].
 
+A replay draws one frame per ROWS message, as a live window does, so it
+also tests damage tracking: thirty small updates must end on exactly the
+picture one whole update gives, in each backend (chapter 22).
+
 * Loot
 
 - =script(1)= from util-linux.

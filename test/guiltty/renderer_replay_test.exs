@@ -60,6 +60,76 @@ defmodule Guiltty.RendererReplayTest do
     assert differ <= div(w * h, 1000), "#{differ} of #{w * h} pixels differ"
   end
 
+  # Damage tracking: the renderers keep last frame's cells on the GPU (in
+  # Vulkan, one copy per frame in flight) and upload only the rows that
+  # changed. Many small updates must end on exactly the picture one whole
+  # update gives; a row left behind would show.
+  defp damage_msgs(dir) do
+    alias Guiltty.{Grid, Parser, Terminal, Theme}
+    alias Guiltty.Window.Protocol
+
+    options = %{padding: 6, opacity: 1.0, bold_is_bright: true}
+    setup = Protocol.setup(20, 8, Theme.default(), %{family: "monospace", size: 16}, options)
+
+    steps =
+      for n <- 1..30 do
+        case rem(n, 3) do
+          0 -> "\e[#{rem(n, 8) + 1};#{rem(n * 7, 15) + 1}H\e[3#{rem(n, 7) + 1}mx#{n}\e[0m"
+          1 -> "\e[8;1H\nline #{n}"
+          2 -> "\e[#{rem(n * 3, 8) + 1};1H\e[2Krow #{n}"
+        end
+      end
+
+    update = fn grid ->
+      {rows, grid} = Grid.take_dirty(grid)
+
+      msg =
+        Protocol.rows(%{
+          size: {20, 8},
+          rows: rows,
+          cursor: Grid.cursor(grid),
+          cursor_visible: true
+        })
+
+      {msg, grid}
+    end
+
+    {first, grid} = update.(Grid.new(20, 8))
+
+    {msgs, grid} =
+      Enum.map_reduce(steps, grid, fn bytes, grid ->
+        {_p, commands} = Parser.feed(Parser.new(), bytes)
+        update.(Terminal.apply(grid, commands))
+      end)
+
+    whole =
+      Protocol.rows(%{
+        size: {20, 8},
+        rows: Grid.snapshot(grid),
+        cursor: Grid.cursor(grid),
+        cursor_visible: true
+      })
+
+    write = fn name, messages ->
+      path = Path.join(dir, name)
+      File.write!(path, Enum.map(messages, &[<<IO.iodata_length(&1)::32>>, &1]))
+      path
+    end
+
+    {write.("steps.msgs", [setup, first | msgs]), write.("final.msgs", [setup, whole])}
+  end
+
+  test "OpenGL: many small updates end on the picture of one whole one", %{tmp_dir: dir} do
+    {steps, final} = damage_msgs(dir)
+    assert replay("guiltty_gl-dbg", dir, steps) == replay("guiltty_gl-dbg", dir, final)
+  end
+
+  @tag :vulkan
+  test "Vulkan: many small updates end on the picture of one whole one", %{tmp_dir: dir} do
+    {steps, final} = damage_msgs(dir)
+    assert replay("guiltty_vk-dbg", dir, steps) == replay("guiltty_vk-dbg", dir, final)
+  end
+
   # The fuzz seeds, and any crash the fuzzer found, saved next to them
   # (test/fixtures/fuzz/messages/, see book chapter 20): the real
   # renderer must get through each one with no sanitizer report. It may

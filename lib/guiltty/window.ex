@@ -294,6 +294,8 @@ defmodule Guiltty.Window do
 
   defp handle_event({:frame, us}, state) do
     :telemetry.execute([:guiltty, :renderer, :frame], %{duration: us}, %{})
+    # The end of a window's startup, for measuring it (book chapter 22).
+    unless state.drawn, do: Logger.debug("window: first frame drawn")
     state = %{state | awaiting_frame: false, drawn: true}
     {:noreply, if(state.pending, do: pull(state), else: state)}
   end

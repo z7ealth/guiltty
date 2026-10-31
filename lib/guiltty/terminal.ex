@@ -47,7 +47,20 @@ defmodule Guiltty.Terminal do
   @max_title 256
 
   @spec apply(Grid.t(), [Parser.command()]) :: Grid.t()
-  def apply(grid, commands), do: Enum.reduce(commands, grid, &command/2)
+  def apply(grid, commands), do: run(commands, grid)
+
+  # Lines of plain text (print, CR, LF), however many come in a row, go to
+  # the grid together: it can lay them all down and scroll once.
+  defp run([{:print, _}, :cr, :lf | _] = commands, grid) do
+    {texts, rest} = take_lines(commands, [])
+    run(rest, Grid.print_lines(grid, texts))
+  end
+
+  defp run([command | rest], grid), do: run(rest, command(command, grid))
+  defp run([], grid), do: grid
+
+  defp take_lines([{:print, text}, :cr, :lf | rest], texts), do: take_lines(rest, [text | texts])
+  defp take_lines(rest, texts), do: {Enum.reverse(texts), rest}
 
   defp command({:print, text}, grid), do: Grid.print(grid, text)
   defp command(:cr, grid), do: Grid.carriage_return(grid)

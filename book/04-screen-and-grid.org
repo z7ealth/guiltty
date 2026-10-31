@@ -50,7 +50,9 @@ because the line discipline's ONLCR adds the =\r=.
 
 ** Scrolling
 A line feed on the last row drops row 0 and adds a blank row at the bottom.
-Every row moved, so every row is marked dirty.
+Every row moved, so every row is marked dirty. Since v0.14.0 that's the
+atom =:all= rather than a set of every row number, and many lines of plain
+text in a row are laid down together and scrolled once (chapter 22).
 
 ** The pending wrap
 After writing into the last column, the cursor sits *past* it, at column 80.
@@ -69,8 +71,9 @@ this way.
 
 * Dirty rows
 
-The grid remembers which rows changed. =take_dirty/1= returns them and
-clears the set, so the Screen only sends what changed.
+The grid remembers which rows changed: a set of row numbers, or =:all=
+after a scroll. =take_dirty/1= returns them and clears it, so the Screen
+only sends what changed.
 
 * The Screen process
 

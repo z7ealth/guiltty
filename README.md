@@ -169,8 +169,9 @@ MIX_ENV=prod mix release
 _build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
 ```
 
-`AGENTS.md` lists every command: debug builds, replaying the renderer,
-regenerating the width table and the icons.
+`make bench` measures throughput (book chapter 22). `AGENTS.md` lists
+every command: debug builds, replaying the renderer, regenerating the
+width table and the icons.
 
 ## Learn how it works
 

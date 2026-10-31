@@ -907,3 +907,45 @@ didn't go up.
 
 v0.13.0 is ready: book chapter 21 has the story, with the real Registry
 of two windows (desk 1 owning sessions 2 and 5, desk 3 owning 4).
+
+## 2026-10-31 — v0.14.0: Performance
+
+_Draft: agent, awaiting user_
+
+The rule for this one was: measure, then fix what the numbers say,
+without changing what guiltty is. So first `make bench`: the parser and
+grid alone, and a real shell `cat`-ing into a real window. Scrolling text
+went through the grid at 0.8 MB/s.
+
+The profile pointed at small things. A fifth of the time was building a
+set of all forty row numbers on every line feed, to say "every row
+changed"; now that's `:all`. Then batching: `seq` reaches the grid as
+thousands of print, CR, LF, and each one shifted the whole screen and
+saved one row; now plain lines are laid down together and the screen
+scrolls once. The first try barely helped, and counting calls showed
+why: a read that ended mid-line left the cursor mid-row, and the whole
+next read gave up on the fast path. Then trimming scrollback rows: a
+binary search instead of `longest_common_suffix`, and rows that scroll
+straight off are made short from the start. 0.8 became 4.4 MB/s.
+
+An equivalence test (fast path vs one command at a time, on random
+lines) caught a difference no one would have seen: the newest scrollback
+rows were trimmed one way and full width the other. Fixed anyway; the
+test is what makes the fast path safe to keep.
+
+The Vulkan renderer now uploads only changed rows, per frame in flight,
+like OpenGL. To test it, replays now draw a frame per update, the way a
+live window does, and thirty small updates must end on the picture of
+one whole update; a planted bug (only the current slot marked stale)
+fails it. Honest number: at 120x40 this saves microseconds.
+
+Boot: almost all of a cold start is the VM itself (~0.35 s bare, the JIT
+compiling every module it loads). Interactive mode loads modules as
+they're used: ~100 ms sooner to the first frame.
+
+You kept the launcher out of scope, so it's still ~0.7 s of a cold start.
+
+### Later
+- A launcher that doesn't boot a VM (pidfile + FIFO).
+- Colored lines in the batch path (following SGR inside a batch).
+- A faster parser scanner.

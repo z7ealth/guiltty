@@ -1573,8 +1573,11 @@ int main(int argc, char *argv[]) {
         SDL_Event ev;
         if (wait_event(&r, &ev)) {
             running = handle_event(&r, &ev, &status);
-            // Drain whatever else is queued before drawing once.
-            while (running && SDL_PollEvent(&ev))
+            // Drain whatever else is queued before drawing once. A replay
+            // stops at each screen update instead: live, Elixir sends the
+            // next one only after the frame report, so every update is a
+            // frame of its own, and a replay should draw them the same way.
+            while (running && !(r.replay && r.frame_owed) && SDL_PollEvent(&ev))
                 running = handle_event(&r, &ev, &status);
         }
         if (running && r.dirty)

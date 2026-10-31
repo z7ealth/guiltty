@@ -151,7 +151,7 @@ still reading.
   ---------------------------------------  ----------------------------------
   wait slot's fence    (GPU done with it?)
   acquire image i  --signals "acquired"-->
-  memcpy cells into slot's buffer
+  memcpy the rows this slot is behind on into its buffer
   record: barrier UNDEFINED->COLOR_ATTACHMENT
           begin rendering (clear)
           push constants, bind backgrounds, draw 4 x cells
@@ -164,6 +164,12 @@ still reading.
   next slot
 #+end_example
 
+- Each slot's buffer holds the cells of the last frame drawn with it, two
+  frames ago. A row that changes is noted as stale in /both/ slots, and
+  each slot copies its stale rows when its turn comes (damage tracking,
+  since v0.14.0; until then every frame copied every cell). The rows are
+  noted before anything in =draw_frame= can return early: the core forgets
+  them once the call returns, drawn or not.
 - A *fence* is for the CPU to wait on the GPU ("is slot 0 free?").
 - A *semaphore* is for the GPU to wait on itself ("draw only once the
   image is ours", "present only once it's drawn"). The CPU never sees it.

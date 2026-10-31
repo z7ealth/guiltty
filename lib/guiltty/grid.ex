@@ -79,6 +79,9 @@ defmodule Guiltty.Grid do
   # The renderer keeps cluster text up to this many bytes.
   @max_cluster_bytes 64
   @blank <<?\s::32, 0::16, @default_color::32, @default_color::32>>
+  # A row of blank cells as wide as the widest grid (the renderer's limit),
+  # made once: scrollback rows are trimmed by comparing against it.
+  @blanks :binary.copy(@blank, 4096)
 
   # Modes that change what the keyboard and mouse send; Window reads them.
   @input_modes %{
@@ -134,7 +137,13 @@ defmodule Guiltty.Grid do
     input: @input_modes,
     # bytes to send back to the program (answers to its queries), newest first
     responses: [],
-    dirty: MapSet.new()
+    # the rows changed since the last take_dirty/1: a MapSet of row
+    # numbers, or :all (a scroll moves every row; building a set of all of
+    # them on every line feed was a fifth of the time spent printing)
+    dirty: MapSet.new(),
+    # {cols, bg, line}: the last blank line made, reused while the width
+    # and background stay the same (each scroll needs one)
+    blank: nil
   ]
 
   @type t :: %__MODULE__{}
@@ -182,10 +191,17 @@ defmodule Guiltty.Grid do
   def cursor(grid), do: {grid.row, min(grid.col, grid.cols - 1)}
 
   @doc "Returns `[{row_index, row}]` for changed rows and clears the dirty set."
+  def take_dirty(%{dirty: :all} = grid),
+    do: take_dirty(%{grid | dirty: MapSet.new(0..(grid.rows - 1))})
+
   def take_dirty(grid) do
     rows = grid.dirty |> Enum.sort() |> Enum.map(&{&1, elem(grid.lines, &1)})
     {rows, %{grid | dirty: MapSet.new()}}
   end
+
+  @doc "Whether any row changed since the last `take_dirty/1`."
+  def dirty?(%{dirty: :all}), do: true
+  def dirty?(grid), do: MapSet.size(grid.dirty) > 0
 
   @doc "Returns the bytes to send back to the program, oldest first, and clears them."
   def take_responses(grid), do: {Enum.reverse(grid.responses), %{grid | responses: []}}
@@ -263,6 +279,102 @@ defmodule Guiltty.Grid do
     if ascii?(text),
       do: grid |> put_text(text) |> remember_last(binary_part(text, byte_size(text) - 1, 1)),
       else: put_clusters(grid, text)
+  end
+
+  @doc """
+  Prints each text as a line of its own: print, carriage return, line
+  feed, for each one. The same as doing that one by one, only faster when
+  it can be: a program streaming short lines (`seq`, a log, `cat`) at the
+  bottom of the screen makes thousands of these per read.
+
+  The fast path builds the rows directly and scrolls the screen once, by
+  all of them. It applies when the result is sure to be the same: the
+  cursor at the start of a blank bottom row, the scroll region the whole
+  screen, no insert mode, plain ASCII that fits on a line, no line-drawing
+  set. The last line always goes the usual way, so whatever the usual way
+  remembers (the last character, for REP) is as it would be.
+  """
+  def print_lines(grid, []), do: grid
+  def print_lines(grid, [last]), do: print_line(grid, last)
+
+  def print_lines(grid, [text | rest] = texts) do
+    # The grid first: it's the cheap check. While it isn't ready (say the
+    # screen is still filling up, or the line before was cut by the end of
+    # a read and the cursor isn't at the start of a row), this line goes
+    # the usual way, and the rest try again.
+    with true <- batch_ready?(grid),
+         {[_ | _] = plain, others} <- plain_prefix(texts, grid.cols) do
+      grid |> batch_lines(plain) |> print_lines(others)
+    else
+      _ -> grid |> print_line(text) |> print_lines(rest)
+    end
+  end
+
+  # The plain lines at the start, but never the last line: that one goes
+  # the usual way.
+  defp plain_prefix(texts, cols) do
+    case Enum.split_while(texts, &plain_line?(&1, cols)) do
+      {plain, []} -> Enum.split(plain, -1)
+      split -> split
+    end
+  end
+
+  defp print_line(grid, text), do: grid |> print(text) |> carriage_return() |> index()
+
+  defp plain_line?(text, cols), do: byte_size(text) in 1..cols and ascii?(text)
+
+  defp batch_ready?(grid) do
+    %{row: row, rows: rows, bottom: bottom} = grid
+    current = if grid.gl == 1, do: grid.g1, else: grid.g0
+
+    row == rows - 1 and bottom == rows - 1 and grid.top == 0 and grid.col == 0 and
+      not grid.insert and current == :ascii and
+      elem(grid.lines, row) == elem(cached_blank(grid), 0)
+  end
+
+  # What print, CR and LF would do to each line in turn, done at once: the
+  # rows are the texts in the current pen, padded with blank cells, and the
+  # screen scrolls up by all of them together (the rows it pushes off the
+  # top go to the scrollback, as one by one).
+  #
+  # Most of a big batch scrolls straight off the screen into the
+  # scrollback, which keeps rows without their trailing blank cells. So
+  # those rows are made short to begin with, and only the ones that stay
+  # on screen are made full width.
+  defp batch_lines(grid, texts) do
+    {blank, grid} = cached_blank(grid)
+    style = <<grid.attrs::16, grid.fg::32, grid.bg::32>>
+    cells = &for(<<c <- &1>>, into: <<>>, do: <<c::32, style::binary>>)
+
+    full =
+      &(cells.(&1) <>
+          binary_part(
+            blank,
+            byte_size(&1) * @cell_size,
+            byte_size(blank) - byte_size(&1) * @cell_size
+          ))
+
+    # A space in this pen is a blank cell, so trimming would drop it too.
+    blank_pen? = grid.attrs == 0 and grid.fg == @default_color
+    short = &cells.(if blank_pen?, do: String.trim_trailing(&1, " "), else: &1)
+
+    # The screen above the cursor's (blank) row, then the new rows, then a
+    # blank row for the cursor: the first `n` of those leave the screen.
+    above = grid.lines |> Tuple.to_list() |> Enum.drop(-1)
+    n = length(texts)
+    keep = length(above)
+
+    {gone, screen} =
+      if n <= keep do
+        {gone, stay} = Enum.split(above, n)
+        {gone, stay ++ Enum.map(texts, full) ++ [blank]}
+      else
+        {off, on} = Enum.split(texts, n - keep)
+        {above ++ Enum.map(off, short), Enum.map(on, full) ++ [blank]}
+      end
+
+    grid = if grid.alt?, do: grid, else: save_lines(grid, gone)
+    %{grid | lines: List.to_tuple(screen)} |> all_dirty()
   end
 
   @doc "REP: prints the last printed character `n` more times."
@@ -634,7 +746,7 @@ defmodule Guiltty.Grid do
   # row up: tuple operations, without going through a list.
   defp shift_rows(%{rows: rows} = grid, 0, to, -1) when to == rows - 1 do
     grid = if grid.alt?, do: grid, else: save_lines(grid, [elem(grid.lines, 0)])
-    blank = blank_line(grid.cols, grid.bg)
+    {blank, grid} = cached_blank(grid)
     lines = grid.lines |> Tuple.delete_at(0) |> Tuple.insert_at(rows - 1, blank)
     %{grid | lines: lines} |> all_dirty()
   end
@@ -642,7 +754,7 @@ defmodule Guiltty.Grid do
   defp shift_rows(grid, from, to, n) do
     size = to - from + 1
     n = clamp(n, -size, size)
-    blank = blank_line(grid.cols, grid.bg)
+    {blank, grid} = cached_blank(grid)
     {before, rest} = grid.lines |> Tuple.to_list() |> Enum.split(from)
     {region, after_} = Enum.split(rest, size)
 
@@ -657,7 +769,16 @@ defmodule Guiltty.Grid do
         else: Enum.drop(region, -n) ++ List.duplicate(blank, -n)
 
     lines = List.to_tuple(before ++ region ++ after_)
-    %{grid | lines: lines, dirty: MapSet.union(grid.dirty, MapSet.new(from..to))}
+    %{grid | lines: lines} |> dirty_rows(from..to)
+  end
+
+  # A blank line in the current width and background, made once and reused:
+  # binaries are immutable, so every row that's blank can share it.
+  defp cached_blank(%{blank: {cols, bg, line}, cols: cols, bg: bg} = grid), do: {line, grid}
+
+  defp cached_blank(grid) do
+    line = blank_line(grid.cols, grid.bg)
+    {line, %{grid | blank: {grid.cols, grid.bg, line}}}
   end
 
   defp save_lines(%{scrollback_max: 0} = grid, _lines), do: grid
@@ -678,16 +799,16 @@ defmodule Guiltty.Grid do
     %{grid | scrollback: blocks, scrollback_first: first}
   end
 
+  # Rows are kept without their trailing blank cells, from the moment
+  # they're saved: the fast path (print_lines/2) saves rows already short.
   defp save_line(grid, line) do
-    grid = %{grid | recent: [line | grid.recent], history: grid.history + 1}
+    grid = %{grid | recent: [trim_line(line) | grid.recent], history: grid.history + 1}
     if rem(grid.history, @block) == 0, do: seal(grid), else: grid
   end
 
   # The last 256 rows become one block.
   defp seal(grid) do
-    longest = grid.recent |> Enum.map(&byte_size/1) |> Enum.max()
-    blanks = :binary.copy(@blank, div(longest, @cell_size))
-    rows = grid.recent |> Enum.reverse() |> Enum.map(&trim_line(&1, blanks))
+    rows = Enum.reverse(grid.recent)
     starts = rows |> Enum.scan(0, &(byte_size(&1) + &2)) |> then(&[0 | &1]) |> List.to_tuple()
     block = div(grid.history - 1, @block)
 
@@ -710,12 +831,35 @@ defmodule Guiltty.Grid do
   end
 
   # Most rows are short: keep them without their trailing blank cells.
-  # `blanks` is a row of blank cells at least as long as `line`.
-  defp trim_line(line, blanks) do
-    blanks = binary_part(blanks, 0, byte_size(line))
-    # Whole cells only: the common suffix may end partway into a cell.
-    blank_bytes = div(:binary.longest_common_suffix([line, blanks]), @cell_size) * @cell_size
-    binary_part(line, 0, byte_size(line) - blank_bytes)
+  #
+  # Where the content ends is found by binary search: "are the cells from
+  # here on all blank?" is true from some cell to the end, and each try is
+  # one binary comparison (a memcmp). About 7 tries for a 120-cell row,
+  # where :binary.longest_common_suffix/1 took a fifth of all the time
+  # spent printing.
+  defp trim_line(line) do
+    cells = div(byte_size(line), @cell_size)
+
+    blanks =
+      if byte_size(line) <= byte_size(@blanks),
+        do: binary_part(@blanks, 0, byte_size(line)),
+        else: :binary.copy(@blank, cells)
+
+    keep = content_end(line, blanks, 0, cells)
+    binary_part(line, 0, keep * @cell_size)
+  end
+
+  # The first cell from which everything is blank, between lo and hi.
+  defp content_end(_line, _blanks, lo, lo), do: lo
+
+  defp content_end(line, blanks, lo, hi) do
+    mid = div(lo + hi, 2)
+    from = mid * @cell_size
+    tail = byte_size(line) - from
+
+    if binary_part(line, from, tail) == binary_part(blanks, from, tail),
+      do: content_end(line, blanks, lo, mid),
+      else: content_end(line, blanks, mid + 1, hi)
   end
 
   ## Characters in a line
@@ -934,7 +1078,7 @@ defmodule Guiltty.Grid do
       |> fix_left(col)
       |> fix_right(col + div(len, @cell_size), grid.cols)
 
-    %{grid | lines: put_elem(grid.lines, row, line), dirty: MapSet.put(grid.dirty, row)}
+    %{grid | lines: put_elem(grid.lines, row, line)} |> dirty_rows(row..row)
   end
 
   ## Wide characters cut in half
@@ -983,7 +1127,11 @@ defmodule Guiltty.Grid do
     <<before::binary, blank_cell(bg)::binary, after_::binary>>
   end
 
-  defp all_dirty(grid), do: %{grid | dirty: MapSet.new(0..(grid.rows - 1))}
+  defp all_dirty(grid), do: %{grid | dirty: :all}
+
+  defp dirty_rows(%{dirty: :all} = grid, _rows), do: grid
+  defp dirty_rows(grid, row..row//1), do: %{grid | dirty: MapSet.put(grid.dirty, row)}
+  defp dirty_rows(grid, rows), do: %{grid | dirty: MapSet.union(grid.dirty, MapSet.new(rows))}
 
   @doc "Marks every row as changed, for a viewer that needs the whole screen."
   def mark_all_dirty(grid), do: all_dirty(grid)

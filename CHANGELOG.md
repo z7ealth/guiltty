@@ -8,6 +8,22 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.14.0 — 2026-10-31 — Performance
+
+### Changed
+- Programs that print many short lines (`seq`, logs, `cat` of a big file)
+  show up about 3x faster: the screen lays such lines down together and
+  scrolls once.
+- guiltty starts about 100 ms sooner: the release loads each module the
+  first time it's used instead of all of them at boot.
+- The Vulkan renderer uploads only the rows that changed each frame, like
+  the OpenGL one.
+
+### Added
+- `make bench`: throughput of the parser and grid alone, and of a real
+  window (book chapter 22). `bench/time_to_window.sh` times how long a
+  terminal takes to show its window, for hyperfine.
+
 ## 0.13.0 — 2026-10-30 — Multi window
 
 ### Added

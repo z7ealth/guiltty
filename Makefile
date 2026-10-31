@@ -11,6 +11,7 @@
 #   make fuzz        the fuzz targets (Clang's libFuzzer), into _build/fuzz/
 #   make fuzz-run    run each for FUZZ_TIME seconds (default 600)
 #   make valgrind    replay the recordings in both renderers under Valgrind
+#   make bench       throughput: parser + grid alone, then a real window
 #   make width-table regenerate the Unicode width table from glibc
 #   make icons       regenerate the icons from priv/icons/logo.svg
 
@@ -144,6 +145,14 @@ valgrind: $(RENDERER_GL) $(RENDERER_VK)
 	  $(VALGRIND) $$r --replay $$f --screenshot $(FUZZ_DIR)/valgrind.ppm || exit 1; \
 	done; done
 
+# Benchmarks (book chapter 22). They need the release renderer, so `all`
+# first. The config is ignored (GUILTTY_CONFIG points nowhere): defaults
+# make runs comparable. Time to window is bench/time_to_window.sh, run
+# with hyperfine from another terminal (it needs a window manager).
+bench: all
+	mix run --no-start bench/throughput.exs
+	GUILTTY_CONFIG=/nonexistent mix run --no-start bench/end_to_end.exs
+
 # The Unicode width table comes from glibc's wcwidth(3). It's checked in;
 # rebuild it after a glibc upgrade.
 WIDTH_TABLE = lib/guiltty/unicode/width_table.ex
@@ -164,4 +173,4 @@ icons:
 clean:
 	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
-.PHONY: all debug clean analyze fuzz fuzz-run valgrind width-table icons
+.PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table icons
