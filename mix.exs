@@ -5,7 +5,7 @@ defmodule Guiltty.MixProject do
     [
       app: :guiltty,
       version: "0.15.3",
-      elixir: "~> 1.20",
+      elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       compilers: [:elixir_make] ++ Mix.compilers(),
       make_clean: ["clean"],

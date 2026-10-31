@@ -98,7 +98,8 @@ defmodule Guiltty.SessionTest do
       Stream.repeatedly(fn ->
         Process.sleep(5)
         {:message_queue_len, n} = Process.info(parser, :message_queue_len)
-        {n, Session.dump(id) =~ "FLOOD-DONE"}
+        # The echo's own line, not the command's, which shows it too.
+        {n, Session.dump(id) =~ ~r/^FLOOD-DONE/m}
       end)
       |> Enum.reduce_while([], fn {n, done}, acc ->
         if done, do: {:halt, acc}, else: {:cont, [n | acc]}

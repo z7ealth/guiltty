@@ -1066,3 +1066,26 @@ tried), "complete" install commands for four distributions (one tried),
 makes the number worth more, not less. The README now says up front
 what guiltty has been tried on and that it's slow at heavy output: a
 critic can't "discover" what the first paragraph already admits.
+
+## 2026-10-31 — Older Elixir and Erlang
+
+_Draft: agent, awaiting user_
+
+**Tried.** A friend couldn't install guiltty: `mix.exs` asked for Elixir
+1.20, and he has 1.18 or 1.19 on Erlang/OTP 26. Nothing in guiltty
+needed 1.20; it was just the version it was written on. So asdf put
+Erlang 26 and 28 and Elixir 1.18 and 1.19 next to the usual ones, and the
+whole suite ran in a copy of the project on each pair. Everything
+compiled without a warning.
+
+**Broke.** Two tests, on OTP 26. One was real: a line too long for the
+socket comes out of OTP 26's `gen_tcp` in 1,460-byte pieces instead of
+as `:emsgsize`, so the Launcher waited 2 s and said "request incomplete".
+It never read more than it should, but it now says "line too long" at
+once. The other was the test's fault: the flood test waited for
+`FLOOD-DONE`, which the shell had already echoed as part of the command.
+It had been racing the echo all along, and a slower run finally lost.
+
+**Clicked.** "Requires 1.20" was a claim like the ones fixed this
+morning: what was true was "written on 1.20". The floor is now Elixir 1.18
+on OTP 26, tested, and the book says how to test it again.

@@ -159,11 +159,25 @@ defmodule Guiltty.Launcher do
 
   defp read_lines(socket, lines) do
     case :gen_tcp.recv(socket, 0, @read_timeout) do
-      {:ok, "\n"} -> {:ok, Enum.reverse(lines)}
-      {:ok, line} -> read_lines(socket, [line | lines])
-      {:error, :timeout} -> {:error, "request incomplete"}
-      {:error, :emsgsize} -> {:error, "line too long"}
-      {:error, _} -> {:error, "request incomplete"}
+      {:ok, "\n"} ->
+        {:ok, Enum.reverse(lines)}
+
+      # OTP 26 hands out a line over packet_size in pieces, without its
+      # line break, where later OTPs return :emsgsize.
+      {:ok, line} when binary_part(line, byte_size(line) - 1, 1) != "\n" ->
+        {:error, "line too long"}
+
+      {:ok, line} ->
+        read_lines(socket, [line | lines])
+
+      {:error, :timeout} ->
+        {:error, "request incomplete"}
+
+      {:error, :emsgsize} ->
+        {:error, "line too long"}
+
+      {:error, _} ->
+        {:error, "request incomplete"}
     end
   end
 

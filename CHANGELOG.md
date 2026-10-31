@@ -10,6 +10,16 @@ the tab bar instead of ignoring them.
 
 ## Unreleased
 
+### Changed
+- guiltty now builds with Elixir 1.18 or newer on Erlang/OTP 26 or newer
+  (tried: 1.18.4 and 1.19.7 on OTP 26, 1.19.7 on OTP 28, 1.20.4 on OTP
+  29). It asked for Elixir 1.20 before, without needing anything from it.
+
+### Fixed
+- On Erlang/OTP 26, a request to the `guiltty` socket with a line that's
+  too long is refused at once with "line too long", as on later OTPs,
+  instead of after a 2 s wait.
+
 ### Added
 - guiltty is under the MIT License (`LICENSE`).
 

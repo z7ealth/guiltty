@@ -44,7 +44,7 @@ are there.
 
 | Needed                          | For                                     |
 |---------------------------------+-----------------------------------------|
-| Elixir 1.20 on Erlang/OTP 29    | compiling guiltty and making the release |
+| Elixir 1.18+ on Erlang/OTP 26+ | compiling guiltty and making the release |
 | GCC 15 or newer, make, pkg-config | the C: C23 and =#embed= need GCC 15    |
 | glslc (shaderc)                 | the Vulkan shaders, GLSL -> SPIR-V       |
 | SDL3, FreeType, fontconfig, HarfBuzz, Vulkan (dev files) | the renderers |

@@ -236,6 +236,11 @@ Every new setting in `config.exs` needs all of these, in the same change:
   A crash the fuzzer finds is fixed, then copied (minus any OPEN_URL
   message) into `test/fixtures/fuzz/messages/`, where `mix test` replays
   it. After a protocol change, regenerate the seeds.
+- **Oldest supported versions:** Elixir 1.18 on Erlang/OTP 26
+  (`mix.exs`, README, book chapter 10). Don't use an API newer than
+  those without asking. Before a version tag that touched Elixir code,
+  run the suite on Elixir 1.18.4 / OTP 26 too (book chapter 10, "Running
+  the suite on another version"), in a copy of the project.
 - Run the relevant tests before handing over a change, and report failures
   as they are. Don't hide them.
 

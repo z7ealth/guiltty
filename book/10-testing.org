@@ -139,17 +139,80 @@ A replay draws one frame per ROWS message, as a live window does, so it
 also tests damage tracking: thirty small updates must end on exactly the
 picture one whole update gives, in each backend (chapter 22).
 
+* Older Elixir and Erlang
+
+guiltty is written on the newest Elixir and Erlang, but the people who
+install it often have what their distribution ships. The oldest it
+supports is *Elixir 1.18 on Erlang/OTP 26*. Every pair below built
+guiltty with =--warnings-as-errors=, passed the whole suite, and (where
+marked) built a release that starts:
+
+| Elixir | Erlang/OTP | Tests            | Release |
+|--------+------------+------------------+---------|
+| 1.20.4 | 29         | 295, all passed  | yes     |
+| 1.19.7 | 28         | 295, all passed  | yes     |
+| 1.19.7 | 26         | 295, all passed  | -       |
+| 1.18.4 | 26         | 295, all passed  | yes     |
+
+=mix.exs= enforces the Elixir side (=elixir: "~> 1.18"=); nothing
+enforces the Erlang side, so the README states it.
+
+** Running the suite on another version
+
+asdf installs versions side by side, and two variables pick them for
+one command, without changing your default. Build in a copy of the
+project, so its =_build= and =deps= stay yours:
+
+#+begin_src sh
+asdf install erlang 26.2.5.21          # builds from source, ~10 min
+asdf install elixir 1.18.4-otp-26
+mkdir /tmp/g && git ls-files -z | xargs -0 cp --parents -t /tmp/g
+cd /tmp/g
+export ASDF_ERLANG_VERSION=26.2.5.21 ASDF_ELIXIR_VERSION=1.18.4-otp-26
+mix local.hex --force && mix local.rebar --force && mix deps.get
+mix compile --warnings-as-errors && mix test
+MIX_ENV=prod mix release && _build/prod/rel/guiltty/bin/guiltty eval 'IO.puts(:ok)'
+#+end_src
+
+(=KERL_BUILD_DOCS=no= and =KERL_CONFIGURE_OPTIONS="--without-javac
+--without-wx --without-odbc"= make the Erlang build shorter.)
+=mix format --check-formatted= is the one check left out: each Elixir's
+formatter lays a few lines out its own way, and the code is formatted
+for the newest.
+
+** What the old versions found
+
+- *A line over the limit, on OTP 26.* =gen_tcp= in line mode with a
+  =packet_size= returns ={:error, :emsgsize}= from OTP 27 on. OTP 26
+  hands the long line out in pieces of 1,460 bytes, none ending in a
+  line break. The Launcher took each piece for a line and answered
+  "request incomplete" after its 2 s timeout. Safe (it reads at most 16
+  lines), but slow and wrong. Now a piece without a line break is
+  "line too long" at once, on every OTP ([[file:../lib/guiltty/launcher.ex::read_lines][read_lines]]).
+- *A test that could fail on any version.* The flood test waited for
+  =FLOOD-DONE= on screen, but the command it typed, =seq ...; echo
+  FLOOD-DONE=, shows that too. On a busy machine the shell's echo came
+  before the first sample, and the test saw "done" with nothing
+  measured. The slower OTP made it show; it now waits for a line that
+  /starts/ with =FLOOD-DONE=.
+
 * Loot
 
 - =script(1)= from util-linux.
 - StreamData's =check all= and generators.
 - "Golden master" (or snapshot) testing.
+- Elixir's compatibility table ("Compatibility and deprecations" in the
+  Elixir docs): which Erlang/OTP each Elixir runs on.
+- =inet:setopts/2=, =packet= and =packet_size=: what line mode does with
+  a line over the limit.
 
 * Questions
 
 1. Why record fixtures instead of writing the escape sequences by hand?
 2. What does a snapshot prove, and what doesn't it?
 3. Why feed each fixture one byte at a time too?
+4. Why test old versions in a copy of the project, not in it?
+5. Why did the flood test pass on OTP 29 and fail on OTP 26?
 
 ** Answers
 :PROPERTIES:
@@ -163,3 +226,11 @@ picture one whole update gives, in each backend (chapter 22).
    was right then; that needs a reference, like a real terminal or pyte.
 3. To catch state that doesn't survive a split read: a read can end
    anywhere, and the screen must not change because of it.
+4. =_build= and =deps= are compiled for one Elixir and Erlang. Building
+   with another in place would recompile them for it, and your next
+   =mix test= would recompile everything back (or trip on beams it
+   can't load).
+5. It wasn't the OTP: the test raced the shell's echo of the command,
+   which contains =FLOOD-DONE=. It usually lost the race by a few
+   milliseconds; on a slower, busier run it won, and the test stopped
+   before taking a sample.

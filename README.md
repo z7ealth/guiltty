@@ -26,7 +26,7 @@ runtime: once it's installed, it runs without Elixir.
 
 | What                                       | Why                                      |
 |--------------------------------------------|------------------------------------------|
-| Elixir 1.20 and Erlang/OTP (developed on 29) | building guiltty and its release       |
+| Elixir 1.18 or newer, Erlang/OTP 26 or newer | building guiltty and its release       |
 | GCC 15 or newer, make, pkg-config          | the C is C23 and uses `#embed` (GCC 15+) |
 | SDL3 (development files)                   | the window, keyboard and mouse           |
 | FreeType, fontconfig, HarfBuzz (dev files) | finding fonts, drawing and shaping text  |
@@ -35,7 +35,8 @@ runtime: once it's installed, it runs without Elixir.
 
 Your distribution's packages work if they're recent enough; for Elixir
 and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
-you exact versions. `elixir --version` should say Elixir 1.20.
+you exact versions. `elixir --version` should say Elixir 1.18 or newer, compiled with
+Erlang/OTP 26 or newer.
 
 On these distributions, one command installs it all. Only openSUSE has
 been tried; the other package names come from each distribution's
@@ -55,19 +56,17 @@ sudo dnf install gcc make pkgconf-pkg-config SDL3-devel freetype-devel \
   fontconfig-devel harfbuzz-devel vulkan-loader-devel vulkan-headers glslc elixir
 ```
 
-Fedora 43 and 44 have everything but Elixir 1.20: leave out `elixir` and
-get Elixir and Erlang from asdf.
+If Fedora's Elixir is older than 1.18 (`elixir --version`), leave out
+`elixir` and get Elixir and Erlang from asdf.
 
 **Ubuntu 26.04 LTS or newer**
 
 ```sh
 sudo apt install build-essential pkg-config libsdl3-dev libfreetype-dev \
-  libfontconfig-dev libharfbuzz-dev libvulkan-dev glslc
+  libfontconfig-dev libharfbuzz-dev libvulkan-dev glslc elixir erlang-dev
 ```
 
-Ubuntu 26.04's Elixir is 1.18, too old: get Elixir 1.20 and Erlang from
-asdf. From Ubuntu 26.10 on, add `elixir erlang-dev` to the command
-instead. Older Ubuntus have neither SDL3 nor GCC 15.
+Older Ubuntus have neither SDL3 nor GCC 15.
 
 **Arch Linux**
 
@@ -76,9 +75,9 @@ sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz \
   vulkan-icd-loader vulkan-headers shaderc elixir
 ```
 
-guiltty itself is developed on Elixir 1.20.4 with Erlang/OTP 29, both
-from asdf; a distribution's Elixir 1.20 may come with an older Erlang,
-which should work but hasn't been tried.
+guiltty is developed on Elixir 1.20.4 with Erlang/OTP 29. It also
+builds and passes its tests on Elixir 1.19.7 (Erlang/OTP 28 and 26) and
+Elixir 1.18.4 (Erlang/OTP 26). Anything older isn't supported.
 
 guiltty also needs a GPU driver with OpenGL 3.3, which almost any desktop
 from the last decade has. For Vulkan it needs a Vulkan 1.3 driver (for
