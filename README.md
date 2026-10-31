@@ -186,3 +186,8 @@ width table and the icons.
 - `CHANGELOG.md` lists what each version added.
 - `DEVLOG.md` is what happened along the way.
 - `AGENTS.md` has the rules for working on the code.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The installed copy also carries the Erlang
+runtime and the `telemetry` library, both under the Apache License 2.0.

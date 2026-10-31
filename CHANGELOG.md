@@ -8,6 +8,11 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## Unreleased
+
+### Added
+- guiltty is under the MIT License (`LICENSE`).
+
 ## 0.15.3 — 2026-10-31
 
 ### Changed
