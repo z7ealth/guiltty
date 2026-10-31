@@ -45,10 +45,7 @@ adding new boxes.
   +-------------+                                  pixels
 #+end_example
 
-Three pieces are C, the rest of the program is Elixir. That doesn't make
-the C small: it's about 5,600 lines (plus 320 of shaders) next to about
-6,500 of Elixir, so a bit under half. Most of it is the renderer, since
-fonts, glyphs and two GPU APIs take a lot of code.
+Three pieces are C, the rest is Elixir, in about equal parts:
 
 | Part          | Language | Lines (about) |
 |---------------+----------+---------------|
@@ -57,9 +54,6 @@ fonts, glyphs and two GPU APIs take a lot of code.
 | the PTY NIF   | C        | 530           |
 | the client    | C        | 250           |
 | fuzz targets and tools (development only) | C | 280 |
-
-(Counted with =wc -l=, comments and blank lines included, without the
-generated width table; the tests are another 3,600 lines of Elixir.)
 
 - *The PTY NIF* lives inside the BEAM because it has to make syscalls
   (=openpty=, =fork=, =read=, =write=). It is kept small (about 530 lines),

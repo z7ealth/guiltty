@@ -11,10 +11,8 @@ the tab bar instead of ignoring them.
 ## Unreleased
 
 ### Changed
-- The README says what guiltty has been tried on (openSUSE, X11, AMD and
-  Mesa's software renderers) and how fast it is at heavy output (about
-  3 to 4 MB/s), and that it's Elixir and C in nearly equal parts, not "Elixir
-  with a little C". The menu entry's description says the same.
+- The README says what guiltty has been tried on and how fast it is at
+  heavy output.
 
 ### Fixed
 - `guiltty` typed in a guiltty tab printed the release's usage instead of

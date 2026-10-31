@@ -26,11 +26,9 @@ supervisor restarts it, and the BEAM goes on. C is not forgiving. A bad
 index in C doesn't stop the program: it reads or writes some other
 memory, and the program carries on with garbage, or crashes far from the
 mistake, or, in the worst case, does what an attacker's bytes tell it.
-guiltty's C isn't small (about 5,600 lines, chapter 0), but it sits in
-three places with narrow doors: the PTY NIF, the renderer and the client.
-That makes it possible to be strict at each door. This chapter is the
-layers that do it. None of them proves the C has no bugs; each one makes
-a bug less likely, or makes it fail loudly instead of quietly.
+guiltty's C sits in three places with narrow doors (the PTY NIF, the
+renderer, the client), so each door can be strict. This chapter is the
+layers that do it.
 
 * Layer 1: code that checks for itself
 

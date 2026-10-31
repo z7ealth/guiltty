@@ -7,18 +7,14 @@
 A GPU terminal emulator in Elixir and C. Elixir holds the behavior: the
 parser, the screen, tabs, windows, config. C does the syscalls and the
 pixels: a PTY NIF, a renderer (Vulkan, or OpenGL) that runs as its own
-process, and the small `guiltty` command. By lines of code it's a bit
-more than half Elixir (about 6,500 lines) and a bit less than half C
-(about 5,600, plus 320 of shaders).
+process, and the small `guiltty` command.
 
-What it's been tried on, so far: Linux only (openSUSE Tumbleweed), X11,
-an AMD GPU (Mesa's RADV) and Mesa's software renderers. Wayland, Intel
-and NVIDIA GPUs and other distributions should work but haven't been
+Linux only. Tried on openSUSE Tumbleweed, X11 and an AMD GPU; Wayland,
+Intel, NVIDIA and other distributions should work but haven't been
 tried.
 
 It isn't fast at heavy output: a big `cat` goes by at about 3 to 4 MB/s
-(book chapter 22), where native terminals are known to be much faster. It's meant to be
-read and understood (see [book/](book/index.org)) as much as used.
+(book chapter 22).
 
 ## Install
 

@@ -32,9 +32,8 @@ Time to window needs a window manager and must run from another terminal
 alacritty and ghostty is in the script's header; the first result, one
 =hyperfine= run of each on the development machine, was alacritty
 130 ms, ghostty 260 ms, guiltty 1,230 ms, more than half of it the
-launcher (see "Not done", below). Only start-up was compared:
-throughput wasn't measured for the other two, so this chapter makes no
-claim about how far behind them guiltty is there.
+launcher (see "Not done", below). Only start-up was compared, not
+throughput.
 
 To find /where/ the time goes, OTP's profiler counts the time in every
 function:
@@ -203,8 +202,7 @@ its module loads. It's set in [[file:../rel/env.sh.eex][rel/env.sh.eex]] (=RELEA
 
 On one machine (AMD Ryzen 5 5600); the real-window rows use the release
 OpenGL renderer on SDL's offscreen driver, so they leave out putting
-frames on screen. Your numbers will differ; what to compare is before
-and after on the same machine.
+frames on screen.
 
 | Measure (=make bench=)                  | v0.13.0  | v0.14.0  |
 |-----------------------------------------+----------+----------|

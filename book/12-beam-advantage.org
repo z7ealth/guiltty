@@ -244,5 +244,4 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+/,
 5. A linked process that raises takes its caller down. A monitor only
    reports the death, so a config that raises can't crash guiltty. (A
    config is still code that runs as you: one that calls =System.halt/0=
-   does stop guiltty. The check is against mistakes, not against
-   yourself.)
+   does stop guiltty.)
