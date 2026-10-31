@@ -67,4 +67,20 @@ defmodule Guiltty.Session.EnvironmentTest do
     Session.write(id, "echo $GUILTTY_TEST_KEEP\r")
     assert eventually(fn -> Session.dump(id) =~ ~r/^kept$/m end)
   end
+
+  test "the runtime's own folders, put in front of PATH by erl, are left out" do
+    root = to_string(:code.root_dir())
+    erts_bin = Path.join([root, "erts-#{:erlang.system_info(:version)}", "bin"])
+    rel_bin = Path.join(root, "bin")
+
+    # What a release sees: erlexec's two folders first, then yours (one of
+    # which happens to be the same folder again, and stays).
+    assert Guiltty.Session.Pty.shell_path(
+             "#{erts_bin}:#{rel_bin}:/home/me/.local/bin:/usr/bin:#{rel_bin}"
+           ) ==
+             "/home/me/.local/bin:/usr/bin:#{rel_bin}"
+
+    # A PATH without them is untouched.
+    assert Guiltty.Session.Pty.shell_path("/usr/local/bin:/usr/bin") == "/usr/local/bin:/usr/bin"
+  end
 end

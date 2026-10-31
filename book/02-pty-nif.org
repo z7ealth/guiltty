@@ -185,6 +185,19 @@ yet; =clone3= with =CLONE_PIDFD= does, at the cost of skipping glibc's
   used to be the key to run code on guiltty's node: no program in your
   shell should be able to read it. (Since v0.12.4 it's empty, and the key
   lives in =~/.erlang.cookie=; chapter 20.)
+- =PATH= without the two folders Erlang's launcher (=erlexec=) puts in front
+  of it when the VM starts. This is a real guiltty tab before the fix:
+
+  #+begin_example
+  /home/you/.local/lib/guiltty/erts-17.1.1/bin   <- the release's erl, epmd...
+  /home/you/.local/lib/guiltty/bin               <- the release's start script, "guiltty"
+  /home/you/.local/bin                           <- your guiltty command (the client)
+  #+end_example
+
+  =guiltty= in a tab ran the release's start script, which printed its
+  usage instead of opening a window. =Pty.shell_path/1= drops those two
+  folders, only from the front, where =erlexec= put them; the rest of your
+  =PATH= stays as it was.
 - It runs *your* shell: =$SHELL=, or your login shell from the user
   database (=getent passwd $USER=, which asks NSS, so LDAP users work too),
   or bash, or =/bin/sh=, the first that is an executable file.

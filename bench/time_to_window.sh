@@ -15,7 +15,10 @@ shift
 ids() { wmctrl -lx | awk -v c="$class" 'tolower($3) ~ tolower(c) { print $1 }'; }
 
 before=$(ids)
-"$@" >/dev/null 2>&1 &
+# What the command prints is kept, to show if no window comes.
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+"$@" >"$out" 2>&1 &
 
 # Give up after 20 s (4000 polls of 5 ms): a command that never shows a
 # window (a typo, a missing program) fails instead of hanging hyperfine.
@@ -31,4 +34,6 @@ while [ "$tries" -lt 4000 ]; do
     sleep 0.005
 done
 echo "time_to_window: no new '$class' window after 20 s from: $*" >&2
+echo "it printed:" >&2
+cat "$out" >&2
 exit 1

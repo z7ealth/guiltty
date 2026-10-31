@@ -1026,3 +1026,18 @@ once and have shells that behave like everyone else's. Chapter 23 keeps
 the reasoning under "Why there's no service". Kept from that work: the
 first tab starts in the folder you ran `guiltty` in, and a window's
 display reaches its tabs' shells.
+
+## 2026-10-31 — A tab's PATH
+
+_Draft: agent, awaiting user_
+
+Benchmarking the warm launch from inside guiltty hung: hyperfine waited
+for a window that never came. The socket answered, the log showed no
+request, and running `guiltty` by hand in that tab printed Mix's usage
+text. The tab's PATH started with the release's own folders, which
+`erlexec` puts in front when the VM starts, and every shell inherited
+them, so `guiltty` meant the release's start script. Until v0.15.0 that
+script *was* the launcher, which is why nobody noticed. Shells now get
+PATH without those two leading folders. And `time_to_window.sh` prints
+what the command said when no window comes, so the next failure of this
+kind explains itself.

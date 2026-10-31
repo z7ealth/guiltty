@@ -8,6 +8,14 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## Unreleased
+
+### Fixed
+- `guiltty` typed in a guiltty tab printed the release's usage instead of
+  opening a window: the tab's `PATH` started with the release's own
+  folders, which Erlang adds when it starts. They're left out now, so
+  `guiltty` (and `erl`) mean the same in a tab as in any other terminal.
+
 ## 0.15.0 — 2026-10-31 — Client and server
 
 ### Changed

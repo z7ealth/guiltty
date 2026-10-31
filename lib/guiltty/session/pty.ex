@@ -175,13 +175,39 @@ defmodule Guiltty.Session.Pty do
   # (RELEASE_*, GUILTTY_NODE, ERL_EPMD_ADDRESS). A shell must not inherit them: another Mix release started
   # from it would take RELEASE_NODE as its own node name and collide with
   # ours, and RELEASE_COOKIE is the key to run code on this node.
+  #
+  # PATH too, in part: see shell_path/1.
   defp build_env(overrides) do
     System.get_env()
     |> Map.reject(fn {name, _value} -> vm_variable?(name) end)
+    |> then(fn env -> if env["PATH"], do: Map.update!(env, "PATH", &shell_path/1), else: env end)
     |> Map.drop(["TERM_PROGRAM", "TERM_PROGRAM_VERSION"])
     |> Map.merge(%{"TERM" => "xterm-256color", "COLORTERM" => "truecolor"})
     |> Map.merge(overrides)
     |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
+  end
+
+  # Erlang's launcher (erlexec) puts the runtime's own folders in front of
+  # PATH when the VM starts: erts-VERSION/bin (erl, epmd...) and the
+  # release's bin (its start script, named "guiltty"). A shell that kept
+  # them would run the release's script for `guiltty`, not the command you
+  # installed, and the release's Erlang before your own. Only those, and
+  # only at the front where erlexec put them: your own PATH is left alone.
+  @doc false
+  def shell_path(path) do
+    root = to_string(:code.root_dir())
+
+    ours = [
+      Path.join([root, "erts-#{:erlang.system_info(:version)}", "bin"]),
+      Path.join(root, "bin")
+    ]
+
+    ours = Enum.uniq([System.get_env("BINDIR") | ours] -- [nil])
+
+    path
+    |> String.split(":")
+    |> Enum.drop_while(&(&1 in ours))
+    |> Enum.join(":")
   end
 
   defp put_env(env, name, value),
