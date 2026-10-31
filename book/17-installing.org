@@ -14,7 +14,7 @@ in your home directory. No root.
   ├── lib/guiltty/                     the release
   │   ├── bin/guiltty                  its start script (and rel/env.sh.eex)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.15.0/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
+  │   └── lib/guiltty-0.15.3/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
   │                                    pty_nif.so, guiltty.bmp
   ├── bin/guiltty                      a link to that client (chapter 23)
   └── share/

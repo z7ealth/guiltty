@@ -8,7 +8,7 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.15.3 — 2026-10-31
 
 ### Changed
 - The README says what guiltty has been tried on and how fast it is at
