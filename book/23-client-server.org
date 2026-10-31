@@ -1,0 +1,249 @@
+#+TITLE: Client and server: the guiltty command
+#+STARTUP: overview
+
+* What changed in v0.15.0
+
+=guiltty= (the command, and the menu entry, which runs it) used to be a
+shell script that asked the running guiltty for a window over Erlang
+distribution. Every launch booted a second Erlang VM just to ask, and
+closing a window during a launch could leave you with no window at all.
+Now it works like =emacsclient= and the Emacs server: a tiny C program
+asks over a Unix socket, and an Elixir process answers.
+
+| Launch, to the window on screen      | v0.14.0 | v0.15.0 |
+|--------------------------------------+---------+---------|
+| guiltty not running (cold)           | 1.33 s  | 0.71 s  |
+| guiltty running (warm)               | ~0.9 s  | 0.085 s |
+
+(Measured with =hyperfine= and =bench/time_to_window.sh= on a private X
+display with a window manager and software OpenGL; chapter 22.)
+
+* The picture
+
+#+begin_example
+  you (icon or shell)
+    │
+    ▼
+  ~/.local/bin/guiltty  ->  a link to priv/guiltty, the C client
+    │  connect $XDG_RUNTIME_DIR/guiltty/sock
+    │  "guiltty 1 open\n" "DISPLAY=:0\n" ... "PWD=/home/me/src\n" "\n"
+    │                               ─────────────►  Guiltty.Launcher (Elixir)
+    │                                                 you? (SO_PEERCRED)
+    │                                                 a valid request?
+    │                                                 Lifeline.open(display)
+    │  exit 0                     ◄─────────────  "ok\n"
+    │
+    └─ nobody listening? exec bin/guiltty daemon:
+       the node boots and opens its first window itself
+
+  guiltty node (one BEAM, in the background), as before, plus:
+    ├── Guiltty.Distribution   takes the name guiltty@127.0.0.1 once it's free
+    └── Guiltty.Launcher       the socket
+#+end_example
+
+guiltty now has three kinds of C, each with one place:
+
+| C                  | Started by           | Talks over                 | If it crashes                  |
+|--------------------+----------------------+----------------------------+--------------------------------|
+| the PTY NIF        | loaded into the BEAM | function calls             | everything goes                |
+| the renderers      | the BEAM, as ports   | ={:packet, 4}= messages     | that window closes, comes back |
+| the client         | you                  | a Unix socket, one request | that launch fails, nothing else |
+
+The client can't be a port: a port is started by a running BEAM, and the
+client's job is to find that BEAM, or start it.
+
+* The client: a doorbell
+
+[[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]], about 200 lines, decides nothing:
+
+1. With arguments (=guiltty stop=, =pid=, =remote=), it =execv= s the
+   release's own script with them, as the old wrapper did.
+2. Otherwise it builds the request: the first line, then each display
+   variable it has (=DISPLAY=, =WAYLAND_DISPLAY=, =XAUTHORITY=,
+   =XDG_RUNTIME_DIR=), leaving out any too long or with a line break in
+   it, then =PWD=, the folder it runs in (from =getcwd(3)=, not the
+   =$PWD= variable, which a program can leave stale), then an empty line.
+   The window's first tab starts in that folder (when the config's
+   =working_directory= is =:inherit=, the default).
+3. =socket= and =connect= to the socket. If there's no socket file
+   (=ENOENT=), or one nobody listens on (=ECONNREFUSED=, left by a guiltty
+   that's gone), it =execv= s =bin/guiltty daemon=. The new node inherits
+   the client's environment, so its first window opens on this display.
+4. If it connected, it sends the request and waits for one line, at most
+   10 s (=poll=). "ok": exit 0. "error: shutting down", or no answer: the
+   guiltty it reached is going away, so it waits 50 ms and starts over,
+   for up to 5 s. Any other error is printed, exit 1.
+
+It finds the release from =/proc/self/exe=: it lives in
+=lib/guiltty-VERSION/priv/= inside it, and =~/.local/bin/guiltty= is a link
+to it, so the real path is always the right release. It uses no
+libraries, so it starts in about a millisecond, and it's built like the
+rest of the C: C23, the hardening flags, both analyzers.
+
+* The server: Guiltty.Launcher
+
+[[file:../lib/guiltty/launcher.ex][Guiltty.Launcher]] listens with =gen_tcp= on a /local/ (Unix) address,
+=ifaddr: {:local, path}=, in line mode (=packet: :line=). For each
+connection, a new process (so one stuck client never holds up another):
+
+#+begin_example
+  is the caller you?   getsockopt(SO_PEERCRED) -> uid == ours
+  read at most 16 lines of at most 4 KB, 2 s at most
+  first line exactly "guiltty 1 open"
+  every other line NAME=value, NAME one of the four display variables,
+                   value valid UTF-8 without control characters
+  Lifeline alive?      no -> "error: shutting down"
+  Lifeline.open(window: [env: ...]) -> "ok"
+#+end_example
+
+The checks are a pure function, =parse_request/1=, tested with random
+input (it must never raise). Where the socket lives:
+
+- =$XDG_RUNTIME_DIR/guiltty/sock=: systemd makes =/run/user/<uid>= at
+  login, private to you;
+- or =/tmp/guiltty-<uid>/sock= without it;
+- or =$GUILTTY_SOCKET= (the tests use it).
+
+The folder is made mode 0700 and must be yours: whoever could write in it
+could put their own socket there for the client to talk to. A socket
+file that refuses connections (its guiltty is gone) is removed; one that
+accepts belongs to another running guiltty and is left alone.
+
+The protocol has a version in its first line: a client and a server of
+different versions refuse each other with a clear message instead of
+misunderstanding each other.
+
+* The race that broke twice
+
+When the last window closes, guiltty takes a moment to stop, and in that
+moment it still exists. Twice before, a launch in that moment failed: the
+old launcher asked a node that was already going, or started a new node
+whose name (=guiltty@127.0.0.1=) the old one still held, so the new one
+couldn't start.
+
+Two things fix it for good:
+
+#+begin_example
+  last window closes
+    Lifeline stops  -> guiltty's children stop, last first:
+      Launcher      closes the socket   (it's the last child)
+      ...           the VM goes on stopping, still holding its name
+                                          │
+  $ guiltty  during that:                 │
+    connect: refused -> exec daemon       │
+    new node boots, without a name ...    │
+      Launcher: the old socket file is dead -> removed, listens
+      first window opens                  │
+      Distribution: name taken? retry ... ▼ old VM gone, name free
+                    -> guiltty@127.0.0.1
+#+end_example
+
+1. The Launcher is the last of guiltty's children, so it's the first to
+   stop: from then on, launches start a new guiltty. Before that, the
+   Launcher answers "shutting down" if Lifeline is already gone, and the
+   client asks again.
+2. The release no longer takes its name at boot (=-name=), where a name
+   in use would stop it from starting. It starts without distribution
+   (=rel/env.sh.eex= sets =RELEASE_DISTRIBUTION=none= for =start= and
+   =daemon=), and [[file:../lib/guiltty/distribution.ex][Guiltty.Distribution]] takes the name once it's free,
+   retrying every 200 ms. Windows don't need it, so guiltty works
+   meanwhile. It also starts epmd if none runs: a node that takes its
+   name at boot does that itself, one that takes it later must.
+
+Tested on a release: the window closed between 0 and 200 ms before a
+launch, three rounds of eight: 24 launches, 24 windows.
+
+* A window's display, and its first tab
+
+The node's environment is the one it inherited from the first =guiltty=,
+the one that started it. Later windows may be asked for from somewhere
+else: another display (a nested X server, a second session), or another
+folder. So each request carries both, and a desk uses them:
+
+- *the display* goes to the window's renderer, and to its tabs' shells
+  too ([[file:../lib/guiltty/desk.ex][Desk.init/1]]): a GUI program started from a tab (=xdg-open=, an
+  editor) opens on the display of the window it was started in;
+- *the folder* is where the window's first tab starts, when the config's
+  =working_directory= is =:inherit= (the default). Later tabs follow the
+  active tab, as before.
+
+Everything else a tab's shell gets is guiltty's own environment, which is
+your session's: guiltty is always started from it, by the first
+=guiltty= you run.
+
+* Why there's no service
+
+guiltty could start at login and stay running with no window, like
+=emacs --daemon=, so even the first window of the day would open in
+~0.1 s instead of ~0.7 s. It was built, tried, and taken out (DEVLOG,
+v0.15.0). A service started by systemd gets systemd's environment, not
+your desktop session's: a different =PATH= (on openSUSE, without
+=~/.local/bin=, which only login shells get from =/etc/profile=), and
+none of what your desktop keeps to itself (an ssh agent). Each of those
+can be patched, but every patch is something a user would have to
+understand when a tab behaves differently from every other terminal.
+
+A terminal whose shells behave like everyone else's is worth more than
+0.6 s once a day. Started from your session, guiltty's shells get your
+session's environment, exactly.
+
+* What stayed
+
+- Everything after the window request: desks, windows, tabs, the
+  renderer.
+- =guiltty stop=, =pid=, =remote=: still Erlang distribution, still
+  locked down (chapter 20), only no longer on the launch path.
+- Closing the last window still stops guiltty.
+
+* Loot
+
+- =unix(7)=: Unix sockets, =SO_PEERCRED=, =ECONNREFUSED= on a socket file
+  nobody listens on.
+- =socket(2)=, =connect(2)=, =poll(2)=, =execv(3)=; =proc_pid_exe(5)= for
+  =/proc/self/exe=.
+- =gen_tcp=: =ifaddr: {:local, path}=, =packet: :line=, =packet_size=;
+  =inet:getopts/2= with a =raw= option.
+- =net_kernel:start/2=: starting distribution after boot; =epmd(1)=.
+- =emacsclient(1)= and =emacs --daemon=, the model (guiltty takes the
+  client, not the daemon: see "Why there's no service").
+
+* Questions
+
+1. Why can't the client be a port, like the renderer?
+2. How does the client tell "no guiltty" from "a guiltty shutting down"?
+3. Why does the release start without distribution now?
+4. Why must the socket's folder be yours and mode 0700, when the server
+   already checks the caller's uid?
+5. What happens if a v0.16 client talks to a v0.15 server?
+6. Why does a desk pass its window's display to its shells, when the
+   window already has it?
+7. Why doesn't guiltty run as a service, when that would make the first
+   window faster?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. A port is a process a running BEAM starts. The client runs before
+   guiltty's BEAM exists, or to find it.
+2. No socket file, or one that refuses (=ENOENT=, =ECONNREFUSED=), means
+   nobody: start one. A connection that answers "shutting down", or
+   doesn't answer, means one is going away: wait and ask again.
+3. A node taking its name at boot can't start while an old node still
+   holds it. Started without, it boots right away and takes the name
+   once the old node is gone.
+4. The uid check protects the server from other users. The folder
+   protects the client: if others could write there, they could replace
+   the socket with their own and get your display variables, or make you
+   believe a window opened.
+5. The server sees =guiltty 2 open=, answers that it speaks version 1,
+   and the client prints that and exits 1: a clear refusal, not a
+   misunderstanding.
+6. The renderer gets the display from the request, but the shells get
+   the node's environment, which is the first launch's. A window asked
+   for from another display would otherwise have tabs whose GUI programs
+   open on the wrong display.
+7. A service gets systemd's environment, not your session's, so its
+   tabs would behave differently from every other terminal's. Saving
+   0.6 s once a day isn't worth users debugging their environment.

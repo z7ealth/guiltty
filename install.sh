@@ -100,14 +100,14 @@ stop_installed
 rm -rf "$APP"
 mv "$APP.new" "$APP"
 
+# The `guiltty` command is the release's small C client (book chapter 23):
+# it asks the running guiltty for a window, or starts guiltty; any other
+# argument (stop, remote, pid...) goes to the release's own script. A link,
+# so the client finds the release it belongs to.
+version=$(cut -d' ' -f2 "$APP/releases/start_erl.data")
 mkdir -p "$(dirname "$BIN")"
-cat >"$BIN" <<EOF
-#!/bin/sh
-# Installed by guiltty's install.sh. Starts guiltty if needed and opens a
-# window; any other argument (stop, remote, pid...) goes to the release.
-exec "$APP/bin/guiltty" "\$@"
-EOF
-chmod +x "$BIN"
+rm -f "$BIN"
+ln -s "$APP/lib/guiltty-$version/priv/guiltty" "$BIN"
 
 for size in $SIZES; do
     install -D -m 644 "$here/priv/icons/guiltty-$size.png" "$ICONS/${size}x${size}/apps/guiltty.png"
@@ -134,7 +134,6 @@ EOF
 command -v desktop-file-validate >/dev/null && desktop-file-validate "$DESKTOP"
 refresh_desktop
 
-version=$(cut -d' ' -f2 "$APP/releases/start_erl.data")
 echo "guiltty $version is installed: run guiltty, or find it in your menu"
 if running "$here/_build/prod/rel/guiltty"; then
     echo "note: a guiltty from _build/prod is running. Stop it first" \

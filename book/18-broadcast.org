@@ -89,7 +89,9 @@ messages.
 * Who does what
 
 [[file:../lib/guiltty/tabs.ex][Tabs]] owns the group, like it owns the tab list and the locks: which tabs,
-what each joined with, which are lost. It does the check and the writes,
+what each joined with, which are lost. Each window has its own Tabs
+(chapter 21), so each window has its own group: broadcast never reaches
+across windows. It does the check and the writes,
 so they happen in one place, one keystroke at a time. The Window decides
 what's typed input (keys, text, paste: broadcast) and what isn't (mouse
 reports: only the tab you're looking at), and draws the markers.

@@ -284,12 +284,12 @@ boundary (=Terminal.clean_title/1=).
 
 * Layer 8: the node's network door
 
-When guiltty is already running, =guiltty= asks it for a window over
-*Erlang distribution*: it starts a tiny second node, which connects to
-guiltty's node and calls =Guiltty.open_window/1= there (chapter 12).
-Distribution lets one node run any code on another; its only lock is a
-shared secret, the *cookie*. So whoever has the cookie and can reach the
-port can do anything you can.
+=guiltty stop=, =pid= and =remote= reach a running guiltty over *Erlang
+distribution*: they start a tiny second node, which connects to guiltty's.
+(Until v0.15.0 every =guiltty= launch did too; now it uses a Unix socket,
+chapter 23.) Distribution lets one node run any code on another; its only
+lock is a shared secret, the *cookie*. So whoever has the cookie and can
+reach the port can do anything you can.
 
 Until v0.12.4 the door was wider than it needed to be:
 
@@ -340,9 +340,9 @@ Checked on a test release:
 
 The cookie in =~/.erlang.cookie= is shared with your other Erlang nodes
 (=iex --sname=, a Phoenix app in development). They all run as you, so
-they can't do anything you couldn't. Turning distribution off entirely
-would need a launcher that talks to guiltty some other way (a FIFO or a
-Unix socket): DEVLOG "Later".
+they can't do anything you couldn't. Since v0.15.0 launching doesn't use
+distribution at all (chapter 23), so turning it off entirely would only
+cost =guiltty stop= and =remote=: DEVLOG "Later".
 
 * Loot
 

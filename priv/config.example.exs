@@ -66,8 +66,8 @@
   # a second Ctrl+Shift+B, and isn't checked.
   broadcast_programs: ["ssh", "mosh-client"],
 
-  # Where the tabs go: :top or :bottom.
-  tab_bar: :top,
+  # Where the tabs go: :bottom (the default) or :top.
+  tab_bar: :bottom,
 
   # Join ->, !=, |>, => and the like into one symbol, when the font has
   # ligatures (JetBrains Mono and Fira Code do; Source Code Pro doesn't).

@@ -27,3 +27,4 @@ the loot (what to read next) and a few questions to check yourself.
 21. [[file:20-security.org][Security: making the C hard to break]]
 22. [[file:21-multi-window.org][Multi window: every window its own desk]]
 23. [[file:22-performance.org][Performance: measure, then fix what the numbers say]]
+24. [[file:23-client-server.org][Client and server: the guiltty command]]

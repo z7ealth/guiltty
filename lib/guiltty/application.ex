@@ -12,10 +12,14 @@ defmodule Guiltty.Application do
   #   |-- Guiltty.Desks         DynamicSupervisor: one Desk per window (its
   #   |                         Tabs and its Window)
   #   |-- Guiltty.Lifeline      watches the desks (significant)
+  #   |-- Guiltty.Distribution  takes the node's name once it's free (releases)
+  #   |-- Guiltty.Launcher      the socket the `guiltty` command asks for windows
   #   `-- (a Task)              opens the first window at boot
   #
   # rest_for_one: each child depends on the ones before it. Lifeline is
-  # significant: when the last desk ends, guiltty stops.
+  # significant: when the last desk ends, guiltty stops. Children stop in
+  # reverse order, so the Launcher closes its socket first: a `guiltty`
+  # run during the shutdown then starts a new guiltty.
   @impl true
   def start(_type, _args) do
     children =
@@ -26,6 +30,8 @@ defmodule Guiltty.Application do
             {DynamicSupervisor, name: Guiltty.Sessions, strategy: :one_for_one},
             {DynamicSupervisor, name: Guiltty.Desks, strategy: :one_for_one},
             Supervisor.child_spec(Guiltty.Lifeline, significant: true),
+            Guiltty.Distribution,
+            Guiltty.Launcher,
             {Task, fn -> Guiltty.open_window() end}
           ]
         else

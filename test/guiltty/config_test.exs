@@ -25,6 +25,8 @@ defmodule Guiltty.ConfigTest do
     assert config.font == %{family: "DejaVu Sans Mono", size: 20}
     assert config.theme.bg == {0, 0, 16}
     assert config.theme.fg == Config.defaults().theme.fg
+    # The tab bar sits below the terminal unless the config says :top.
+    assert config.tab_bar == :bottom
     assert config.keys.new_tab == ["ctrl+alt+n"]
     assert config.keys.close_tab == ["ctrl+shift+w"]
   end
@@ -40,7 +42,7 @@ defmodule Guiltty.ConfigTest do
         copy_on_select: :clipboard,
         wheel_lines: 5,
         bold_is_bright: false,
-        tab_bar: :bottom
+        tab_bar: :top
       ]
       """)
 
@@ -50,7 +52,7 @@ defmodule Guiltty.ConfigTest do
     assert c.shell == %{command: "/bin/bash", args: ["-l"]}
     assert c.working_directory == Path.expand("~/src")
     assert {c.copy_on_select, c.wheel_lines, c.bold_is_bright} == {:clipboard, 5, false}
-    assert c.tab_bar == :bottom
+    assert c.tab_bar == :top
     assert c.keys.open_config == ["ctrl+,"]
   end
 

@@ -45,7 +45,7 @@ adding new boxes.
   +-------------+                                  pixels
 #+end_example
 
-Two pieces are C, everything else is Elixir:
+Three pieces are C, everything else is Elixir:
 
 - *The PTY NIF* lives inside the BEAM because it has to make syscalls
   (=openpty=, =fork=, =read=, =write=). It is kept tiny, since a crash there
@@ -54,6 +54,29 @@ Two pieces are C, everything else is Elixir:
   bash and the screen contents survive in Elixir and can be redrawn. It
   comes in two builds with the same core: =guiltty_vk= (Vulkan, the
   default) and =guiltty_gl= (OpenGL, the fallback). See [[file:19-vulkan.org][chapter 19]].
+- *The client* (since MVP 15) is the =guiltty= command itself: a tiny
+  program that asks the running guiltty for a window over a Unix socket,
+  or starts guiltty. It decides nothing. See [[file:23-client-server.org][chapter 23]].
+
+* guiltty today
+
+The pipe above is still there, once per tab. Around it, MVP 4 and later
+added tabs that outlive windows, MVP 13 independent windows, and MVP 15
+the client:
+
+#+begin_example
+  you: `guiltty`, or the menu
+     |
+     v
+  guiltty (C client) --- Unix socket ---+
+                                        v
+  BEAM: the guiltty node                Launcher (chapter 23)
+    Lifeline: stops guiltty after the last window (chapter 21)
+    Desk (one per window)
+      Tabs: that window's tabs, locks, broadcast group
+      Window --- port ---> guiltty_vk (one per window)
+    Sessions (one per tab): Pty -> Parser -> Screen  (as above)
+#+end_example
 
 * Roadmap
 
@@ -64,6 +87,16 @@ Two pieces are C, everything else is Elixir:
 | MVP 3    | The vim fight      | Alternate screen, scroll regions, key modes  |
 | MVP 4    | The BEAM advantage | Tabs, crash-proof parts, detach and reattach |
 | MVP 5    | Daily driver       | Unicode, scrollback, selection, fonts        |
+| MVP 6    | Flat tabs          | Tab bar, named themes, more settings         |
+| MVP 7    | The installer      | =install.sh=, the logo, the menu entry       |
+| MVP 8    | Lockable tabs      | Tabs that outlive the window                 |
+| MVP 9    | Broadcast          | Typing into many ssh tabs at once            |
+| MVP 10   | Vulkan             | The Vulkan renderer, OpenGL as fallback      |
+| MVP 11   | Ligatures          | Arrows and other symbols drawn as one        |
+| MVP 12   | Security           | Hardened C, fuzzing, audits, a locked door   |
+| MVP 13   | Multi window       | Independent windows, each its own desk       |
+| MVP 14   | Performance        | Batched lines, damage tracking, =make bench= |
+| MVP 15   | Client and server  | The =guiltty= command as a C client          |
 
 * Loot
 

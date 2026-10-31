@@ -25,7 +25,8 @@ defmodule Guiltty.Desk do
 
   @doc """
   Options: `:desk` (its id, required), `:window` (options for the
-  `Guiltty.Window`) and `:session_opts` (for every tab's session; tests use
+  `Guiltty.Window`), `:cwd` (where its first tab starts, see
+  `Guiltty.Tabs`) and `:session_opts` (for every tab's session; tests use
   them).
   """
   def start_link(opts) do
@@ -72,11 +73,29 @@ defmodule Guiltty.Desk do
     end
   end
 
+  @display_vars ~w(DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_RUNTIME_DIR)
+
   @impl true
   def init(opts) do
     desk = Keyword.fetch!(opts, :desk)
-    tabs_opts = [desk: desk, name: tabs(desk), session_opts: Keyword.get(opts, :session_opts, [])]
     window_opts = Keyword.merge(Keyword.get(opts, :window, []), tabs: tabs(desk))
+
+    # The display the window was asked for, for its tabs' shells too: a GUI
+    # program started from a tab (xdg-open, an editor) must open where the
+    # window is. Without this, shells would have only the node's
+    # environment: the display of the first `guiltty`, not this one's.
+    display =
+      for {name, value} <- Keyword.get(window_opts, :env, []),
+          to_string(name) in @display_vars,
+          into: %{},
+          do: {to_string(name), to_string(value)}
+
+    session_opts =
+      opts
+      |> Keyword.get(:session_opts, [])
+      |> Keyword.update(:env, display, &Map.merge(display, &1))
+
+    tabs_opts = [desk: desk, name: tabs(desk), cwd: opts[:cwd], session_opts: session_opts]
 
     children = [
       Supervisor.child_spec({Tabs, tabs_opts}, significant: true),

@@ -92,30 +92,29 @@ the same shells. One limit: if =Tabs= itself crashes, it takes back the
 running sessions but forgets which were locked.)
 
 #+begin_example
-  $ guiltty                 bin/guiltty, no command -> rel/env.sh.eex:
-                              not running? start the release as a daemon,
-                                and return: it opens its first window itself
-                              running? rpc Guiltty.open_window(env64: <DISPLAY...>)
+  $ guiltty                 the C client (chapter 23):
+                              nobody on the socket? start the release as a
+                                daemon: it opens its first window itself
+                              running? "open" over the socket -> Launcher
   ... work in three tabs ...
   close the window          Window stops normally; its desk's Tabs and
                               locked sessions run on, windowless
-  $ guiltty                 running: rpc open_window -> that desk gets a
-                              new Window -> Tabs.attach_window -> the same tabs
+  $ guiltty                 running: Launcher -> Lifeline.open -> that desk
+                              gets a new Window -> Tabs.attach_window -> the same tabs
 #+end_example
 
-The launcher is [[file:../rel/env.sh.eex][rel/env.sh.eex]]: the release's start script sources
-=env.sh= before every command, so with no command it can find or start the
-node. A node it starts opens its first window as it boots, on the display
-it inherited. A node already running is asked for a window: the caller's
-=DISPLAY= (and Wayland, XAUTHORITY) travel with the request, so the window
-opens on the display you ran =guiltty= from. Since v0.13.0 it's a closed
-window that kept locked tabs, if there is one, and otherwise a new window
-with its own tabs.
+The =guiltty= command is a small C client that talks to the running node
+over a Unix socket ([[file:23-client-server.org][chapter 23]]). A node it starts opens its first window
+as it boots, on the display it inherited. A node already running is asked
+for a window: the caller's =DISPLAY= (and Wayland, XAUTHORITY) travel with
+the request, so the window opens on the display you ran =guiltty= from.
+Since v0.13.0 it's a closed window that kept locked tabs, if there is one,
+and otherwise a new window with its own tabs.
 
-(Until v0.12.4 the launcher also waited for a node it had started, and
-then asked it for a window it had already opened. That added about two
-seconds, and if the window was closed in the meantime, the node was gone
-and the launcher failed with status 1: what =hyperfine guiltty= hit.)
+(Until v0.15.0 the launcher was a shell script, =rel/env.sh.eex=, that
+asked over Erlang distribution: every launch booted a second VM to ask,
+and closing a window during a launch could fail it. Chapter 23 tells
+that story.)
 
 * Backpressure, end to end
 
@@ -213,7 +212,8 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+/,
   when the last reference is gone (chapter 2).
 - Backpressure: credits, pull, and the kernel's PTY buffer.
 - =:telemetry=.
-- Mix releases: =env.sh=, =daemon=, =rpc=.
+- Mix releases: =env.sh=, =daemon=, =rpc=; chapter 23 for the =guiltty=
+  command.
 
 * Questions
 

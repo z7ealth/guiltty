@@ -144,7 +144,7 @@ unnoticed.
 
 Among the settings: themes (Catppuccin, Dracula, Gruvbox, Solarized,
 Tomorrow Night, or your own colors), font and size, cursor, padding,
-opacity, the tab bar at the top or bottom, ligatures, the shell,
+opacity, the tab bar at the bottom (the default) or top, ligatures, the shell,
 scrollback, and every key.
 
 **Vulkan or OpenGL.** guiltty draws with Vulkan 1.3. If Vulkan can't
@@ -166,7 +166,7 @@ normal and a debug build). To try a release without installing it:
 
 ```sh
 MIX_ENV=prod mix release
-_build/prod/rel/guiltty/bin/guiltty     # starts guiltty if needed, opens a window
+_build/prod/rel/guiltty/lib/guiltty-*/priv/guiltty   # starts guiltty if needed, opens a window
 ```
 
 `make bench` measures throughput (book chapter 22). `AGENTS.md` lists

@@ -34,7 +34,7 @@ defmodule Guiltty.Config do
       clipboard too) or `false`
     * `:wheel_lines` - rows the mouse wheel scrolls per step
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
-    * `:tab_bar` - `:top` or `:bottom`
+    * `:tab_bar` - `:bottom` (the default) or `:top`
     * `:ligatures` - join `->`, `!=`, `|>` and the like into one symbol,
       when the font has ligatures (JetBrains Mono, Fira Code)
     * `:broadcast_programs` - what a tab must be running to join the
@@ -95,7 +95,7 @@ defmodule Guiltty.Config do
       copy_on_select: true,
       wheel_lines: 3,
       bold_is_bright: true,
-      tab_bar: :top,
+      tab_bar: :bottom,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan

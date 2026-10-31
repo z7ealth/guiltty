@@ -112,6 +112,8 @@ guiltty/
 ├── lib/guiltty/
 │   ├── application.ex
 │   ├── lifeline.ex          # watches the desks; guiltty stops after the last
+│   ├── launcher.ex          # the socket the `guiltty` command asks for windows
+│   ├── distribution.ex      # takes the node's name once it's free (releases)
 │   ├── desk.ex              # one per window: its Tabs and its Window
 │   ├── tabs.ex              # one window's tabs, locks, broadcast group
 │   ├── window.ex            # owns the renderer port, input events, keymap
@@ -123,6 +125,8 @@ guiltty/
 │       └── parser.ex
 ├── c_src/
 │   ├── pty_nif.c            # openpty, spawn, enif_select
+│   ├── client/guiltty.c     # the `guiltty` command: asks the running guiltty
+│   │                        # for a window over a Unix socket, or starts it
 │   └── renderer/
 │       ├── core/            # port protocol, SDL3 window and input, glyph atlas,
 │       │                    # fonts (fontconfig fallback, HarfBuzz, FreeType),
@@ -143,6 +147,10 @@ Rules that keep the architecture intact:
 - **The only C inside the BEAM is the PTY NIF.** The renderer is always a
   separate process behind an Erlang port, so a renderer crash takes down a
   window and never a session.
+- **The client has no logic.** `c_src/client/guiltty.c` connects, sends
+  one versioned request, prints the answer and exits, or execs the
+  release. Every decision about windows is made in Elixir
+  (`Guiltty.Launcher`, `Guiltty.Lifeline`).
 - **The backend seam exists from day one.** The renderer core never includes
   GL or Vulkan headers. Backends implement a struct of function pointers
   (init, upload atlas, draw frame, resize, shutdown) and declare the SDL
@@ -237,7 +245,7 @@ mix compile                 # also builds c_src/ into priv/ via elixir_make
 mix test
 mix format --check-formatted
 mix guiltty                 # dev: open a window; closing it ends everything
-_build/prod/rel/guiltty/bin/guiltty   # release launcher: start or reattach (rel/env.sh.eex)
+_build/prod/rel/guiltty/lib/guiltty-*/priv/guiltty   # the release's `guiltty` command (C client)
 iex -S mix                  # same, with an iex shell alongside
 make debug                  # renderer with ASan + UBSan (also built by `make`)
 make analyze                # GCC and Clang static analyzers over all C; any finding fails

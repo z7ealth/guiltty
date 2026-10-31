@@ -155,4 +155,19 @@ defmodule Guiltty.DeskTest do
     :ok = Tabs.close_unlocked(Desk.tabs(b))
     assert_receive {:DOWN, ^ref, :process, ^lifeline, {:shutdown, :last_desk_closed}}, 5_000
   end
+
+  test "a window's display reaches its tabs' shells" do
+    session_opts = [
+      shell: System.find_executable("bash"),
+      args: ["--norc", "--noprofile"],
+      env: %{"PS1" => "$ "}
+    ]
+
+    window = [env: [{~c"DISPLAY", ~c":42"}, {~c"XAUTHORITY", ~c"/tmp/xa"} | @env]]
+    {:ok, desk} = Lifeline.open(window: window, session_opts: session_opts)
+    [id] = ids(desk)
+
+    Guiltty.Session.write(id, "echo shell-sees-$DISPLAY-$XAUTHORITY\r")
+    assert eventually(fn -> Guiltty.Session.dump(id) =~ "shell-sees-:42-/tmp/xa" end)
+  end
 end

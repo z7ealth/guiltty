@@ -162,7 +162,9 @@ defmodule Guiltty.Session.Pty do
   defp executable?(_), do: false
 
   defp vm_variable?("RELEASE_" <> _), do: true
-  defp vm_variable?(name), do: name in ~w(BINDIR ROOTDIR EMU PROGNAME)
+
+  defp vm_variable?(name),
+    do: name in ~w(BINDIR ROOTDIR EMU PROGNAME GUILTTY_NODE ERL_EPMD_ADDRESS)
 
   # The child gets our environment, saying it runs in an xterm-256color
   # terminal with 24-bit color. TERM picks the terminfo entry programs use
@@ -170,7 +172,7 @@ defmodule Guiltty.Session.Pty do
   #
   # Minus the variables that only describe this VM: the Erlang runtime's
   # (BINDIR, ROOTDIR, EMU, PROGNAME) and the release start script's
-  # (RELEASE_*). A shell must not inherit them: another Mix release started
+  # (RELEASE_*, GUILTTY_NODE, ERL_EPMD_ADDRESS). A shell must not inherit them: another Mix release started
   # from it would take RELEASE_NODE as its own node name and collide with
   # ours, and RELEASE_COOKIE is the key to run code on this node.
   defp build_env(overrides) do

@@ -24,8 +24,9 @@ guiltty-*.tar
 
 
 
-# Built NIFs and renderer binaries
+# Built NIFs, the client and renderer binaries
 /priv/*.so
+/priv/guiltty
 /priv/guiltty_gl*
 /priv/guiltty_vk*
 

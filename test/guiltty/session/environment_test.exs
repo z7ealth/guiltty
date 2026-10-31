@@ -12,7 +12,9 @@ defmodule Guiltty.Session.EnvironmentTest do
     "BINDIR" => "/opt/erts/bin",
     "ROOTDIR" => "/opt/guiltty",
     "EMU" => "beam",
-    "PROGNAME" => "erl"
+    "PROGNAME" => "erl",
+    "GUILTTY_NODE" => "guiltty@127.0.0.1",
+    "ERL_EPMD_ADDRESS" => "127.0.0.1"
   }
 
   setup context do
@@ -52,7 +54,11 @@ defmodule Guiltty.Session.EnvironmentTest do
   end
 
   test "the shell doesn't inherit the VM's own variables", %{id: id} do
-    Session.write(id, "env | grep -cE '^(RELEASE_|BINDIR=|ROOTDIR=|EMU=|PROGNAME=)'; echo done\r")
+    Session.write(
+      id,
+      "env | grep -cE '^(RELEASE_|BINDIR=|ROOTDIR=|EMU=|PROGNAME=|GUILTTY_NODE=|ERL_EPMD_ADDRESS=)'; echo done\r"
+    )
+
     assert eventually(fn -> Session.dump(id) =~ ~r/^0\ndone$/m end)
     refute Session.dump(id) =~ "secret-cookie"
   end

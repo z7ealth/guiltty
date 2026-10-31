@@ -8,6 +8,24 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.15.0 — 2026-10-31 — Client and server
+
+### Changed
+- `guiltty` (and the menu entry) is now a small program that asks the
+  running guiltty for a window over a private socket, like `emacsclient`.
+  With guiltty running, a new window takes about 0.1 s instead of 0.9 s;
+  from cold, about 0.7 s instead of 1.3 s.
+- Opening a window just as the last one closes always works: guiltty
+  waits for the old one to finish instead of failing to start.
+- `guiltty stop`, `pid` and `remote` work as before.
+- The tab bar is at the bottom of the window by default. To keep it at the
+  top, set `tab_bar: :top` in your config.
+
+### Added
+- A new window's first tab starts in the folder you ran `guiltty` in.
+- A tab's shell gets its window's display (`DISPLAY` and the like), so GUI
+  programs started from it open where that window is.
+
 ## 0.14.0 — 2026-10-31 — Performance
 
 ### Changed

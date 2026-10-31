@@ -84,7 +84,7 @@ the renderer, some reach the shell's process:
 | =window: opacity=              | renderer        | windows opened after a change |
 | =window: columns, rows=        | Tabs            | the first tab of a new window |
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
-| =tab_bar= (=:top=, =:bottom=)  | renderer (OPTIONS) | live                       |
+| =tab_bar= (=:bottom=, =:top=)  | renderer (OPTIONS) | live                       |
 | =ligatures=                    | renderer (OPTIONS) | live: every row sent again (chapter 14) |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
 | =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19) |
@@ -194,6 +194,10 @@ The new tab's Pty passes the directory to the NIF, which =chdir(2)='s into
 it between =fork= and =execve= ([[file:02-pty-nif.org][chapter 2]]), and sets =PWD= to match.
 =:home= or a path work too.
 
+A new window's first tab has no current tab to follow: it starts in the
+folder you ran =guiltty= in, which the =guiltty= command sends along with
+its request (chapter 23).
+
 (Following the shell's directory is approximate: if you run =vim= and it
 changes directory, /proc shows the shell's, not vim's. Terminals that ask
 shells to report their directory with OSC 7 do better; that's in the
@@ -207,9 +211,10 @@ theme's blue along its bottom; the others are muted. Long titles end in
 =…=. All of it is cells (row 0 of the renderer's mirror, [[file:06-renderer.org][chapter 6]]), plus
 one bit, =CELL_ACCENT=, for the line.
 
-=tab_bar: :bottom= moves it below the terminal. That's purely a drawing
-change: the shader draws row 0 last, and clicks are mapped back. The grid,
-the Screen and the shell never know.
+It sits below the terminal by default (=tab_bar: :bottom=, since v0.15.0;
+=:top= puts it above). That's purely a drawing change: with =:bottom= the
+shader draws row 0 last, and clicks are mapped back. The grid, the Screen
+and the shell never know.
 
 * Loot
 

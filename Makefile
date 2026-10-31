@@ -37,6 +37,9 @@ EXE = -fPIE -pie $(HARDEN_LD)
 
 PRIV = priv
 NIF = $(PRIV)/pty_nif.so
+# The `guiltty` command: a small client for the running guiltty's socket
+# (book chapter 23). No libraries, so it starts in about a millisecond.
+CLIENT = $(PRIV)/guiltty
 
 RENDERER_CORE = $(wildcard c_src/renderer/core/*.c)
 RENDERER_HEADERS = $(wildcard c_src/renderer/core/*.h)
@@ -58,7 +61,11 @@ VK_CFLAGS = $(shell pkg-config --cflags vulkan)
 VK_LIBS = $(shell pkg-config --libs vulkan)
 RENDERER_VK = $(PRIV)/guiltty_vk
 
-all: $(NIF) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
+all: $(NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
+
+$(CLIENT): c_src/client/guiltty.c
+	@mkdir -p $(PRIV)
+	$(CC) $(CFLAGS_C23) $(EXE) -O2 -o $@ $<
 
 $(NIF): c_src/pty_nif.c
 	@mkdir -p $(PRIV)
@@ -94,6 +101,8 @@ ANALYZE_CLANG = clang -std=c23 --analyze -Xclang -analyzer-werror -o /dev/null
 analyze: $(VK_SPV)
 	$(ANALYZE_GCC) -I$(ERTS_INCLUDE_DIR) c_src/pty_nif.c
 	$(ANALYZE_CLANG) -I$(ERTS_INCLUDE_DIR) c_src/pty_nif.c
+	$(ANALYZE_GCC) c_src/client/guiltty.c
+	$(ANALYZE_CLANG) c_src/client/guiltty.c
 	for f in $(RENDERER_CORE) $(GL_SRC); do \
 	  $(ANALYZE_GCC) $(RENDERER_CFLAGS) $$f && $(ANALYZE_CLANG) $(RENDERER_CFLAGS) $$f || exit 1; \
 	done
@@ -171,6 +180,6 @@ icons:
 	sh c_src/tools/icons.sh
 
 clean:
-	rm -f $(NIF) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
+	rm -f $(NIF) $(CLIENT) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
 .PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table icons

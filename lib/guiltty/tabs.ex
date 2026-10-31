@@ -54,7 +54,9 @@ defmodule Guiltty.Tabs do
 
   @doc """
   Options: `:desk` (the desk's id; its sessions are registered with it),
-  `:name`, and `:session_opts` (merged into every session's, for tests).
+  `:name`, `:cwd` (where the first tab starts, when the config's
+  `working_directory` is `:inherit`: the folder `guiltty` was run in) and
+  `:session_opts` (merged into every session's, for tests).
   """
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
@@ -127,7 +129,8 @@ defmodule Guiltty.Tabs do
       windows: MapSet.new(),
       # monitor ref => session id
       monitors: %{},
-      session_opts: Keyword.get(opts, :session_opts, [])
+      session_opts: Keyword.get(opts, :session_opts, []),
+      first_cwd: Keyword.get(opts, :cwd)
     }
 
     {:ok, state, {:continue, :first_tab}}
@@ -321,16 +324,20 @@ defmodule Guiltty.Tabs do
         do: [shell: config.shell.command, args: config.shell.args],
         else: []
 
-    shell ++ [cwd: start_dir(config.working_directory, state.active)]
+    shell ++ [cwd: start_dir(config.working_directory, state)]
   end
 
   # :inherit: where the active tab's shell is now, as a new tab in a
   # browser opens next to the current one. The first tab has none to
-  # follow, and starts where guiltty was started.
-  defp start_dir(:inherit, nil), do: nil
-  defp start_dir(:inherit, active), do: try(do: Pty.cwd(active), catch: (:exit, _ -> nil))
-  defp start_dir(:home, _active), do: System.user_home()
-  defp start_dir(dir, _active), do: dir
+  # follow: it starts where `guiltty` was run (`:cwd`), or where guiltty
+  # itself was started.
+  defp start_dir(:inherit, %{active: nil} = state), do: state.first_cwd
+
+  defp start_dir(:inherit, %{active: active}),
+    do: try(do: Pty.cwd(active), catch: (:exit, _ -> nil))
+
+  defp start_dir(:home, _state), do: System.user_home()
+  defp start_dir(dir, _state), do: dir
 
   defp open_tab(state) do
     # Unique across every desk, and increasing: the Registry names sessions

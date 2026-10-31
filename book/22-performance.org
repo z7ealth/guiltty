@@ -208,9 +208,10 @@ its module loads. It's set in [[file:../rel/env.sh.eex][rel/env.sh.eex]] (=RELEA
 
 * Not done (DEVLOG "Later")
 
-- *The launcher*: ~0.7 s of a cold start, and all of a warm one, is
-  =guiltty= booting a second VM to ask the first "are you running?". A
-  pidfile and a FIFO would make that milliseconds. Left out on purpose.
+- *The launcher*: ~0.7 s of a cold start, and all of a warm one, was
+  =guiltty= booting a second VM to ask the first "are you running?".
+  Left out of v0.14.0 on purpose, and done properly in v0.15.0: a small C
+  client and a socket server (chapter 23).
 - *Colored lines*: they have color codes between the text and the line
   feed, so they don't take the batch path. Batching them means following
   SGR inside the batch.

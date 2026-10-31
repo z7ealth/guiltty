@@ -12,10 +12,11 @@ in your home directory. No root.
 #+begin_example
   ~/.local/
   ├── lib/guiltty/                     the release
-  │   ├── bin/guiltty                  its start script (and rel/env.sh.eex, chapter 12)
+  │   ├── bin/guiltty                  its start script (and rel/env.sh.eex)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.14.0/priv/     guiltty_vk, guiltty_gl, pty_nif.so, guiltty.bmp
-  ├── bin/guiltty                      a two-line script: exec the release's
+  │   └── lib/guiltty-0.15.0/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
+  │                                    pty_nif.so, guiltty.bmp
+  ├── bin/guiltty                      a link to that client (chapter 23)
   └── share/
       ├── applications/guiltty.desktop the menu entry
       └── icons/hicolor/

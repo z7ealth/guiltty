@@ -949,3 +949,80 @@ You kept the launcher out of scope, so it's still ~0.7 s of a cold start.
 - A launcher that doesn't boot a VM (pidfile + FIFO).
 - Colored lines in the batch path (following SGR inside a batch).
 - A faster parser scanner.
+
+## 2026-10-31 — v0.15.0: Client and server
+
+_Draft: agent, awaiting user_
+
+You didn't want a pidfile and FIFO in shell ("a workaround"), and the
+honest answer was that the launcher was already shell, booting a second
+VM to ask "are you running?". So it's now the Emacs way: a C client of
+about 200 lines that decides nothing, and an Elixir process,
+`Guiltty.Launcher`, on a Unix socket in a folder only you can open.
+
+The interesting part was the race that had broken twice. While the last
+window closes, the old node still holds the name `guiltty@127.0.0.1`,
+and a node started with `-name` then can't start. The fix moved the name
+out of the boot: the release starts without distribution, and
+`Guiltty.Distribution` takes the name once it's free. That needed epmd,
+which a node only starts by itself when named at boot; tried on a
+private epmd port first (`econnrefused`), so guiltty starts it. The
+Launcher is the last child, so it closes first when guiltty stops, and
+until then answers "shutting down" so the client asks again.
+
+On a release, through a link like the installed one: cold launch 0.71 s
+to the window (was 1.33), warm 85 ms (was ~0.9 s). 24 launches right
+after closing the window: 24 windows. The command itself returns in
+4 ms when guiltty runs.
+
+A small surprise in the tests: a line over the socket's 4 KB limit gets
+the connection closed before the error can be sent. Fine for a hostile
+client; but the C client would then have read it as "shutting down" and
+retried for 5 s, so it now leaves out any display value over 1 KB.
+
+### Later
+- A systemd user service, server mode (no window at boot, stay running).
+- Turning distribution off entirely (only `stop` and `remote` use it).
+
+## 2026-10-31 — v0.15.0, continued: server mode and the service
+
+_Draft: agent, awaiting user_
+
+You asked for the rest of the Emacs model: start guiltty first, then
+use the client. Server mode is small: `GUILTTY_SERVER=1` leaves out the
+boot window, and Lifeline doesn't stop when the last desk ends.
+`./install.sh --service` writes a systemd user unit for it (checked with
+`systemd-analyze verify`), stops and restarts it around updates, and
+removes it on uninstall.
+
+Tested on a release run the way systemd runs it (foreground, no
+DISPLAY): no window at boot, a window from the client in 15 ms, still
+running after the last window closed, warm again after, and SIGTERM
+gives a clean exit 0, so systemd won't restart it.
+
+Testing it found a real gap: windows get their display from the
+request, but the shells in their tabs only had the node's environment,
+and a service started before the desktop has no DISPLAY. `xdg-open` from
+a tab would have failed. A desk now passes its window's display
+variables to its tabs' shells.
+
+Two more for the service, after asking what wouldn't work with it. Tab
+shells inherited systemd's environment, whose PATH is the system's only:
+on openSUSE `~/.local/bin` comes from `/etc/profile`, read by login
+shells only, so `guiltty` itself wasn't found in a tab. Server mode now
+starts shells as login shells, the `login(1)` way, with a dash in front
+of the name (`-zsh`); checked that openSUSE's `/etc/zprofile` sources
+`/etc/profile`, so zsh gets it too. And the client now sends its folder
+(`getcwd`, not `$PWD`), so a new window's first tab starts where you ran
+`guiltty`, in both modes.
+
+Then taken back out: server mode, `install.sh --service` and the login
+shells. Weighing it plainly, the service saves about 0.6 s on the first
+window after login, and costs a different environment in every tab:
+systemd's, not your session's. Each gap could be patched (the display,
+login files), but every patch is something a user would have to debug
+when a tab behaves unlike any other terminal's. You'd rather pay 0.7 s
+once and have shells that behave like everyone else's. Chapter 23 keeps
+the reasoning under "Why there's no service". Kept from that work: the
+first tab starts in the folder you ran `guiltty` in, and a window's
+display reaches its tabs' shells.
