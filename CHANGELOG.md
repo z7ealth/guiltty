@@ -16,6 +16,10 @@ the tab bar instead of ignoring them.
   29). It asked for Elixir 1.20 before, without needing anything from it.
 
 ### Fixed
+- Building after switching Erlang versions (with asdf, say) rebuilds the
+  PTY NIF for the new one. Before, the old build was kept, and the new
+  Erlang refused to load it ("NIF library needs erts-... or newer"),
+  in the build and in the installed copy.
 - On Erlang/OTP 26, a request to the `guiltty` socket with a line that's
   too long is refused at once with "line too long", as on later OTPs,
   instead of after a 2 s wait.

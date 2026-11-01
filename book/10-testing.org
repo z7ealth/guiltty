@@ -182,6 +182,16 @@ for the newest.
 
 ** What the old versions found
 
+- *A NIF built for another Erlang.* Switching Erlang in the project
+  itself (=asdf set=) and building again kept =priv/pty_nif.so= from
+  before: =make= compares file times, and no source had changed. But a
+  NIF is built against one Erlang's =erl_nif.h=, and OTP 26 refused the
+  one built for OTP 29 ("NIF library needs erts-14.0 or newer"). The
+  NIF now also depends on a stamp, =_build/erts/erts-VERSION=, named
+  after the Erlang it was built for: a different Erlang means a missing
+  stamp, and a rebuild ([[file:../Makefile::ERTS_STAMP][Makefile]]). This is also why the
+  section above builds in a copy.
+
 - *A line over the limit, on OTP 26.* =gen_tcp= in line mode with a
   =packet_size= returns ={:error, :emsgsize}= from OTP 27 on. OTP 26
   hands the long line out in pieces of 1,460 bytes, none ending in a

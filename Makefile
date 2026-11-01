@@ -38,7 +38,7 @@ EXE = -fPIE -pie $(HARDEN_LD)
 PRIV = priv
 NIF = $(PRIV)/pty_nif.so
 # The `guiltty` command: a small client for the running guiltty's socket
-# (book chapter 23). No libraries, so it starts in about a millisecond.
+# (book chapter 23). It links only the C library.
 CLIENT = $(PRIV)/guiltty
 
 RENDERER_CORE = $(wildcard c_src/renderer/core/*.c)
@@ -67,7 +67,15 @@ $(CLIENT): c_src/client/guiltty.c
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) $(EXE) -O2 -o $@ $<
 
-$(NIF): c_src/pty_nif.c
+# A NIF is built for one Erlang (erl_nif.h's NIF version): switching
+# Erlang (asdf) must rebuild it, though no source changed, or the other
+# Erlang refuses to load it. The stamp's name is the erts it was built for.
+ERTS_STAMP = _build/erts/$(notdir $(ERTS_INCLUDE_DIR:/include=))
+
+$(ERTS_STAMP):
+	@rm -rf _build/erts && mkdir -p _build/erts && touch $@
+
+$(NIF): c_src/pty_nif.c $(ERTS_STAMP)
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared $(HARDEN_LD) -I$(ERTS_INCLUDE_DIR) -o $@ $<
 
