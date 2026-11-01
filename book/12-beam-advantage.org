@@ -200,9 +200,11 @@ guiltty work.
 |-------------------------------+----------------------------|
 | Ctrl+Shift+N                  | new window (chapter 21)    |
 | Ctrl+Shift+T                  | new tab                    |
-| Ctrl+Shift+W                  | close tab                  |
+| Ctrl+Shift+W                  | close tab (asks if busy, chapter 24) |
 | Ctrl+PgDn, Ctrl+Tab           | next tab                   |
 | Ctrl+PgUp, Ctrl+Shift+Tab     | previous tab               |
+| Ctrl+Shift+PgUp / PgDn        | move the tab left / right  |
+| Ctrl+Shift+R                  | rename the tab             |
 | Ctrl+Shift+1 .. 9             | tab 1 .. 9                 |
 | click a tab                   | switch to it               |
 

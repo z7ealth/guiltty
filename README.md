@@ -165,7 +165,9 @@ scrollback, and every key.
 **Vulkan or OpenGL.** guiltty draws with Vulkan 1.3. If Vulkan can't
 start (an old GPU, no driver), it switches to OpenGL by itself and says so
 in the tab bar. With `renderer: :gl` in the config it always uses OpenGL,
-starting with the next window.
+starting with the next window (so one window can be Vulkan and the next
+OpenGL). `GUILTTY_RENDERER=gl` does the same for a whole run, when it's
+set as guiltty starts (`guiltty stop`, then `GUILTTY_RENDERER=gl guiltty`).
 
 ## Hack on it
 

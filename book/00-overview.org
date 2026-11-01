@@ -69,8 +69,8 @@ Three pieces are C, the rest is Elixir, in about equal parts:
 * guiltty today
 
 The pipe above is still there, once per tab. Around it, MVP 4 and later
-added tabs that outlive windows, MVP 13 independent windows, and MVP 15
-the client:
+added tabs that outlive windows, MVP 13 independent windows, MVP 15 the
+client, and v0.16 smaller comforts for tabs (chapter 24):
 
 #+begin_example
   you: `guiltty`, or the menu
@@ -105,6 +105,7 @@ the client:
 | MVP 13   | Multi window       | Independent windows, each its own desk       |
 | MVP 14   | Performance        | Batched lines, damage tracking, =make bench= |
 | MVP 15   | Client and server  | The =guiltty= command as a C client          |
+| v0.16    | Tab comforts       | Busy-tab check, marks, move, rename, clear   |
 
 * Loot
 

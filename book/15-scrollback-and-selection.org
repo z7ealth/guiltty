@@ -100,6 +100,7 @@ the bottom.
 | Shift+PgUp / Shift+PgDn | a page (rows - 1)                               |
 | Shift+Home / Shift+End  | to the top / back to the live screen            |
 | typing                  | back to the live screen                         |
+| Ctrl+Shift+K            | nowhere: drops the scrollback (=CSI 3 J=, ch. 24) |
 
 On the alternate screen there's no scrollback, so the wheel sends arrow
 keys instead (xterm calls it =alternateScroll=): =less=, =man= and =git log=
