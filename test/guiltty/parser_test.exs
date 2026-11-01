@@ -25,7 +25,7 @@ defmodule Guiltty.ParserTest do
 
   describe "C0 controls" do
     test "the ones a terminal acts on" do
-      assert parse("a\r\n\b\tb\a") == [{:print, "a"}, :cr, :lf, :bs, :ht, {:print, "b"}]
+      assert parse("a\r\n\b\tb\a") == [{:print, "a"}, :cr, :lf, :bs, :ht, {:print, "b"}, :bell]
       assert parse("\v\f") == [:lf, :lf]
     end
 

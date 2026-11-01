@@ -34,6 +34,8 @@ defmodule Guiltty.Cheatsheet do
          {"Close tab", k.(:close_tab)},
          {"Next tab", k.(:next_tab)},
          {"Previous tab", k.(:prev_tab)},
+         {"Move tab left / right", k.(:move_tab_left) <> " / " <> k.(:move_tab_right)},
+         {"Rename tab", k.(:rename_tab)},
          {"Go to tab 1-9", "Ctrl+Shift+1..9"},
          {"Switch tab", "click it"},
          {"Keep after closing", k.(:lock_tab)}
@@ -44,6 +46,7 @@ defmodule Guiltty.Cheatsheet do
          {"Page down", k.(:scroll_page_down)},
          {"To the top", k.(:scroll_top)},
          {"Back to the bottom", k.(:scroll_bottom)},
+         {"Clear it", k.(:clear_scrollback)},
          {"Scroll", "mouse wheel"}
        ]},
       {"Search",

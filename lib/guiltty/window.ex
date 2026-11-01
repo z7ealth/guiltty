@@ -35,6 +35,18 @@ defmodule Guiltty.Window do
   instead of the program, Enter finds the next older match, Shift+Enter
   the next newer one, and Escape ends it. The query shows at the right of
   the tab bar.
+
+  ## Renaming a tab
+
+  The rename key (Ctrl+Shift+R) works the same way: typing goes to the
+  tab's new name, shown in the status, Enter sets it (empty gives the
+  program's title back) and Escape leaves it as it was.
+
+  ## Closing a busy tab
+
+  Closing a tab whose shell is running a program (`vim`, `ssh`, a build)
+  asks first: the status says what's running, and only a second press
+  within a few seconds closes it.
   """
 
   use GenServer, restart: :transient
@@ -135,6 +147,10 @@ defmodule Guiltty.Window do
       flash: nil,
       # the tab waiting for a second Ctrl+Shift+B to join as a local tab
       confirm_local: nil,
+      # the busy tab waiting for a second close key
+      confirm_close: nil,
+      # rename mode: %{text: binary}
+      rename: nil,
       # GUILTTY_RECORD's file, or nil
       recording: open_recording(),
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
@@ -144,15 +160,30 @@ defmodule Guiltty.Window do
     {:ok, state, @hello_timeout}
   end
 
-  # The binary for the `renderer` setting. An explicit `config :guiltty,
-  # renderer: "..."` (the tests' sanitizer builds) wins. Once Vulkan has
-  # failed to start, later windows go straight to OpenGL.
+  # The binary for the `renderer` setting, or for GUILTTY_RENDERER, which
+  # wins over it (to try the other one without editing the config). An
+  # explicit `config :guiltty, renderer: "..."` (the tests' sanitizer
+  # builds) wins over both. Once Vulkan has failed to start, later windows
+  # go straight to OpenGL.
   defp renderer_for(setting) do
+    setting = renderer_setting(System.get_env("GUILTTY_RENDERER"), setting)
+
     cond do
       binary = Application.get_env(:guiltty, :renderer) -> to_string(binary)
       setting == :gl or Application.get_env(:guiltty, :vulkan_failed, false) -> "guiltty_gl"
       true -> "guiltty_vk"
     end
+  end
+
+  @doc false
+  # GUILTTY_RENDERER's value over the config's setting.
+  def renderer_setting(value, _setting) when value in ["gl", "opengl"], do: :gl
+  def renderer_setting("vulkan", _setting), do: :vulkan
+  def renderer_setting(value, setting) when value in [nil, ""], do: setting
+
+  def renderer_setting(value, setting) do
+    Logger.warning("window: GUILTTY_RENDERER=#{value} isn't gl or vulkan; using #{setting}")
+    setting
   end
 
   defp open_renderer(renderer, env) do
@@ -243,7 +274,7 @@ defmodule Guiltty.Window do
   def handle_info({:tabs, info}, state), do: {:noreply, show_tabs(state, info)}
 
   def handle_info(:flash_over, state),
-    do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil})}
+    do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil, confirm_close: nil})}
 
   # The active Screen restarted (it crashed, or its session did). The new
   # one doesn't know about us, so view it again.
@@ -339,6 +370,9 @@ defmodule Guiltty.Window do
     {:noreply, state}
   end
 
+  defp handle_event({:paste, text}, %{rename: %{}} = state),
+    do: {:noreply, rename_to(state, state.rename.text <> String.replace(text, ~r/\s+/, " "))}
+
   defp handle_event({:paste, text}, state) do
     {:noreply, input(state, Keymap.paste(text, state.input))}
   end
@@ -352,10 +386,14 @@ defmodule Guiltty.Window do
   defp handle_event({:key, _, _} = event, state) do
     case Enum.find(state.bindings, fn {_action, binding} -> Keymap.matches?(event, binding) end) do
       {action, _binding} -> {:noreply, run(action, state)}
+      nil when state.rename != nil -> {:noreply, rename_key(event, state)}
       nil when state.search != nil -> {:noreply, search_key(event, state)}
       nil -> type(event, state)
     end
   end
+
+  defp handle_event({:text, text}, %{rename: %{}} = state),
+    do: {:noreply, rename_to(state, state.rename.text <> text)}
 
   defp handle_event({:text, text}, %{search: %{}} = state),
     do: {:noreply, search_for(state, state.search.query <> text, :start)}
@@ -467,6 +505,32 @@ defmodule Guiltty.Window do
     })
   end
 
+  ## Rename mode
+
+  @max_name 40
+
+  defp rename_key({:key, key, _mods}, state) do
+    cond do
+      key == Keymap.key(:escape) ->
+        update_status(%{state | rename: nil})
+
+      key == Keymap.key(:enter) ->
+        name = String.trim(state.rename.text)
+        catch_exit(fn -> Tabs.rename(state.desk_tabs, state.active, name) end)
+        update_status(%{state | rename: nil})
+
+      key == Keymap.key(:backspace) ->
+        text = state.rename.text |> String.graphemes() |> Enum.drop(-1) |> Enum.join()
+        rename_to(state, text)
+
+      true ->
+        state
+    end
+  end
+
+  defp rename_to(state, text),
+    do: update_status(%{state | rename: %{text: String.slice(text, 0, @max_name)}})
+
   defp on_screen(%{active: nil}, _fun), do: nil
   defp on_screen(state, fun), do: catch_exit(fn -> fun.(state.active) end)
 
@@ -486,9 +550,37 @@ defmodule Guiltty.Window do
     state
   end
 
+  defp run(:close_tab, %{active: nil} = state), do: state
+
+  # A tab running a program asks first; a second press closes it.
   defp run(:close_tab, state) do
-    if state.active, do: Tabs.close(state.desk_tabs, state.active)
-    state
+    busy =
+      if state.confirm_close != state.active,
+        do: catch_exit(fn -> Pty.busy(state.active) end)
+
+    if is_binary(busy) do
+      flash(%{state | confirm_close: state.active}, "#{busy} is running: press again to close")
+    else
+      Tabs.close(state.desk_tabs, state.active)
+      update_status(%{state | confirm_close: nil, flash: nil})
+    end
+  end
+
+  defp run(:move_tab_left, state), do: move(state, :left)
+  defp run(:move_tab_right, state), do: move(state, :right)
+
+  defp run(:rename_tab, %{active: nil} = state), do: state
+
+  # Starts from the name it shows now, to edit it.
+  defp run(:rename_tab, state) do
+    {_id, title} = Enum.find(state.tabs, {nil, ""}, fn {id, _} -> id == state.active end)
+    rename_to(%{state | search: nil}, title)
+  end
+
+  defp run(:clear_scrollback, state) do
+    if state.search, do: on_screen(state, &Screen.end_search/1)
+    on_screen(state, &Screen.clear_scrollback/1)
+    update_status(%{state | search: nil, view_moved: false})
   end
 
   defp run(:next_tab, state), do: switch(state, :next)
@@ -510,7 +602,7 @@ defmodule Guiltty.Window do
   end
 
   defp run(:search, %{search: nil} = state),
-    do: update_status(%{state | search: %{query: "", found: true}})
+    do: update_status(%{state | search: %{query: "", found: true}, rename: nil})
 
   defp run(:search, state), do: state
 
@@ -640,6 +732,11 @@ defmodule Guiltty.Window do
     state
   end
 
+  defp move(state, direction) do
+    catch_exit(fn -> Tabs.move(state.desk_tabs, direction) end)
+    state
+  end
+
   # Zoom changes the font size, and so the cell size and the grid: the
   # renderer works out the new grid and sends a resize.
   defp zoom(state, steps) do
@@ -668,20 +765,29 @@ defmodule Guiltty.Window do
 
   ## Showing a tab
 
-  # A locked tab shows a lock before its title.
+  # A locked tab shows a lock before its title; a tab with something new
+  # since you looked shows a dot (output) or a bell, before that.
   defp show_tabs(state, %{list: tabs, active: active} = info) do
     state = %{state | locked: info.locked, group: info.group, lost: MapSet.to_list(info.lost)}
+    marks = Map.get(info, :marks, %{})
 
     titles =
       Enum.map(tabs, fn {id, title} ->
         title = if title == "", do: "shell", else: title
         title = if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
 
-        cond do
-          id in state.lost -> "⚠ " <> title
-          state.group[id] == :local -> "🏠 " <> title
-          Map.has_key?(state.group, id) -> "📡 " <> title
-          true -> title
+        title =
+          cond do
+            id in state.lost -> "⚠ " <> title
+            state.group[id] == :local -> "🏠 " <> title
+            Map.has_key?(state.group, id) -> "📡 " <> title
+            true -> title
+          end
+
+        case marks[id] do
+          :bell -> "🔔 " <> title
+          :activity -> "● " <> title
+          nil -> title
         end
       end)
 
@@ -705,6 +811,8 @@ defmodule Guiltty.Window do
         pending: false,
         title: nil,
         search: nil,
+        rename: nil,
+        confirm_close: nil,
         selecting: false
     }
     |> view(id)
@@ -780,6 +888,8 @@ defmodule Guiltty.Window do
     if status != state.status, do: send_port(state, Protocol.status(style, text))
     %{state | status: status}
   end
+
+  defp status_text(%{rename: %{text: text}}), do: {:normal, "rename tab: #{text}"}
 
   defp status_text(%{search: %{query: query, found: found}}),
     do: {:normal, "find: #{query}" <> if(found, do: "", else: "  (not found)")}

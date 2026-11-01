@@ -29,12 +29,22 @@ defmodule Guiltty.Session.Screen do
 
   Title changes also go to `opts[:owner]` (the tab manager) as
   `{:title, id, title}`.
+
+  ## Marks
+
+  While nobody views the screen (its tab isn't the active one), the owner
+  hears about output once, as `{:mark, id, :activity}`, and about the bell
+  (BEL) as `{:mark, id, :bell}`, so the tab bar can show which tabs have
+  something new. Output in the first second after a resize doesn't count:
+  every shell redraws its prompt then, and every tab would light up.
   """
 
   use GenServer
 
   alias Guiltty.{Config, Grid, Search, Selection, Session, Terminal, View}
   alias Guiltty.Session.Pty
+
+  @resize_quiet_ms 1_000
 
   def start_link(opts) do
     Session.start_named(opts[:id], :screen, &GenServer.start_link(__MODULE__, opts, name: &1))
@@ -93,6 +103,9 @@ defmodule Guiltty.Session.Screen do
 
   def end_search(id), do: GenServer.call(Session.via(id, :screen), :end_search)
 
+  @doc "Drops the scrollback (as `ESC [ 3 J` does) and goes back to the live screen."
+  def clear_scrollback(id), do: GenServer.call(Session.via(id, :screen), :clear_scrollback)
+
   @impl true
   def init(opts) do
     scrollback = Keyword.get_lazy(opts, :scrollback, fn -> Config.get().scrollback end)
@@ -122,7 +135,12 @@ defmodule Guiltty.Session.Screen do
        search: nil,
        # the last update was decorated (see Guiltty.View): the next plain one
        # must send every row
-       decorated: false
+       decorated: false,
+       # the mark the owner was told about since the viewer left (see "Marks")
+       mark: nil,
+       # output before this is a resize's redraw, not activity (monotonic
+       # time, which can be negative: start from now, not 0)
+       quiet_until: System.monotonic_time(:millisecond)
      }}
   end
 
@@ -130,7 +148,7 @@ defmodule Guiltty.Session.Screen do
   def handle_call({:apply, commands}, _from, state) do
     history = state.grid.history
     state = update_grid(state, &Terminal.apply(&1, commands))
-    {:reply, :ok, state |> keep_view(history) |> after_change()}
+    {:reply, :ok, state |> keep_view(history) |> report_mark() |> after_change()}
   end
 
   def handle_call(:dump, _from, state), do: {:reply, Grid.dump(state.grid), state}
@@ -147,7 +165,8 @@ defmodule Guiltty.Session.Screen do
         grid: Grid.mark_all_dirty(state.grid),
         sent_state: nil,
         sent_clusters: 0,
-        notified: false
+        notified: false,
+        mark: nil
     }
 
     {:reply, :ok, notify(state)}
@@ -189,6 +208,8 @@ defmodule Guiltty.Session.Screen do
 
   def handle_call({:resize, cols, rows}, _from, state) do
     state = %{state | selection: nil} |> update_grid(&Grid.resize(&1, cols, rows))
+    quiet_until = System.monotonic_time(:millisecond) + @resize_quiet_ms
+    state = %{state | quiet_until: quiet_until}
     {:reply, :ok, state |> keep_view(state.grid.history) |> after_change()}
   end
 
@@ -264,6 +285,18 @@ defmodule Guiltty.Session.Screen do
 
   def handle_call(:end_search, _from, state), do: {:reply, :ok, notify(%{state | search: nil})}
 
+  def handle_call(:clear_scrollback, _from, state) do
+    state = %{
+      update_grid(state, &Grid.erase_display(&1, 3))
+      | scroll: 0,
+        selection: nil,
+        selected_text: nil,
+        search: nil
+    }
+
+    {:reply, :ok, notify(state)}
+  end
+
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{viewer_ref: ref} = state) do
     {:noreply, %{state | viewer: nil, viewer_ref: nil, notified: false}}
@@ -272,6 +305,32 @@ defmodule Guiltty.Session.Screen do
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 
   defp update_grid(state, fun), do: %{state | grid: fun.(state.grid)}
+
+  # Tell the owner once per kind, and only the more important news: a bell
+  # after activity, never activity after a bell.
+  defp report_mark(state) do
+    {rang, grid} = Grid.take_bell(state.grid)
+    state = %{state | grid: grid}
+
+    mark =
+      cond do
+        rang -> :bell
+        System.monotonic_time(:millisecond) >= state.quiet_until -> :activity
+        true -> nil
+      end
+
+    if state.viewer == nil and state.owner != nil and mark != nil and
+         rank(mark) > rank(state.mark) do
+      send(state.owner, {:mark, state.id, mark})
+      %{state | mark: mark}
+    else
+      state
+    end
+  end
+
+  defp rank(nil), do: 0
+  defp rank(:activity), do: 1
+  defp rank(:bell), do: 2
 
   # Scrolled back, new rows entering the scrollback would move the text up
   # under the viewer: scroll back as many rows to stay on the same text.

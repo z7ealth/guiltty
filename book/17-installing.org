@@ -14,7 +14,7 @@ in your home directory. No root.
   ├── lib/guiltty/                     the release
   │   ├── bin/guiltty                  its start script (and rel/env.sh.eex)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.15.3/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
+  │   └── lib/guiltty-0.16.0/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
   │                                    pty_nif.so, guiltty.bmp
   ├── bin/guiltty                      a link to that client (chapter 23)
   └── share/
@@ -30,6 +30,36 @@ in only when the build worked, so a failed update leaves the installed
 guiltty alone. A running installed guiltty is stopped first (after
 asking: its tabs close); the one in =_build/prod= is never touched, only
 pointed out, because both would use the node name =guiltty@127.0.0.1=.
+The swap is two renames (old aside, new in), so there's no moment with
+no guiltty installed.
+
+** Updating from inside guiltty
+
+Running =./install.sh= in one of guiltty's own tabs means stopping the
+terminal the script runs in. When guiltty stops, the tab's PTY closes,
+the kernel sends =SIGHUP= to the tab's foreground job (the script), and
+anything it writes to the closed terminal fails. Before v0.16.0 the
+script died right there, halfway: after stopping guiltty, before
+installing the new one.
+
+Now it notices first. A tab's shell is a child of guiltty's VM, so if
+the VM's pid (=bin/guiltty pid=) is among the script's ancestors, it runs
+inside. Then it ignores =SIGHUP=, sends the rest of its output to
+=~/.local/state/guiltty/install.log=, and at the end opens guiltty again,
+on the new version:
+
+#+begin_example
+  tab: ./install.sh
+    build guiltty.new                 (output in the tab)
+    "this tab closes now; ... log: ~/.local/state/guiltty/install.log"
+    trap '' HUP; output -> the log
+    bin/guiltty stop  ──> every tab closes, this one too: SIGHUP, ignored
+    swap, link, menu entry            (output in the log)
+    guiltty           ──> a new window, on the new version
+#+end_example
+
+Tested on a private X display: the old guiltty stopped, the script
+lived on, and a new window of the new version opened about 3 s later.
 
 The installed node listens only on 127.0.0.1, and its cookie (the secret
 that lets a program connect to it) comes from =~/.erlang.cookie=, never
@@ -137,6 +167,9 @@ headless Chromium otherwise.
 - ICCCM, =WM_CLASS=; EWMH, =_NET_WM_ICON=. =xprop(1)= shows both.
 - Mix releases: =mix release --path=, =include_erts=.
 - =desktop-file-validate(1)=, =update-desktop-database(1)=.
+- =credentials(7)= and =termios(3)=: a terminal's hangup sends =SIGHUP= to
+  its foreground job; =signal(7)=: an ignored signal stays ignored across
+  =fork= and =exec=; =proc_pid_stat(5)=: the parent pid.
 
 * Questions
 
@@ -144,6 +177,8 @@ headless Chromium otherwise.
 2. Why is =Icon= a name and not a path, and why one PNG per size?
 3. How does the taskbar know a window belongs to guiltty.desktop?
 4. Why does guiltty need a BMP copy of its logo?
+5. Why did updating from inside guiltty stop halfway, and how does the
+   script tell it's running inside guiltty?
 
 ** Answers
 :PROPERTIES:
@@ -159,3 +194,7 @@ headless Chromium otherwise.
    renderer sets to =guiltty= and the entry's =StartupWMClass= names.
 4. Some taskbars take the icon from the window (=_NET_WM_ICON=), and SDL3
    can only load BMP files to set it.
+5. Stopping guiltty closes the tab the script runs in: the kernel sends
+   it =SIGHUP=, which kills a script by default. It now walks its parent
+   pids (=/proc/<pid>/stat=) looking for guiltty's VM; if it's there, it
+   ignores =SIGHUP= and writes to a log instead of the closed terminal.

@@ -111,7 +111,9 @@ says `guiltty: command not found`, add `~/.local/bin` to your `PATH`.
 
 - **Update:** `git pull && ./install.sh`. If guiltty is running, the
   script asks before stopping it, since that closes its tabs (`--yes`
-  skips the question).
+  skips the question). Run from a guiltty tab, it finishes after that
+  tab closes, then opens guiltty again (its output goes to
+  `~/.local/state/guiltty/install.log`).
 - **Uninstall:** `./install.sh --uninstall`. Your config stays.
 - **Somewhere else:** `PREFIX=/opt/guiltty ./install.sh`.
 
@@ -126,9 +128,12 @@ guiltty stops after its last window.
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|
 | Ctrl+Shift+N                  | new window, with its own tabs            |
-| Ctrl+Shift+T, Ctrl+Shift+W    | new tab, close tab                       |
+| Ctrl+Shift+T, Ctrl+Shift+W    | new tab, close tab (asks first if a program is running) |
 | Ctrl+PgUp, Ctrl+PgDn          | previous, next tab                       |
+| Ctrl+Shift+PgUp, Ctrl+Shift+PgDn | move the tab left, right              |
+| Ctrl+Shift+R                  | rename the tab (Enter sets, empty resets)|
 | Shift+PgUp, Shift+PgDn        | scroll back, forward (or the mouse wheel)|
+| Ctrl+Shift+K                  | clear the scrollback                     |
 | Ctrl+Shift+F                  | search; Enter older, Shift+Enter newer, Escape ends |
 | select with the mouse         | copies to the primary selection          |
 | Ctrl+Shift+C, Ctrl+Shift+V    | copy, paste (middle click pastes the selection) |
@@ -139,6 +144,10 @@ guiltty stops after its last window.
 | Ctrl+Shift+B                  | broadcast: type into all tabs in the group (ssh tabs) |
 
 Hold Shift to select in programs that use the mouse (vim, htop).
+
+A tab you're not looking at shows ● when it prints something and 🔔 when
+it rings the bell (a build that ends with `; printf '\a'`, say), until you
+switch to it.
 
 ## Configure it
 

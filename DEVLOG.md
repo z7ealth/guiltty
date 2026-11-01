@@ -1089,3 +1089,49 @@ It had been racing the echo all along, and a slower run finally lost.
 **Clicked.** "Requires 1.20" was a claim like the ones fixed this
 morning: what was true was "written on 1.20". The floor is now Elixir 1.18
 on OTP 26, tested, and the book says how to test it again.
+
+## 2026-11-01 — v0.16.0, tab comforts
+
+_Draft: agent, awaiting user_
+
+**Tried.** Six small things, picked because each one leans on something
+guiltty already had: asking before closing a busy tab (the foreground
+job that broadcast already checks), a dot or a bell on tabs with news
+(BEL, and the Screen knowing whether anyone views it), moving and
+renaming tabs (Tabs' list, search's text input), clearing the
+scrollback (`ESC [ 3 J`'s code), and `GUILTTY_RENDERER`. No C, no
+protocol change: the marks are characters in the tab titles.
+
+**Broke.** Twice. First, nothing was ever marked. `quiet_until`
+started at 0, and the BEAM's monotonic clock was around -576 billion
+ms, so "now >= 0" was never true. Monotonic time is only for
+differences. Second, on paper: every resize would have lit up every tab,
+because every shell redraws its prompt on SIGWINCH. Output in the first
+second after a resize doesn't count now.
+
+**Clicked.** "Is this tab busy?" was already answered by the kernel:
+the shell leads its own process group, so anything else in the
+foreground is a job it started. On openSUSE that job's name for vim is
+`vim-nox11`, the real file behind the link.
+
+### Later
+
+- Ask before closing the *window* when a tab is busy. The window manager
+  closes it and the renderer exits, so there's no window left to ask in;
+  it would need the renderer to catch the close request first.
+- An environment panel (Ctrl+Shift+E, like the cheatsheet, with a search
+  line): what the tab's foreground program started with, from
+  `/proc/<pid>/environ`. A shell's own `export`s never show up there.
+- Shell integration (OSC 133): jump between prompts, copy the last
+  command's output.
+- Keep names and marks when Tabs restarts (today a crashed Tabs takes its
+  sessions back, but not their names).
+
+Later the same day: updating from inside guiltty stopped halfway. The
+script stops guiltty, which closes the tab it runs in, and the kernel's
+SIGHUP took the script down before the swap. Lucky it was before: one
+line later, the old release was already deleted and the new one not yet
+in place. Now the script checks whether guiltty's VM is among its
+ancestors; if so, it ignores SIGHUP, writes to a log and reopens guiltty
+at the end. And the swap is two renames, so a guiltty is always
+installed. Tested inside a guiltty on a private X display.

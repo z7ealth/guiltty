@@ -476,5 +476,90 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> :sys.get_state(window).zoom == 0 end)
   end
 
+  defp ids, do: Tabs.list(@tabs) |> elem(0) |> Enum.map(&elem(&1, 0))
+
+  test "closing a tab that runs a program asks first; a second press closes it", %{
+    window: window
+  } do
+    {:ok, busy} = Tabs.new_tab(@tabs)
+    assert eventually(fn -> :sys.get_state(window).active == busy end)
+    Session.write(busy, "sleep 30\r")
+    assert eventually(fn -> Guiltty.Session.Pty.busy(busy) == "sleep" end)
+
+    key(window, ?w, @ctrl ||| @shift)
+
+    assert eventually(fn ->
+             :sys.get_state(window).status ==
+               {:warning, "sleep is running: press again to close"}
+           end)
+
+    assert busy in ids()
+
+    key(window, ?w, @ctrl ||| @shift)
+    assert eventually(fn -> busy not in ids() end)
+  end
+
+  test "a tab at its prompt closes at once", %{id: id, window: window} do
+    {:ok, idle} = Tabs.new_tab(@tabs)
+    assert eventually(fn -> :sys.get_state(window).active == idle end)
+    assert eventually(fn -> Guiltty.Session.Pty.busy(idle) == nil end)
+    key(window, ?w, @ctrl ||| @shift)
+    assert eventually(fn -> ids() == [id] end)
+  end
+
+  test "Ctrl+Shift+R renames the tab: typing edits the name, Enter sets it", %{
+    id: id,
+    window: window
+  } do
+    key(window, ?r, @ctrl ||| @shift)
+    assert eventually(fn -> :sys.get_state(window).rename == %{text: ""} end)
+
+    renderer(window, <<4, "prodd">>)
+    key(window, Guiltty.Keymap.key(:backspace), 0)
+    assert eventually(fn -> :sys.get_state(window).status == {:normal, "rename tab: prod"} end)
+
+    # Typing goes to the name, not the shell.
+    refute Session.dump(id) =~ "prod"
+
+    key(window, 0x0D, 0)
+    assert eventually(fn -> Tabs.list(@tabs) == {[{id, "prod"}], id} end)
+    assert :sys.get_state(window).rename == nil
+
+    # Escape leaves the name as it was.
+    key(window, ?r, @ctrl ||| @shift)
+    renderer(window, <<4, "-x">>)
+    key(window, 0x1B, 0)
+    assert eventually(fn -> :sys.get_state(window).rename == nil end)
+    assert Tabs.list(@tabs) == {[{id, "prod"}], id}
+  end
+
+  test "Ctrl+Shift+PgUp and PgDn move the tab", %{id: first, window: window} do
+    {:ok, second} = Tabs.new_tab(@tabs)
+    assert eventually(fn -> :sys.get_state(window).active == second end)
+
+    key(window, Guiltty.Keymap.key(:page_up), @ctrl ||| @shift)
+    assert eventually(fn -> ids() == [second, first] end)
+    key(window, Guiltty.Keymap.key(:page_down), @ctrl ||| @shift)
+    assert eventually(fn -> ids() == [first, second] end)
+  end
+
+  test "Ctrl+Shift+K clears the scrollback and keeps the screen", %{id: id, window: window} do
+    Session.write(id, "seq 1 100; echo kept\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^kept$/m end)
+    assert Grid.scrollback_size(screen_state(id).grid) > 0
+
+    key(window, ?k, @ctrl ||| @shift)
+    assert eventually(fn -> Grid.scrollback_size(screen_state(id).grid) == 0 end)
+    assert Session.dump(id) =~ ~r/^kept$/m
+  end
+
+  test "GUILTTY_RENDERER wins over the config's renderer" do
+    assert Window.renderer_setting("gl", :vulkan) == :gl
+    assert Window.renderer_setting("vulkan", :gl) == :vulkan
+    assert Window.renderer_setting(nil, :gl) == :gl
+    assert Window.renderer_setting("", :vulkan) == :vulkan
+    assert Window.renderer_setting("metal", :vulkan) == :vulkan
+  end
+
   defp a ||| b, do: Bitwise.bor(a, b)
 end

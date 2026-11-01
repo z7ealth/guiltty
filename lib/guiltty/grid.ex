@@ -137,6 +137,8 @@ defmodule Guiltty.Grid do
     input: @input_modes,
     # bytes to send back to the program (answers to its queries), newest first
     responses: [],
+    # BEL arrived since the last take_bell/1
+    bell: false,
     # the rows changed since the last take_dirty/1: a MapSet of row
     # numbers, or :all (a scroll moves every row; building a set of all of
     # them on every line feed was a fifth of the time spent printing)
@@ -205,6 +207,12 @@ defmodule Guiltty.Grid do
 
   @doc "Returns the bytes to send back to the program, oldest first, and clears them."
   def take_responses(grid), do: {Enum.reverse(grid.responses), %{grid | responses: []}}
+
+  @doc "BEL: the program rang the bell."
+  def ring(grid), do: %{grid | bell: true}
+
+  @doc "Whether the bell rang since the last call, and the grid without it."
+  def take_bell(grid), do: {grid.bell, %{grid | bell: false}}
 
   @doc "All rows as `[{row_index, row}]`, for a full redraw."
   def snapshot(grid), do: grid.lines |> Tuple.to_list() |> Enum.with_index(fn l, i -> {i, l} end)

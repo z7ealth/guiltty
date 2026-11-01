@@ -7,8 +7,8 @@ defmodule Guiltty.Parser do
   Commands:
 
     * `{:print, binary}` - a run of printable text, valid UTF-8
-    * `:cr`, `:lf`, `:bs`, `:ht`, `:shift_out`, `:shift_in` - C0 controls
-      (VT and FF count as `:lf`)
+    * `:cr`, `:lf`, `:bs`, `:ht`, `:shift_out`, `:shift_in`, `:bell` - C0
+      controls (VT and FF count as `:lf`)
     * `{:csi, private, params, intermediates, final}` - e.g. `ESC [ ? 25 l`
       is `{:csi, ??, [25], "", ?l}`. `params` holds integers, `nil` for an
       empty parameter, or a list when the parameter has `:` sub-parameters
@@ -258,7 +258,8 @@ defmodule Guiltty.Parser do
   # SO and SI pick the G1 or G0 character set (see Guiltty.Terminal)
   defp execute(0x0E, acc), do: [:shift_out | acc]
   defp execute(0x0F, acc), do: [:shift_in | acc]
-  # BEL and the rest: nothing to do
+  defp execute(@bel, acc), do: [:bell | acc]
+  # the rest: nothing to do
   defp execute(_byte, acc), do: acc
 
   ## Dispatch

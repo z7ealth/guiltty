@@ -183,8 +183,15 @@ still reading.
 #+begin_example
   config renderer:  :vulkan (default)  -> priv/guiltty_vk
                     :gl                -> priv/guiltty_gl
+  GUILTTY_RENDERER=gl or vulkan        -> wins over the config's setting
   config :guiltty, renderer: "..."     -> that binary (tests, sanitizers)
 #+end_example
+
+=GUILTTY_RENDERER= is read from guiltty's own environment, which it gets
+once, from the =guiltty= that started it: set it on a cold start
+(=guiltty stop=, then =GUILTTY_RENDERER=gl guiltty=). Later launches only
+ask the running guiltty for a window (chapter 23), so the variable on
+them changes nothing.
 
 If Vulkan can't work here (no driver, no GPU that can present to the
 window), the Vulkan renderer exits with status 1. The Window

@@ -8,7 +8,25 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.16.0 — 2026-11-01 — Tab comforts
+
+### Added
+- Closing a tab that's running a program (vim, ssh, a build) asks first:
+  the tab bar says what's running, and pressing Ctrl+Shift+W again closes
+  it. A tab waiting at its prompt closes at once, as before.
+- A tab you're not looking at shows ● when it prints something and 🔔
+  when it rings the bell, until you switch to it.
+- Ctrl+Shift+PgUp and Ctrl+Shift+PgDn move the tab left and right
+  (`move_tab_left`, `move_tab_right` in `keys`).
+- Ctrl+Shift+R renames the tab: type a name, Enter. The name stays even
+  when the program changes its title; an empty name gives the title back
+  (`rename_tab`).
+- Ctrl+Shift+K clears the tab's scrollback; the screen stays
+  (`clear_scrollback`).
+- `GUILTTY_RENDERER=gl` (or `vulkan`) picks the renderer for a run,
+  whatever the config says. Set it when guiltty starts:
+  `guiltty stop`, then `GUILTTY_RENDERER=gl guiltty`.
+- guiltty is under the MIT License (`LICENSE`).
 
 ### Changed
 - guiltty now builds with Elixir 1.18 or newer on Erlang/OTP 26 or newer
@@ -16,6 +34,11 @@ the tab bar instead of ignoring them.
   29). It asked for Elixir 1.20 before, without needing anything from it.
 
 ### Fixed
+- `./install.sh` run from a guiltty tab stopped halfway: stopping guiltty
+  closed the tab, and the script with it, before the new version was
+  installed. Now it finishes (its output goes to
+  `~/.local/state/guiltty/install.log`) and opens guiltty again. The old
+  and new versions are also swapped so that one is always installed.
 - Building after switching Erlang versions (with asdf, say) rebuilds the
   PTY NIF for the new one. Before, the old build was kept, and the new
   Erlang refused to load it ("NIF library needs erts-... or newer"),
@@ -23,9 +46,6 @@ the tab bar instead of ignoring them.
 - On Erlang/OTP 26, a request to the `guiltty` socket with a line that's
   too long is refused at once with "line too long", as on later OTPs,
   instead of after a 2 s wait.
-
-### Added
-- guiltty is under the MIT License (`LICENSE`).
 
 ## 0.15.3 — 2026-10-31
 

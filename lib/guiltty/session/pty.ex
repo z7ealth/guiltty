@@ -81,6 +81,14 @@ defmodule Guiltty.Session.Pty do
   """
   def foreground(id), do: GenServer.call(Session.via(id, :pty), :foreground)
 
+  @doc """
+  The name of the program the shell is running, when it's running one
+  (`"vim"`), or nil when the shell itself waits at its prompt. The shell
+  leads its own process group, so anything else in the foreground is a
+  job it started.
+  """
+  def busy(id), do: GenServer.call(Session.via(id, :pty), :busy)
+
   @doc "Makes `pid` the receiver of `{:pty_data, bytes}` messages."
   def attach_parser(id, pid), do: GenServer.call(Session.via(id, :pty), {:attach_parser, pid})
 
@@ -218,6 +226,16 @@ defmodule Guiltty.Session.Pty do
     with {:ok, pgid} <- PtyNif.foreground(state.pty),
          {:ok, comm} <- File.read("/proc/#{pgid}/comm") do
       {:reply, {pgid, String.trim(comm)}, state}
+    else
+      _ -> {:reply, nil, state}
+    end
+  end
+
+  def handle_call(:busy, _from, state) do
+    with {:ok, pgid} <- PtyNif.foreground(state.pty),
+         true <- pgid != state.os_pid,
+         {:ok, comm} <- File.read("/proc/#{pgid}/comm") do
+      {:reply, String.trim(comm), state}
     else
       _ -> {:reply, nil, state}
     end

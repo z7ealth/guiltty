@@ -88,7 +88,7 @@ the renderer, some reach the shell's process:
 | =tab_bar= (=:bottom=, =:top=)  | renderer (OPTIONS) | live                       |
 | =ligatures=                    | renderer (OPTIONS) | live: every row sent again (chapter 14) |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
-| =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19) |
+| =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19); =GUILTTY_RENDERER= wins over it |
 | =cursor=                       | Window, per ROWS | live                         |
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |

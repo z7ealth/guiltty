@@ -15,6 +15,7 @@ guiltty learns a new sequence.
 | =\r=                        | =:cr=                                |
 | =\n=, VT, FF                | =:lf=                                |
 | =\b=, =\t=                  | =:bs=, =:ht=                         |
+| BEL (=\a=, byte 7)          | =:bell= (chapter 24)                 |
 | =ESC [ 1 ; 31 m=            | ={:csi, nil, [1, 31], "", ?m}=       |
 | =ESC [ ? 25 l=              | ={:csi, ??, [25], "", ?l}=           |
 | =ESC [ 38 : 2 : : 255 : 0 : 0 m= | ={:csi, nil, [[38, 2, nil, 255, 0, 0]], "", ?m}= |

@@ -1,0 +1,234 @@
+#+TITLE: Tab comforts: busy tabs, marks, names, order
+#+STARTUP: overview
+
+* What changed in v0.16.0
+
+Six small things, each built on something guiltty already had:
+
+| You do                        | guiltty does                                         | Built on                    |
+|-------------------------------+------------------------------------------------------+-----------------------------|
+| Ctrl+Shift+W on a busy tab    | asks first: "vim is running: press again to close"   | the foreground job (ch. 18) |
+| look at another tab           | the tab you left shows ● on output, 🔔 on the bell    | BEL, and who views a Screen |
+| Ctrl+Shift+PgUp / PgDn        | moves the tab left / right                           | Tabs' list                  |
+| Ctrl+Shift+R                  | names the tab ("prod db"); empty gives the title back | search's text input         |
+| Ctrl+Shift+K                  | drops the scrollback, keeps the screen               | =ESC [ 3 J= (ch. 15)        |
+| =GUILTTY_RENDERER=gl guiltty= | draws with OpenGL, whatever the config says          | the renderer setting (ch. 19) |
+
+None of them touches C or the port protocol: tab titles are already
+text, and the dot and the bell are characters in them.
+
+#+begin_example
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ $ make                                                           │
+  │ building...                                                      │
+  │ $ █                                                              │
+  │                                                                  │
+  │ 🔒 prod db   ● build   🔔 tests      sleep is running: press again to close │
+  └──────────────────────────────────────────────────────────────────┘
+#+end_example
+
+(The real renderer, offscreen, from a replay of that tab bar.)
+
+* Is the tab busy? The foreground job, again
+
+Chapter 1 had the kernel's rule: each terminal has one *foreground
+process group*, the job that gets what you type, and =tcgetpgrp(3)=
+says which. Chapter 18 used it to tell whether a broadcast tab still
+runs ssh. Closing a tab uses it once more.
+
+The shell is started with =setsid()= (chapter 2), so it leads its own
+session *and* its own process group: its group id is its pid. At the
+prompt, the shell's group is in the foreground. When it runs a program,
+it gives that job a group of its own and hands it the foreground. So:
+
+#+begin_example
+  foreground group == the shell's pid   -> the shell waits at its prompt
+  foreground group != the shell's pid   -> a job it started is running
+#+end_example
+
+Real values, from a session in =mix run=:
+
+#+begin_example
+  at the prompt:   foreground {51415, "bash"}       busy nil
+  running vim:     foreground {51417, "vim-nox11"}  busy "vim-nox11"
+#+end_example
+
+=Pty.busy/1= ([[file:../lib/guiltty/session/pty.ex::def busy][pty.ex]]) is that comparison, with the job's name
+from =/proc/<pgid>/comm=. That's the program's real file name: on
+openSUSE, =vim= is a link to =vim-nox11=, and that's what the kernel
+records.
+
+The Window ([[file:../lib/guiltty/window.ex::defp run(:close_tab][run(:close_tab)]]) asks before closing a busy tab, and
+remembers which tab it asked about:
+
+#+begin_example
+  Ctrl+Shift+W   busy?  no  -> close
+                        yes -> status "vim is running: press again to close"
+                               confirm_close = this tab   (for 3 s)
+  Ctrl+Shift+W   confirm_close == this tab -> close, no question
+#+end_example
+
+The same pattern as Ctrl+Shift+B on a local tab (chapter 18): a second
+press is the confirmation, so there's no dialog to draw.
+
+What it doesn't cover: closing the *window*. The window manager closes
+it, the renderer exits, and there's nobody to ask. A locked tab
+(Ctrl+Shift+L) is the way to keep a program through that.
+
+* Marks: something new in a tab you're not looking at
+
+** Who's looking
+
+A tab's Screen knows if anyone views it: the Window subscribes to the
+active tab's Screen only (chapter 4). A Screen with no viewer belongs to
+a tab you're not looking at. So the Screen itself can tell its Tabs:
+
+#+begin_example
+  output arrives, no viewer   -> {:mark, id, :activity}   (once)
+  BEL arrives, no viewer      -> {:mark, id, :bell}       (once)
+  a viewer subscribes         -> forget what was said: the next
+                                 time it's left, it starts fresh
+#+end_example
+
+Once per kind, and only upwards: a bell after activity is news, activity
+after a bell isn't. So a background tab running =ping= sends one
+message, not one per line. Real messages, from a tab running
+=make; printf '\a'= in the background:
+
+#+begin_example
+  Tabs got:        {:mark, 2, :activity}
+  Tabs got:        {:mark, 2, :bell}
+  marks:           %{2 => :bell}
+#+end_example
+
+Tabs keeps =marks= and sends them to the windows with the rest of the
+tab info; the Window puts ● or 🔔 before the title. Switching to a tab
+clears its mark.
+
+** The bell is a byte
+
+BEL is byte 7, a C0 control like CR and LF (=ascii(7)=). The parser used
+to drop it; now it's a command, =:bell=, and =Grid.ring/1= notes it until
+the Screen takes it (=take_bell/1=), the same way the grid keeps the
+answers to queries until the Screen sends them.
+
+Inside an OSC string, BEL is something else: the string's end
+(=ESC ] 2 ; title BEL=). The parser's string state handles that byte
+itself, so a title change never rings.
+
+Programs ring on purpose: a shell when completion has nothing, =make=
+and test runners at the end (or you: =long-command; printf '\a'=).
+
+** The resize trap
+
+The first try lit up every tab whenever the window was resized. A resize
+reaches every tab's shell as =SIGWINCH= (chapter 9), and every shell
+answers by redrawing its prompt: output, in every background tab. So
+output in the first second after a resize doesn't count as activity. A
+bell still does.
+
+#+begin_example
+  t=0      resize          quiet_until = now + 1000 ms
+  t=40ms   prompt redrawn  before quiet_until: not activity
+  t=2s     "build done"    after: activity, ● in the tab bar
+#+end_example
+
+** A bug worth keeping: negative time
+
+=quiet_until= first started at 0, meaning "no quiet time". Nothing was
+ever marked. The BEAM's monotonic clock (=erlang:monotonic_time/1=)
+only promises to go forward, not to start anywhere in particular, and
+here it was around -576,460,750,000 ms: always before 0. It now starts
+at the current time. Monotonic time is for differences, never for
+comparing with a constant.
+
+* Moving and naming tabs
+
+Both live in =Guiltty.Tabs=, which owns the tab list:
+
+- =move/2= takes the active tab out of the list and puts it back one
+  place to the left or right. At either end it does nothing (no
+  wrapping round: a tab that jumps from first to last is easy to lose).
+- =rename/3= keeps a name per tab, separate from the title the program
+  sets (OSC 0/2, chapter 11). The tab bar shows the name when there is
+  one, so a program can't take it away; an empty name gives the title
+  back.
+
+Typing the name reuses search's idea (chapter 15): while renaming, text
+goes to the name instead of the shell, the status shows it, Enter sets
+it and Escape leaves the old one. It starts from the name the tab shows
+now, so a small change is a few backspaces.
+
+* Clearing the scrollback
+
+=clear= already drops the scrollback: it sends =ESC [ 3 J= (chapter 15),
+and =Grid.erase_display(grid, 3)= forgets every saved row. Ctrl+Shift+K
+does the same from guiltty's side, through =Screen.clear_scrollback/1=,
+and also resets what pointed into it: the view goes back to the live
+screen, and a selection or a search match in the old rows goes away.
+What's on the screen stays.
+
+* GUILTTY_RENDERER
+
+The =renderer= setting picks Vulkan or OpenGL. To try the other one
+without editing the config, =GUILTTY_RENDERER=gl= (or =vulkan=) wins
+over it; any other value is logged and ignored.
+
+It's read from guiltty's own environment, and guiltty gets that once,
+from the =guiltty= that started it (chapter 23). So it works on a cold
+start only:
+
+#+begin_src sh
+guiltty stop
+GUILTTY_RENDERER=gl guiltty
+#+end_src
+
+* Loot
+
+- =tcgetpgrp(3)= and =credentials(7)= ("Process groups"): the foreground
+  job, and why the shell's group id is its pid.
+- =proc_pid_comm(5)=: =/proc/<pid>/comm=, the name the kernel keeps.
+- =ascii(7)=: BEL and the other C0 controls; =console_codes(4)= for what
+  a Linux console does with BEL.
+- Erlang's "Time and Time Correction" guide: =monotonic_time= and why it
+  can be negative.
+- XTerm control sequences: =CSI 3 J= (erase saved lines).
+
+* Questions
+
+1. How does guiltty know a tab's shell is running a program, and not
+   waiting at its prompt?
+2. Why does a background tab running =ping= send one mark, not one per
+   line?
+3. Why doesn't a title change (=ESC ] 2 ; title BEL=) mark the tab with a
+   bell?
+4. Why did resizing the window mark every tab, and how is it avoided?
+5. Why is comparing =System.monotonic_time/1= with 0 a bug?
+6. Why does a tab's name win over the title its program sets?
+7. Why can't guiltty ask before closing the *window* with a busy tab?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The shell leads its own process group (=setsid()= made it a session
+   leader, with group id = its pid). A program it runs gets a new group
+   and the foreground. If the terminal's foreground group isn't the
+   shell's pid, something else is running.
+2. The Screen tells Tabs once per kind, and only something more
+   important than what it already said. It forgets only when a viewer
+   comes back.
+3. In an OSC string, BEL ends the string. The parser's string state
+   consumes it there; only a BEL in plain text becomes =:bell=.
+4. Every shell gets SIGWINCH and redraws its prompt, which is output. For
+   a second after a resize, output doesn't count as activity.
+5. Monotonic time has no fixed start, only a direction; on the BEAM it's
+   often negative. Only the difference between two readings means
+   something.
+6. You set the name on purpose; programs set titles all the time (every
+   prompt, in many shells). If the program won, the name would be gone
+   at the next prompt.
+7. The window manager closes the window, and the renderer just exits.
+   By then the window is gone, so there's no window left to ask in.
+   Locking a tab (Ctrl+Shift+L) keeps it alive instead.

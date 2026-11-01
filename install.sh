@@ -36,13 +36,46 @@ done
 # The release answers `pid` only while it runs.
 running() { [ -x "$1/bin/guiltty" ] && "$1/bin/guiltty" pid >/dev/null 2>&1; }
 
+# Whether this script runs in one of the installed guiltty's own tabs:
+# then guiltty's VM is one of its ancestors (a tab's shell is its child).
+inside=false
+inside_installed() {
+    local vm p=$$
+    vm=$("$APP/bin/guiltty" pid 2>/dev/null) || return 1
+    while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+        [ "$p" = "$vm" ] && return 0
+        # The parent pid is the 2nd field after the name, which is in
+        # parentheses and may hold spaces (proc_pid_stat(5)).
+        p=$(sed 's/.*) //' "/proc/$p/stat" 2>/dev/null | cut -d' ' -f2) || return 1
+    done
+    return 1
+}
+
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/guiltty/install.log"
+
 # Stop the installed guiltty before replacing or removing it. That closes
 # its tabs, so ask first.
 stop_installed() {
     running "$APP" || return 0
+    inside_installed && inside=true
     if ! $yes; then
-        read -r -p "guiltty is running; stopping it closes its tabs. Go on? [y/N] " answer
+        if $inside; then
+            read -r -p "guiltty is running, in this very tab too: stopping it closes every tab. Go on? [y/N] " answer
+        else
+            read -r -p "guiltty is running; stopping it closes its tabs. Go on? [y/N] " answer
+        fi
         [ "$answer" = y ] || [ "$answer" = Y ] || { echo "nothing changed"; exit 1; }
+    fi
+
+    # From inside guiltty, stopping it closes the terminal this script
+    # runs in: the kernel sends SIGHUP, and writing to the closed terminal
+    # fails. Ignore the one and write the rest to a log, so the install
+    # finishes anyway; guiltty opens again at the end.
+    if $inside; then
+        mkdir -p "$(dirname "$LOG")"
+        echo "this tab closes now; the install goes on (log: $LOG) and guiltty opens again when it's done"
+        trap '' HUP
+        exec >"$LOG" 2>&1
     fi
     echo "stopping the installed guiltty"
     "$APP/bin/guiltty" stop
@@ -96,9 +129,13 @@ rm -rf "$APP.new"
 (cd "$here" && MIX_ENV=prod mix deps.get --only prod >/dev/null &&
     MIX_ENV=prod mix release guiltty --overwrite --quiet --path "$APP.new")
 
+# Swapped with two renames, so there's never a moment with no guiltty
+# installed: if anything stops the script here, one of the two is in place.
 stop_installed
-rm -rf "$APP"
+rm -rf "$APP.old"
+[ -e "$APP" ] && mv "$APP" "$APP.old"
 mv "$APP.new" "$APP"
+rm -rf "$APP.old"
 
 # The `guiltty` command is the release's small C client (book chapter 23):
 # it asks the running guiltty for a window, or starts guiltty; any other
@@ -135,6 +172,12 @@ command -v desktop-file-validate >/dev/null && desktop-file-validate "$DESKTOP"
 refresh_desktop
 
 echo "guiltty $version is installed: run guiltty, or find it in your menu"
+
+# Started from one of its tabs, the update closed every window: open one,
+# on the new version, so the update ends where it began.
+if $inside; then
+    "$BIN" || echo "couldn't start guiltty again: run guiltty"
+fi
 if running "$here/_build/prod/rel/guiltty"; then
     echo "note: a guiltty from _build/prod is running. Stop it first" \
         "($here/_build/prod/rel/guiltty/bin/guiltty stop): both use the node name guiltty@127.0.0.1."

@@ -69,6 +69,7 @@ defmodule Guiltty.Terminal do
   defp command(:ht, grid), do: Grid.tab(grid)
   defp command(:shift_out, grid), do: Grid.shift(grid, 1)
   defp command(:shift_in, grid), do: Grid.shift(grid, 0)
+  defp command(:bell, grid), do: Grid.ring(grid)
 
   defp command({:csi, nil, params, "", final}, grid), do: csi(final, params, grid)
 

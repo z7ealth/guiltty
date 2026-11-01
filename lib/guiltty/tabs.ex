@@ -14,12 +14,16 @@ defmodule Guiltty.Tabs do
   A window registers with `attach_window/2` and then gets `{:tabs, info}`
   whenever something changes. `info` is a map:
 
-    * `:list` - `[{id, title}]`, in order
+    * `:list` - `[{id, title}]`, in order; a tab's name (`rename/3`)
+      replaces its program's title
     * `:active` - the active tab's id
     * `:locked` - the tabs that stay when the window closes (`toggle_lock/1`)
     * `:group` - the broadcast group, `%{id => host}`, or `:local` for a
       local tab (`toggle_broadcast/3`)
     * `:lost` - group tabs whose connection is gone (broadcast is paused)
+    * `:marks` - `%{id => :activity | :bell}`: tabs that printed something,
+      or rang the bell, since you last looked at them (see
+      `Guiltty.Session.Screen`, "Marks")
 
   ## Broadcast
 
@@ -99,6 +103,15 @@ defmodule Guiltty.Tabs do
   @doc "Switches to `:next`, `:prev`, or the tab at a 0-based index."
   def switch(tabs, to), do: GenServer.call(tabs, {:switch, to})
 
+  @doc "Moves the active tab one place `:left` or `:right` (not past either end)."
+  def move(tabs, direction), do: GenServer.call(tabs, {:move, direction})
+
+  @doc """
+  Names a tab: the name shows instead of its program's title. nil or ""
+  gives the title back.
+  """
+  def rename(tabs, id, name), do: GenServer.call(tabs, {:rename, id, name})
+
   @doc "The active tab's session id."
   def active(tabs), do: GenServer.call(tabs, :active)
 
@@ -118,6 +131,9 @@ defmodule Guiltty.Tabs do
       desk: Keyword.get(opts, :desk),
       tabs: [],
       titles: %{},
+      # names given with rename/3, shown instead of the titles
+      names: %{},
+      marks: %{},
       locked: MapSet.new(),
       # the broadcast group: id => {pgid, host}, the foreground process it
       # joined with and where that ssh goes
@@ -254,6 +270,25 @@ defmodule Guiltty.Tabs do
     {:reply, :ok, state |> switch_to(to) |> notify_windows()}
   end
 
+  def handle_call({:move, direction}, _from, state) do
+    index = Enum.find_index(state.tabs, &(&1 == state.active))
+    target = if direction == :left, do: index - 1, else: index + 1
+
+    if (index && target >= 0) and target < length(state.tabs) do
+      tabs = state.tabs |> List.delete_at(index) |> List.insert_at(target, state.active)
+      {:reply, :ok, notify_windows(%{state | tabs: tabs})}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:rename, id, name}, _from, state) do
+    names =
+      if name in [nil, ""], do: Map.delete(state.names, id), else: Map.put(state.names, id, name)
+
+    {:reply, :ok, notify_windows(%{state | names: names})}
+  end
+
   def handle_call(:active, _from, state), do: {:reply, state.active, state}
   def handle_call(:list, _from, state), do: {:reply, {tab_list(state), state.active}, state}
 
@@ -271,6 +306,14 @@ defmodule Guiltty.Tabs do
   @impl true
   def handle_info({:title, id, title}, state) do
     {:noreply, %{state | titles: Map.put(state.titles, id, title)} |> notify_windows()}
+  end
+
+  # A tab you're not looking at printed something, or rang the bell. The
+  # active tab needs no mark (and has none to clear, see seen/1).
+  def handle_info({:mark, id, mark}, state) do
+    if id != state.active and id in state.tabs and Map.get(state.marks, id) != :bell,
+      do: {:noreply, notify_windows(%{state | marks: Map.put(state.marks, id, mark)})},
+      else: {:noreply, state}
   end
 
   # A session supervisor went down. If it shut down normally the shell
@@ -388,7 +431,16 @@ defmodule Guiltty.Tabs do
         true -> Enum.at(tabs, min(index, length(tabs) - 1))
       end
 
-    state = %{state | tabs: tabs, titles: Map.delete(state.titles, id), active: active}
+    state =
+      %{
+        state
+        | tabs: tabs,
+          titles: Map.delete(state.titles, id),
+          names: Map.delete(state.names, id),
+          marks: Map.delete(state.marks, id),
+          active: active
+      }
+      |> seen()
 
     if tabs == [] do
       Logger.info("tabs: the last tab closed")
@@ -412,8 +464,11 @@ defmodule Guiltty.Tabs do
         _ -> index
       end
 
-    %{state | active: Enum.at(state.tabs, target)}
+    seen(%{state | active: Enum.at(state.tabs, target)})
   end
+
+  # The active tab is the one you're looking at: nothing new in it.
+  defp seen(state), do: %{state | marks: Map.delete(state.marks, state.active)}
 
   ## The broadcast group
 
@@ -471,7 +526,8 @@ defmodule Guiltty.Tabs do
   defp destination([dest | _]), do: dest
   defp destination([]), do: nil
 
-  defp tab_list(state), do: Enum.map(state.tabs, &{&1, Map.get(state.titles, &1, "")})
+  defp tab_list(state),
+    do: Enum.map(state.tabs, &{&1, state.names[&1] || Map.get(state.titles, &1, "")})
 
   defp info(state) do
     %{
@@ -483,7 +539,8 @@ defmodule Guiltty.Tabs do
           {id, :local} -> {id, :local}
           {id, {_pgid, host}} -> {id, host}
         end),
-      lost: state.lost
+      lost: state.lost,
+      marks: state.marks
     }
   end
 

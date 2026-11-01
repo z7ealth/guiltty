@@ -3,7 +3,7 @@ defmodule Guiltty.TabsTest do
   use ExUnit.Case, async: false
 
   alias Guiltty.{Session, Tabs}
-  alias Guiltty.Session.Pty
+  alias Guiltty.Session.{Pty, Screen}
 
   @tabs :test_tabs
 
@@ -239,5 +239,83 @@ defmodule Guiltty.TabsTest do
     assert Session.size(second) == {100, 30}
     {:ok, third} = Tabs.new_tab(@tabs)
     assert Session.size(third) == {100, 30}
+  end
+
+  test "the active tab moves left and right, never past either end" do
+    [first] = ids()
+    {:ok, second} = Tabs.new_tab(@tabs)
+    {:ok, third} = Tabs.new_tab(@tabs)
+
+    :ok = Tabs.move(@tabs, :right)
+    assert ids() == [first, second, third]
+
+    :ok = Tabs.move(@tabs, :left)
+    assert ids() == [first, third, second]
+    :ok = Tabs.move(@tabs, :left)
+    :ok = Tabs.move(@tabs, :left)
+    assert ids() == [third, first, second]
+    assert Tabs.active(@tabs) == third
+  end
+
+  test "a name shows instead of the title; an empty one gives the title back" do
+    [id] = ids()
+    Session.write(id, "printf '\\e]2;from bash\\a'\r")
+    assert eventually(fn -> Tabs.list(@tabs) == {[{id, "from bash"}], id} end)
+
+    :ok = Tabs.rename(@tabs, id, "prod db")
+    assert Tabs.list(@tabs) == {[{id, "prod db"}], id}
+
+    # The program can't take the name away.
+    Session.write(id, "printf '\\e]2;again\\a'\r")
+    assert eventually(fn -> :sys.get_state(@tabs).titles[id] == "again" end)
+    assert Tabs.list(@tabs) == {[{id, "prod db"}], id}
+
+    :ok = Tabs.rename(@tabs, id, "")
+    assert Tabs.list(@tabs) == {[{id, "again"}], id}
+  end
+
+  defp marks, do: :sys.get_state(@tabs).marks
+
+  # What a window does when you look at a tab and then go back to the
+  # first: switching clears the tab's mark in Tabs, viewing its Screen
+  # resets what the Screen told Tabs. After its first prompt, which is
+  # output too.
+  defp look_at(id, index) do
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    :ok = Tabs.switch(@tabs, index)
+    :ok = Screen.subscribe(id, self())
+    :ok = Screen.unsubscribe(id, self())
+    :ok = Tabs.switch(@tabs, 0)
+  end
+
+  test "a tab you're not looking at is marked for output, then for the bell" do
+    [first] = ids()
+    {:ok, second} = Tabs.new_tab(@tabs)
+    look_at(second, 1)
+
+    Session.write(second, "echo hi\r")
+    assert eventually(fn -> marks() == %{second => :activity} end)
+
+    Session.write(second, "printf '\\a'\r")
+    assert eventually(fn -> marks() == %{second => :bell} end)
+
+    # The active tab is never marked; switching to a tab clears its mark.
+    Session.write(first, "printf '\\a'\r")
+    :ok = Tabs.switch(@tabs, 1)
+    assert marks() == %{}
+  end
+
+  test "output right after a resize isn't activity: shells redraw their prompt" do
+    {:ok, second} = Tabs.new_tab(@tabs)
+    look_at(second, 1)
+    :ok = Tabs.resize(@tabs, 90, 30)
+
+    Session.write(second, "echo during\r")
+    assert eventually(fn -> Session.dump(second) =~ ~r/^during$/m end)
+    assert marks() == %{}
+
+    Process.sleep(1_100)
+    Session.write(second, "echo after\r")
+    assert eventually(fn -> marks() == %{second => :activity} end)
   end
 end

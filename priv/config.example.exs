@@ -76,6 +76,9 @@
   # How guiltty draws: :vulkan, or :gl (OpenGL). If Vulkan can't start
   # (no driver, no GPU that can show the window), guiltty says so and
   # draws with OpenGL. Applies to windows opened after a change.
+  # GUILTTY_RENDERER=gl (or vulkan) in guiltty's environment wins over
+  # this, to try the other one for a run: `guiltty stop`, then
+  # `GUILTTY_RENDERER=gl guiltty`.
   renderer: :vulkan,
 
   # Rows of output each tab keeps for scrolling back (new tabs only).
@@ -89,13 +92,20 @@
     # A new window, with its own tabs (closing it never touches the others).
     new_window: ["ctrl+shift+n"],
     new_tab: ["ctrl+shift+t"],
+    # Asks first when the tab is running a program (vim, ssh, a build).
     close_tab: ["ctrl+shift+w"],
     next_tab: ["ctrl+page_down", "ctrl+tab"],
     prev_tab: ["ctrl+page_up", "ctrl+shift+tab"],
+    move_tab_left: ["ctrl+shift+page_up"],
+    move_tab_right: ["ctrl+shift+page_down"],
+    # Type a name for the tab, Enter (empty: the program's title again).
+    rename_tab: ["ctrl+shift+r"],
     scroll_page_up: ["shift+page_up"],
     scroll_page_down: ["shift+page_down"],
     scroll_top: ["shift+home"],
     scroll_bottom: ["shift+end"],
+    # Drops the tab's scrollback; what's on the screen stays.
+    clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
     copy: ["ctrl+shift+c"],
     zoom_in: ["ctrl+=", "ctrl+shift+="],
