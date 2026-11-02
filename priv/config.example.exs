@@ -23,7 +23,15 @@
   #   cursor: "#c5c8c6",
   #   # black, red, green, yellow, blue, magenta, cyan, white, then bright
   #   ansi: ~w(#1d1f21 #cc6666 #b5bd68 #f0c674 #81a2be #b294bb #8abeb7 #c5c8c6
-  #            #969896 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea)
+  #            #969896 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea),
+  #   # The tab bar's colors. Any you leave out are worked out from the
+  #   # theme, to suit the tab_style.
+  #   tab_bar: "#282a36",          # the bar behind the tabs
+  #   tab_text: "#6272a4",         # the other tabs' titles
+  #   tab_active: "#ff79c6",       # the active tab's background
+  #   tab_active_text: "#282a36",  # the active tab's title
+  #   tab_accent: "#ff79c6"        # the line along the active tab (flat,
+  #                                # minimal), the filled tab's color (others)
   # ],
 
   # :block, :bar or :underline. Programs can change it while they run (vim
@@ -68,6 +76,17 @@
 
   # Where the tabs go: :bottom (the default) or :top.
   tab_bar: :bottom,
+
+  # How the tabs look:
+  #   :flat        (the default) side by side, the active one lighter, with
+  #                a line along its edge
+  #   :powerline   colored blocks joined by arrows
+  #   :rounded     pills with round ends, the active one filled
+  #   :minimal     no bar: titles on the terminal's background, the line
+  #                under the active one
+  #   :separators  titles between thin bars, the active one filled
+  # Their colors are in theme: (tab_bar, tab_active, ... above).
+  tab_style: :flat,
 
   # Join ->, !=, |>, => and the like into one symbol, when the font has
   # ligatures (JetBrains Mono and Fira Code do; Source Code Pro doesn't).

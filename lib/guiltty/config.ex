@@ -35,6 +35,10 @@ defmodule Guiltty.Config do
     * `:wheel_lines` - rows the mouse wheel scrolls per step
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
     * `:tab_bar` - `:bottom` (the default) or `:top`
+    * `:tab_style` - how the tabs look: `:flat` (the default), `:powerline`,
+      `:rounded`, `:minimal` or `:separators`; their colors can be set in
+      the theme (`tab_bar`, `tab_text`, `tab_active`, `tab_active_text`,
+      `tab_accent`)
     * `:ligatures` - join `->`, `!=`, `|>` and the like into one symbol,
       when the font has ligatures (JetBrains Mono, Fira Code)
     * `:broadcast_programs` - what a tab must be running to join the
@@ -77,6 +81,7 @@ defmodule Guiltty.Config do
   }
 
   @max_scrollback 1_000_000
+  @tab_styles [:flat, :powerline, :rounded, :minimal, :separators]
 
   def start_link(opts) do
     case Keyword.get(opts, :name, __MODULE__) do
@@ -100,6 +105,7 @@ defmodule Guiltty.Config do
       wheel_lines: 3,
       bold_is_bright: true,
       tab_bar: :bottom,
+      tab_style: :flat,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan
@@ -254,7 +260,7 @@ defmodule Guiltty.Config do
     %{
       nil => Map.keys(d),
       font: Map.keys(d.font),
-      theme: [:name, :fg, :bg, :cursor, :ansi],
+      theme: [:name, :fg, :bg, :cursor, :ansi] ++ Theme.tab_colors(),
       cursor: Map.keys(d.cursor),
       window: Map.keys(d.window),
       shell: Map.keys(d.shell),
@@ -325,6 +331,7 @@ defmodule Guiltty.Config do
          {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
          {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]),
          {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
+         {:ok, tab_style} <- one_of(:tab_style, get.(:tab_style, d.tab_style), @tab_styles),
          {:ok, ligatures} <- one_of(:ligatures, get.(:ligatures, d.ligatures), [true, false]),
          {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
          {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]) do
@@ -342,6 +349,7 @@ defmodule Guiltty.Config do
          wheel_lines: wheel,
          bold_is_bright: bright,
          tab_bar: tab_bar,
+         tab_style: tab_style,
          ligatures: ligatures,
          broadcast_programs: programs,
          renderer: renderer
@@ -454,9 +462,21 @@ defmodule Guiltty.Config do
     with {:ok, fg} <- color(opts[:fg], default.fg),
          {:ok, bg} <- color(opts[:bg], default.bg),
          {:ok, cursor} <- color(opts[:cursor], default.cursor),
-         {:ok, ansi} <- ansi(opts[:ansi], default.ansi) do
-      {:ok, %Theme{fg: fg, bg: bg, cursor: cursor, ansi: ansi}}
+         {:ok, ansi} <- ansi(opts[:ansi], default.ansi),
+         {:ok, tab} <- tab_colors(opts, default) do
+      {:ok, struct(%Theme{fg: fg, bg: bg, cursor: cursor, ansi: ansi}, tab)}
     end
+  end
+
+  # Each one nil (derived by the renderer) unless set, here or in the
+  # theme this one starts from.
+  defp tab_colors(opts, default) do
+    Enum.reduce_while(Theme.tab_colors(), {:ok, []}, fn name, {:ok, acc} ->
+      case color(opts[name], Map.get(default, name)) do
+        {:ok, rgb} -> {:cont, {:ok, [{name, rgb} | acc]}}
+        {:error, why} -> {:halt, {:error, "theme #{name}: #{why}"}}
+      end
+    end)
   end
 
   defp ansi(nil, default), do: {:ok, default}

@@ -106,6 +106,31 @@ defmodule Guiltty.ConfigTest do
     end
   end
 
+  test "tab styles, and tab colors in the theme, also from a named one", %{tmp_dir: dir} do
+    assert {:ok, %{tab_style: :flat, theme: %{tab_accent: nil}}} =
+             Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{tab_style: :powerline, theme: theme}} =
+             Config.load(
+               write(dir, "b.exs", """
+               [tab_style: :powerline,
+                theme: [name: "dracula", tab_bar: "#282a36", tab_accent: "#ff79c6"]]
+               """)
+             )
+
+    assert theme.tab_bar == {0x28, 0x2A, 0x36}
+    assert theme.tab_accent == {0xFF, 0x79, 0xC6}
+    assert theme.tab_active == nil
+    assert theme.bg == elem(Guiltty.Theme.named("dracula"), 1).bg
+
+    assert {:error, msg} = Config.load(write(dir, "c.exs", "[tab_style: :fancy]"))
+    assert msg =~ "tab_style"
+    assert {:error, msg} = Config.load(write(dir, "d.exs", "[theme: [tab_active: \"pink\"]]"))
+    assert msg =~ "tab_active"
+    assert {:error, msg} = Config.load(write(dir, "e.exs", "[theme: [tab_activ: \"#ffffff\"]]"))
+    assert msg =~ "did you mean :tab_active"
+  end
+
   test "the example config is valid" do
     assert {:ok, _config} = Config.load(Path.expand("../../priv/config.example.exs", __DIR__))
   end

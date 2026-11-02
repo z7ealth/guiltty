@@ -311,6 +311,7 @@ defmodule Guiltty.Window do
       {cols, rows} = Session.size(info.active)
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
+      send_port(state, tab_style(state.config))
       state = show_tabs(%{state | ready: true, size: {cols, rows}}, info)
       # Anything that waited for the handshake (a config error, a fallback
       # notice) goes now.
@@ -942,6 +943,7 @@ defmodule Guiltty.Window do
     state = %{state | config: config, bindings: parse_bindings(config.keys)}
     if font(state) != old_font, do: send_port(state, Protocol.font(font(state)))
     if options(config) != options(old), do: send_port(state, Protocol.options(options(config)))
+    if tab_style(config) != tab_style(old), do: send_port(state, tab_style(config))
 
     # A new default cursor shows with the next update, and bold-is-bright
     # changes the colors of rows the renderer already has: ask for every
@@ -953,6 +955,13 @@ defmodule Guiltty.Window do
     # The keys on the cheatsheet may have changed.
     if state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state
   end
+
+  defp tab_style(config),
+    do:
+      config
+      |> Map.get(:tab_style, :flat)
+      |> Protocol.tab_style(config.theme)
+      |> IO.iodata_to_binary()
 
   defp options(config) do
     %{

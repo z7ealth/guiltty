@@ -8,6 +8,24 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## Unreleased
+
+### Added
+- Tab styles: `tab_style: :powerline` (colored blocks joined by arrows),
+  `:rounded` (pills), `:minimal` (no bar, a line under the active tab) or
+  `:separators` (thin bars between titles). `:flat`, today's look, stays
+  the default.
+- The tab bar's colors can be set in the theme: `tab_bar`, `tab_text`,
+  `tab_active`, `tab_active_text` and `tab_accent`. Any left out are
+  worked out from the theme, as before.
+
+### Changed
+- Powerline arrows and half circles (U+E0B0, U+E0B2, U+E0B4, U+E0B6) in
+  prompts are drawn by guiltty, like box drawing: they meet the blocks
+  next to them exactly, and show even without a Nerd Font.
+- The renderer protocol is now version 10. Build guiltty and its
+  renderers together, as `mix compile` and `install.sh` do.
+
 ## 0.16.0 — 2026-11-01 — Tab comforts
 
 ### Added

@@ -196,6 +196,12 @@ it doesn't know.
   2. (Double lines and dashes still come from the font.)
 - *Rounded corners* (=╭ ╮ ╯ ╰=) are a quarter circle, anti-aliased by
   distance from the curve, ending on the same row and column as the lines.
+- *Powerline shapes* (Nerd Fonts' U+E0B0 and U+E0B2 triangles, U+E0B4
+  and U+E0B6 half circles), solid, as tall as the cell, flat against one
+  side. Prompts and the tab bar's powerline and rounded styles (chapter
+  25) join colored blocks with them. They're in the private use area like
+  Nerd Font icons, but they're never widened (below): =sprite_has= says
+  they're guiltty's, so they stay exactly one cell.
 
 =╭= at 11x23 pixels, alpha per pixel, rows 11 to 18 (=─= runs on row 11,
 =│= on column 5):

@@ -169,6 +169,43 @@ static void arc(uint32_t cp, int w, int h, int thickness, uint8_t *rgba, size_t 
         }
 }
 
+// The solid powerline shapes, from Nerd Fonts' private use area: a
+// triangle (U+E0B0 pointing right, U+E0B2 left) or a half ellipse (U+E0B4
+// right, U+E0B6 left), flat against one side of the cell and as tall as
+// it. They join colored blocks (prompts, the tab bar's powerline and
+// rounded styles), so they must meet the blocks to the pixel, which a
+// font's version rarely does.
+static bool is_powerline(uint32_t cp) {
+    return cp == 0xE0B0 || cp == 0xE0B2 || cp == 0xE0B4 || cp == 0xE0B6;
+}
+
+static void powerline(uint32_t cp, int w, int h, uint8_t *rgba, size_t stride) {
+    bool round = cp == 0xE0B4 || cp == 0xE0B6;
+    bool left = cp == 0xE0B2 || cp == 0xE0B6; // the flat side is on the right
+    double half = h / 2.0;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            // The pixel's center, from the flat side: u from 0 to 1 across
+            // the cell, v from -1 to 1 down it.
+            double u = (left ? w - x - 0.5 : x + 0.5) / w, v = (y + 0.5 - half) / half;
+            // How far inside the shape's edge it is, in pixels.
+            double inside = round ? (1 - hypot(u, v)) * fmin(w, half)
+                                  : ((1 - fabs(v)) - u) * w * half / hypot(w, half);
+            // Anti-aliased over the one pixel the edge crosses.
+            uint8_t c = inside >= 0.5    ? 255
+                        : inside <= -0.5 ? 0
+                                         : (uint8_t)((inside + 0.5) * 255);
+            if (c)
+                put(rgba, stride, x, y, c);
+        }
+}
+
+bool sprite_has(uint32_t cp) {
+    return (cp >= 0x2580 && cp <= 0x259F) ||
+           (cp >= 0x2500 && cp <= 0x254B && box_arms[cp - 0x2500] != 0) ||
+           (cp >= 0x2574 && cp <= 0x257F) || (cp >= 0x256D && cp <= 0x2570) || is_powerline(cp);
+}
+
 bool sprite_render(uint32_t cp, int cell_w, int cell_h, int thickness, uint8_t *rgba, size_t stride) {
     if (cp >= 0x2580 && cp <= 0x259F)
         return block(cp, cell_w, cell_h, rgba, stride);
@@ -182,6 +219,10 @@ bool sprite_render(uint32_t cp, int cell_w, int cell_h, int thickness, uint8_t *
     }
     if (cp >= 0x256D && cp <= 0x2570) {
         arc(cp, cell_w, cell_h, thickness, rgba, stride);
+        return true;
+    }
+    if (is_powerline(cp)) {
+        powerline(cp, cell_w, cell_h, rgba, stride);
         return true;
     }
     return false;

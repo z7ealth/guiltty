@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 9;
+constexpr uint16_t protocol_version = 10;
 
 // Largest message we accept; anything bigger is a protocol error.
 constexpr uint32_t max_message_size = 1u << 24;
@@ -73,6 +73,11 @@ enum msg_tag : uint8_t {
     MSG_OPTIONS = 20,
     // Elixir -> renderer: open a URL with the desktop's app for it, UTF-8
     MSG_OPEN_URL = 21,
+    // Elixir -> renderer: how the tab bar looks: u8 style (enum tab_style),
+    // u8 which colors are given (bit i: enum tab_color i), then
+    // tab_color_count colors of 3 bytes (r, g, b); a color whose bit is
+    // clear is ignored, and derived from the theme instead.
+    MSG_TAB_STYLE = 22,
 };
 enum cursor_shape : uint8_t { CURSOR_BLOCK = 0, CURSOR_UNDERLINE = 1, CURSOR_BAR = 2, CURSOR_HOLLOW = 3 };
 constexpr uint8_t cursor_blinks = 0x04;
@@ -82,6 +87,24 @@ enum option_flag : uint8_t {
     OPTION_LIGATURES = 0x04,
 };
 constexpr size_t options_size = sizeof(uint16_t) + 2;
+enum tab_style : uint8_t {
+    TAB_FLAT = 0,
+    TAB_POWERLINE = 1,
+    TAB_ROUNDED = 2,
+    TAB_MINIMAL = 3,
+    TAB_SEPARATORS = 4,
+    tab_style_count
+};
+enum tab_color : uint8_t {
+    TAB_COLOR_BAR = 0,         // the bar behind the tabs
+    TAB_COLOR_TEXT = 1,        // the other tabs' titles
+    TAB_COLOR_ACTIVE = 2,      // the active tab's background
+    TAB_COLOR_ACTIVE_TEXT = 3, // the active tab's title
+    TAB_COLOR_ACCENT = 4,      // the line under (or over) the active tab
+    tab_color_count
+};
+constexpr size_t tab_style_size = 2 + 3 * (size_t)tab_color_count;
+static_assert(tab_style_size == 17, "MSG_TAB_STYLE's body on the wire");
 enum mouse_kind : uint8_t { MOUSE_PRESS = 0, MOUSE_RELEASE = 1, MOUSE_MOTION = 2, MOUSE_WHEEL = 3 };
 static_assert(sizeof(enum msg_tag) == 1, "tags are one byte on the wire");
 

@@ -1135,3 +1135,26 @@ in place. Now the script checks whether guiltty's VM is among its
 ancestors; if so, it ignores SIGHUP, writes to a log and reopens guiltty
 at the end. And the swap is two renames, so a guiltty is always
 installed. Tested inside a guiltty on a private X display.
+
+## 2026-11-01 — Tab styles
+
+_Draft: agent, awaiting user_
+
+**Tried.** Four more ways to draw the tab bar (powerline, rounded,
+minimal, separators), flat staying the default, and five tab colors in
+the theme. The bar is just row 0 of the renderer's cells, so a style is
+characters and colors chosen in one C function; no shader changed.
+Unset colors are derived from the theme per style, so switching themes
+still recolors everything.
+
+**Broke.** Nothing on screen, but on paper twice. Putting the new bytes
+in OPTIONS would have changed SETUP's layout and made every recorded
+session unreadable; a separate TAB_STYLE message leaves them valid. And
+the powerline arrows live in the private use area, where guiltty widens
+Nerd Font icons followed by a space: an arrow would have stretched over
+two cells. Glyphs guiltty draws itself are now never widened.
+
+**Clicked.** Drawing the arrows per pixel, by distance to the edge,
+gave anti-aliased slopes and a flat side that fills its column, so they
+meet the next block exactly, in the tab bar and in powerline prompts.
+Vulkan and OpenGL agreed on every style to the pixel.

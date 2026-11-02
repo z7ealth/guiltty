@@ -79,6 +79,19 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Protocol.open_url("file:///tmp/x.exs") == <<21, "file:///tmp/x.exs">>
   end
 
+  test "encodes the tab style: which colors are set, and those colors" do
+    theme = Guiltty.Theme.default()
+
+    assert IO.iodata_to_binary(Protocol.tab_style(:flat, theme)) ==
+             <<22, 0, 0, 0::size(15 * 8)>>
+
+    # Bits 0 (bar) and 4 (accent): the other three are left to the renderer.
+    custom = %{theme | tab_bar: {1, 2, 3}, tab_accent: {0xFF, 0x79, 0xC6}}
+
+    assert IO.iodata_to_binary(Protocol.tab_style(:separators, custom)) ==
+             <<22, 4, 0b10001, 1, 2, 3, 0::size(9 * 8), 0xFF, 0x79, 0xC6>>
+  end
+
   test "encodes the status, normal or a warning" do
     assert Protocol.status("find: x") == <<17, 0, "find: x">>
     assert Protocol.status(:warning, "⚠ bad") == <<17, 1, "⚠ bad">>

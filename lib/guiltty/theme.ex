@@ -12,12 +12,32 @@ defmodule Guiltty.Theme do
 
   Besides the default, a few well-known themes come built in by name (see
   `named/1`); the config can start from one and change single colors.
+
+  The tab bar's colors (`tab_bar`, `tab_text`, `tab_active`,
+  `tab_active_text`, `tab_accent`) are nil unless the config sets them:
+  then the renderer derives each from the colors above, as fits the tab
+  style.
   """
 
-  defstruct [:fg, :bg, :cursor, :ansi]
+  @tab_colors [:tab_bar, :tab_text, :tab_active, :tab_active_text, :tab_accent]
+
+  defstruct [:fg, :bg, :cursor, :ansi] ++ @tab_colors
 
   @type rgb :: {0..255, 0..255, 0..255}
-  @type t :: %__MODULE__{fg: rgb(), bg: rgb(), cursor: rgb(), ansi: [rgb()]}
+  @type t :: %__MODULE__{
+          fg: rgb(),
+          bg: rgb(),
+          cursor: rgb(),
+          ansi: [rgb()],
+          tab_bar: rgb() | nil,
+          tab_text: rgb() | nil,
+          tab_active: rgb() | nil,
+          tab_active_text: rgb() | nil,
+          tab_accent: rgb() | nil
+        }
+
+  @doc "The tab bar's color names, in the order the renderer numbers them."
+  def tab_colors, do: @tab_colors
 
   @doc "Tomorrow Night, a calm dark theme."
   @spec default() :: t()

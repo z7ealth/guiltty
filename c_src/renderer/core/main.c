@@ -35,6 +35,7 @@
 #include "backend.h"
 #include "fonts.h"
 #include "protocol.h"
+#include "sprites.h"
 
 constexpr int default_font_size = 18;
 constexpr int padding_px = 6;
@@ -99,6 +100,11 @@ struct renderer {
     struct theme theme;
     struct tab tabs[max_tabs];
     int tab_count, active_tab;
+    enum tab_style tab_style;
+    // Tab bar colors from the config (MSG_TAB_STYLE): bit i of
+    // tab_colors_set says tab_colors[i] is one; the rest come from the theme.
+    uint8_t tab_colors_set;
+    uint8_t tab_colors[tab_color_count][3];
     char status[max_short_text]; // shown at the right of the tab bar
     bool status_warning; // draw it as a warning (a broken config)
     char preedit[max_short_text]; // text being composed in an input method
@@ -285,8 +291,8 @@ static void widen_icons(struct renderer *r, size_t first) {
         size_t i = first + c;
         struct cell *icon = &r->cells[i], *next = &r->cells[i + 1];
         constexpr uint16_t paired = ATTR_WIDE | ATTR_SPACER | ATTR_HIDDEN;
-        if (!private_use(r->glyphs[i]) || r->glyphs[i + 1] != ' ' || (icon->attrs & paired) ||
-            (next->attrs & paired))
+        if (!private_use(r->glyphs[i]) || sprite_has(r->glyphs[i]) || r->glyphs[i + 1] != ' ' ||
+            (icon->attrs & paired) || (next->attrs & paired))
             continue;
         char text[max_cluster_bytes];
         size_t len = glyph_text(r, r->glyphs[i], text);
@@ -526,15 +532,117 @@ static int bar_text_cut(struct renderer *r, int col, const char *text, struct ce
     return bar_text(r, end, "…", look, limit);
 }
 
-// Draw the tab bar into cells row 0. Flat tabs, "  title  ", side by side
-// on a bar a little lighter than the background: the padding alone keeps
-// them apart. The active tab is lighter still, in the full text color,
-// with an accent line along its bottom in the theme's blue; the others are
-// muted. The status (search, scrollback) sits at the right end.
+// The tab bar's colors (enum tab_color). Each comes from the config if it
+// gave one, or else from the theme, in a way that depends on the style:
+// the minimal bar is the terminal's own background, and the styles that
+// fill the active tab (powerline, rounded, separators) fill it with the
+// accent, where flat only makes it a little lighter.
+static void tab_colors(const struct renderer *r, uint8_t out[tab_color_count][3]) {
+    const struct theme *t = &r->theme;
+    bool filled = r->tab_style == TAB_POWERLINE || r->tab_style == TAB_ROUNDED ||
+                  r->tab_style == TAB_SEPARATORS;
+    if (r->tab_style == TAB_MINIMAL)
+        memcpy(out[TAB_COLOR_BAR], t->bg, 3);
+    else
+        mix(t->bg, t->fg, 8, out[TAB_COLOR_BAR]);
+    mix(t->bg, t->fg, 55, out[TAB_COLOR_TEXT]);
+    memcpy(out[TAB_COLOR_ACCENT], t->palette[4], 3);
+    for (int i = 0; i < tab_color_count; i++)
+        if (i != TAB_COLOR_ACTIVE && i != TAB_COLOR_ACTIVE_TEXT && (r->tab_colors_set >> i & 1))
+            memcpy(out[i], r->tab_colors[i], 3);
+    // The active tab's, from the bar and accent as they ended up.
+    if (filled)
+        memcpy(out[TAB_COLOR_ACTIVE], out[TAB_COLOR_ACCENT], 3);
+    else if (r->tab_style == TAB_MINIMAL)
+        memcpy(out[TAB_COLOR_ACTIVE], out[TAB_COLOR_BAR], 3);
+    else
+        mix(t->bg, t->fg, 16, out[TAB_COLOR_ACTIVE]);
+    memcpy(out[TAB_COLOR_ACTIVE_TEXT], filled ? t->bg : t->fg, 3);
+    for (int i = TAB_COLOR_ACTIVE; i <= TAB_COLOR_ACTIVE_TEXT; i++)
+        if (r->tab_colors_set >> i & 1)
+            memcpy(out[i], r->tab_colors[i], 3);
+}
+
+static struct cell bar_cell(const uint8_t bg[3], const uint8_t fg[3], uint16_t attrs) {
+    struct cell c = {.attrs = attrs};
+    memcpy(c.bg, bg, 3);
+    memcpy(c.fg, fg, 3);
+    return c;
+}
+
+// One tab, in the bar's style, from col. Returns the column after it.
+static int draw_tab(struct renderer *r, int i, int col, int limit,
+                    const uint8_t colors[tab_color_count][3]) {
+    bool active = i == r->active_tab;
+    struct cell bar = bar_cell(colors[TAB_COLOR_BAR], colors[TAB_COLOR_TEXT], 0);
+    // A filled style's tab: its block's color, and its title on it.
+    uint8_t block[3];
+    if (active)
+        memcpy(block, colors[TAB_COLOR_ACTIVE], 3);
+    else
+        mix(colors[TAB_COLOR_BAR], colors[TAB_COLOR_TEXT], 15, block);
+    struct cell look =
+        active ? bar_cell(colors[TAB_COLOR_ACTIVE], colors[TAB_COLOR_ACTIVE_TEXT], 0) : bar;
+    int title_end;
+
+    switch (r->tab_style) {
+    case TAB_FLAT:
+    case TAB_MINIMAL:
+        // "  title  ", the active one with the accent line along its edge.
+        if (active)
+            look.attrs = CELL_ACCENT;
+        col = bar_text(r, col, "  ", look, limit);
+        title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
+        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
+        return bar_text(r, col, "  ", look, limit);
+    case TAB_SEPARATORS:
+        // " title " between thin bars, the active one filled.
+        if (i > 0)
+            col = bar_text(r, col, "│", bar, limit);
+        col = bar_text(r, col, " ", look, limit);
+        title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
+        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
+        return bar_text(r, col, " ", look, limit);
+    case TAB_POWERLINE: {
+        // " title " on its block, then an arrow from this block into the
+        // next one (or into the bar, after the last).
+        look = bar_cell(block, active ? colors[TAB_COLOR_ACTIVE_TEXT] : colors[TAB_COLOR_TEXT], 0);
+        col = bar_text(r, col, " ", look, limit);
+        title_end = col + max_tab_label < limit - 2 ? col + max_tab_label : limit - 2;
+        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
+        col = bar_text(r, col, " ", look, limit);
+        uint8_t next[3];
+        if (i + 1 == r->tab_count)
+            memcpy(next, colors[TAB_COLOR_BAR], 3);
+        else if (i + 1 == r->active_tab)
+            memcpy(next, colors[TAB_COLOR_ACTIVE], 3);
+        else
+            mix(colors[TAB_COLOR_BAR], colors[TAB_COLOR_TEXT], 15, next);
+        return bar_text(r, col, "\uE0B0", bar_cell(next, block, 0), limit);
+    }
+    case TAB_ROUNDED:
+        // A pill: round ends around " title ", and a gap after it.
+        look = bar_cell(block, active ? colors[TAB_COLOR_ACTIVE_TEXT] : colors[TAB_COLOR_TEXT], 0);
+        col = bar_text(r, col, "\uE0B6", bar_cell(colors[TAB_COLOR_BAR], block, 0), limit);
+        title_end = col + max_tab_label < limit - 2 ? col + max_tab_label : limit - 2;
+        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
+        col = bar_text(r, col, "\uE0B4", bar_cell(colors[TAB_COLOR_BAR], block, 0), limit);
+        return bar_text(r, col, " ", bar, limit);
+    case tab_style_count:
+        break;
+    }
+    unreachable();
+}
+
+// Draw the tab bar into cells row 0: the tabs from the left, in the
+// style the config picked (flat, by default: "  title  " side by side on
+// a bar a little lighter than the background, the active tab lighter
+// still with an accent line along its edge), and the status (search,
+// scrollback) at the right end.
 static void build_tab_bar(struct renderer *r) {
-    struct cell bar = {};
-    mix(r->theme.bg, r->theme.fg, 8, bar.bg);
-    mix(r->theme.bg, r->theme.fg, 55, bar.fg);
+    uint8_t colors[tab_color_count][3];
+    tab_colors(r, colors);
+    struct cell bar = bar_cell(colors[TAB_COLOR_BAR], colors[TAB_COLOR_TEXT], 0);
     for (int c = 0; c < r->cols; c++) {
         r->cells[c] = bar;
         r->glyphs[c] = ' ';
@@ -566,19 +674,10 @@ static void build_tab_bar(struct renderer *r) {
         limit = start - 1;
     }
 
-    int col = 0;
+    int col = r->tab_style == TAB_ROUNDED ? bar_text(r, 0, " ", bar, limit) : 0;
     for (int i = 0; i < r->tab_count && col < limit; i++) {
-        struct cell look = bar;
-        if (i == r->active_tab) {
-            mix(r->theme.bg, r->theme.fg, 16, look.bg);
-            memcpy(look.fg, r->theme.fg, 3);
-            look.attrs = CELL_ACCENT;
-        }
         r->tabs[i].start = col;
-        col = bar_text(r, col, "  ", look, limit);
-        int title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
-        col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
-        col = bar_text(r, col, "  ", look, limit);
+        col = draw_tab(r, i, col, limit, colors);
         r->tabs[i].end = col;
     }
     find_ligatures(r, 0);
@@ -959,6 +1058,18 @@ static void set_clipboard(struct reader *rd) {
         return read_font(&rd, r) && change_font(r);
     case MSG_TABS:
         return apply_tabs(r, &rd);
+    case MSG_TAB_STYLE: {
+        uint8_t style, set;
+        const uint8_t *colors;
+        if (!rd_u8(&rd, &style) || !rd_u8(&rd, &set) || style >= tab_style_count ||
+            set >> tab_color_count != 0 || !rd_bytes(&rd, 3 * (size_t)tab_color_count, &colors))
+            return false;
+        r->tab_style = (enum tab_style)style;
+        r->tab_colors_set = set;
+        memcpy(r->tab_colors, colors, sizeof r->tab_colors);
+        build_tab_bar(r);
+        return true;
+    }
     case MSG_HALO: {
         uint16_t ms;
         if (!rd_u8(&rd, &r->halo_rgb[0]) || !rd_u8(&rd, &r->halo_rgb[1]) ||
@@ -1147,7 +1258,9 @@ static void draw(struct renderer *r) {
         .origin_y = r->padding,
     };
     memcpy(frame.cursor_rgb, r->theme.cursor, 3);
-    memcpy(frame.accent_rgb, r->theme.palette[4], 3);
+    uint8_t tab[tab_color_count][3];
+    tab_colors(r, tab);
+    memcpy(frame.accent_rgb, tab[TAB_COLOR_ACCENT], 3);
     // The halo is the padding around the grid, lit up for a moment.
     memcpy(frame.clear_rgb, halo_on(r) ? r->halo_rgb : r->theme.bg, 3);
 

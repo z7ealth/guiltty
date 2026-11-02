@@ -153,6 +153,20 @@ defmodule Guiltty.WindowTest do
     assert Port.info(port(window))
   end
 
+  test "every tab style and tab colors reach the renderer, live", %{window: window} do
+    {:ok, _second} = Tabs.new_tab(@tabs)
+    config = Config.defaults()
+    theme = %{config.theme | tab_bar: {0x28, 0x2A, 0x36}, tab_accent: {0xFF, 0x79, 0xC6}}
+
+    for style <- [:powerline, :rounded, :minimal, :separators, :flat] do
+      send(window, {:config, %{config | tab_style: style, theme: theme}})
+      assert eventually(fn -> :sys.get_state(window).config.tab_style == style end)
+      # The debug renderer runs under ASan and UBSan: drawing each style
+      # without a report means it's still there.
+      assert Port.info(port(window)), "the renderer died drawing #{style} tabs"
+    end
+  end
+
   test "a resize from the renderer resizes every tab", %{id: id, window: window} do
     {:ok, second} = Tabs.new_tab(@tabs)
     renderer(window, <<6, 100::16, 30::16>>)

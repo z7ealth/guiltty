@@ -1,0 +1,187 @@
+#+TITLE: Tab styles: five ways to draw one row
+#+STARTUP: overview
+
+* The tab bar is one row of cells
+
+The tab bar isn't a widget. It's row 0 of the renderer's cell mirror
+(chapter 6): one more row of cells like the terminal's, each a glyph, a
+foreground and a background, drawn by the same shaders. Everything a
+style does, it does with characters and colors. So a new style is new
+C in one function, =build_tab_bar= in [[file:../c_src/renderer/core/main.c::static void build_tab_bar][main.c]], and no new shader.
+
+The config picks one of five (=tab_style:=), and the theme
+can set the bar's colors. As the real renderer draws them (offscreen,
+tabs "zsh", "ssh dns1" active, "ssh worker2"):
+
+#+begin_example
+  flat (default)    zsh   ssh dns1   ssh worker2       the active tab lighter,
+                          ▔▔▔▔▔▔▔▔▔▔                    a line along its edge
+  powerline        zsh ▶ ssh dns1 ▶ ssh worker2 ▶      blocks joined by arrows
+  rounded          (zsh) (ssh dns1) (ssh worker2)      pills, the active one filled
+  minimal           zsh   ssh dns1   ssh worker2       no bar: the terminal's own
+                          ▔▔▔▔▔▔▔▔▔▔                    background, and the line
+  separators        zsh │ ssh dns1 │ ssh worker2       thin bars, the active filled
+#+end_example
+
+(With the tab bar at the bottom, the line runs along the tab's top edge:
+the edge that faces the terminal.)
+
+* Five colors, and where the rest come from
+
+A style needs five colors:
+
+| Color (=enum tab_color=) | Theme key         | What it colors                                  |
+|--------------------------+-------------------+-------------------------------------------------|
+| bar                      | =tab_bar=         | the bar behind the tabs                         |
+| text                     | =tab_text=        | the other tabs' titles                          |
+| active                   | =tab_active=      | the active tab's background                     |
+| active text              | =tab_active_text= | the active tab's title                          |
+| accent                   | =tab_accent=      | the line (flat, minimal); the default fill (others) |
+
+Any the theme doesn't set is worked out from its colors, by
+=tab_colors= in [[file:../c_src/renderer/core/main.c::static void tab_colors][main.c]], differently for each style:
+
+#+begin_example
+  bar          minimal: the background          others: background + 8% text
+  text         background + 55% text (muted)
+  accent       the theme's blue (palette 4)
+  active       flat: background + 16% text      minimal: the bar
+               powerline, rounded, separators: the accent (filled)
+  active text  flat, minimal: the text color    filled ones: the background
+#+end_example
+
+The order matters: the active tab's defaults are worked out *after* the
+bar and the accent, from the values they ended up with. Set only
+=tab_accent: "#ff79c6"= and a powerline tab fills with pink, without
+being told twice.
+
+Why derive at all, instead of shipping fixed colors? Because the theme
+changes. Switch from Tomorrow Night to Dracula and every derived color
+follows. A light theme gets a light bar. Only what you set yourself
+stays put.
+
+* One message: TAB_STYLE
+
+The Window sends TAB_STYLE right after the setup, and again whenever
+the style or a tab color changes (a config save). Real bytes, for
+=tab_style: :powerline= with Dracula, =tab_bar: "#21222c"= and
+=tab_accent: "#ff79c6"=:
+
+#+begin_example
+  16          tag 22, TAB_STYLE
+  01          style 1: powerline (0 flat, 2 rounded, 3 minimal, 4 separators)
+  11          0b10001: colors 0 (bar) and 4 (accent) are set
+  21 22 2C    bar          #21222c
+  00 00 00    text         (not set: derived)
+  00 00 00    active       (not set: derived)
+  00 00 00    active text  (not set: derived)
+  FF 79 C6    accent       #ff79c6
+#+end_example
+
+Always 18 bytes: a fixed size is easy to check (=static_assert= pins
+=tab_style_size= in [[file:../c_src/renderer/core/protocol.h][protocol.h]]). The renderer refuses a style past the
+last, or a bit set past the fifth color: a protocol error, not a guess.
+
+Why a new message, and not more bytes in OPTIONS or THEME? SETUP carries
+both, and a recorded session (=test/fixtures/replay/=, chapter 19) starts
+with a SETUP. Changing its layout would make every recording unreadable.
+A new message leaves SETUP as it was; a recording without TAB_STYLE just
+draws flat tabs. The protocol version still goes up (9 to 10): an old
+renderer would refuse the new tag.
+
+* Arrows and pills: drawn, not from a font
+
+Powerline and rounded tabs need shapes no ordinary font has: a solid
+triangle and a solid half circle, as tall as the cell. Nerd Fonts put
+them in Unicode's private use area: U+E0B0 and U+E0B2 (triangles right
+and left), U+E0B4 and U+E0B6 (half circles). With a Nerd Font they'd
+come from the font, and without one they'd be tofu. And even a Nerd
+Font's rarely meets the next cell's block to the pixel.
+
+So guiltty draws them, like box drawing (chapter 14), in [[file:../c_src/renderer/core/sprites.c::static void powerline][sprites.c]]. For
+each pixel it works out how far inside the shape's edge the pixel's
+center is, and turns that into coverage: inside by half a pixel or more
+is solid, outside by as much is empty, and in between is a blend. That
+anti-aliases the slanted or curved edge, and the flat side fills its
+column completely, so it meets the block next to it.
+
+#+begin_example
+  triangle U+E0B0 (pointing right)          half circle U+E0B4
+  u = x across the cell, 0..1               the same, with the edge at
+  v = y down it, -1..1                      hypot(u, v) = 1
+  edge where u = 1 - |v|
+  ███▄▄
+  ██████▄▄
+  █████████▶   apex at the middle of the right edge
+  ██████▀▀
+  ███▀▀
+#+end_example
+
+Between powerline tabs, the arrow cell's /foreground/ is the left block's
+color and its /background/ the right block's: the triangle is the left
+block poking into the right one. That's how powerline prompts do it too,
+and those now get the same pixel-exact arrows.
+
+One catch: guiltty widens Nerd Font icons that are followed by a space
+(chapter 14), and these are in the same private use area. A widened
+arrow would stretch over two cells and miss its block. =sprite_has=
+tells =widen_icons= which glyphs are guiltty's own, and those stay one
+cell.
+
+* Testing what you can't assert
+
+A test can say "the renderer didn't crash", not "the pill looks round".
+So there are three kinds of check:
+
+- *The renderer accepts every style, live.* A window test sends each
+  style with custom colors to the debug renderer (ASan, UBSan), and it
+  must still be running after each one.
+- *The fuzzer gets TAB_STYLE.* The seeds have one message per style
+  (=test/fixtures/fuzz/make_seeds.exs=), so libFuzzer starts from every
+  way of drawing the bar. 60 s per target ran clean.
+- *The picture, by eye.* Each style replayed offscreen in both renderers
+  and saved as a screenshot: they look as above, and Vulkan's and
+  OpenGL's frames don't differ in a single pixel.
+
+* Loot
+
+- Powerline's symbols, and Nerd Fonts' "Powerline Extra Symbols"
+  (U+E0A0 to U+E0D4): the private use area as a shared convention.
+- Unicode's private use areas (U+E000..U+F8FF, planes 15 and 16): code
+  points that mean whatever fonts agree they mean.
+- Anti-aliasing by coverage: the fraction of a pixel a shape covers,
+  approximated by the distance from the pixel's center to the edge.
+- =static_assert= on wire sizes, and versioning a binary protocol.
+
+* Questions
+
+1. Why is a new tab style C in one function, and not a new shader?
+2. Set only =tab_accent=, and the powerline tab is filled with it. Why,
+   when =tab_active= wasn't set?
+3. Why is TAB_STYLE a new message instead of more bytes in OPTIONS?
+4. Why does guiltty draw U+E0B0 itself, when Nerd Fonts have it?
+5. What would go wrong if =widen_icons= treated the arrows like icons?
+6. In a powerline arrow cell, which color is the foreground and which the
+   background?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. The tab bar is a row of cells like the terminal's. A style only
+   decides which characters and colors go in them; the shaders draw any
+   cell the same way.
+2. The active tab's color is worked out after the accent, from the value
+   the accent ended up with. In the filled styles its default is the
+   accent, so a custom accent fills it.
+3. SETUP carries OPTIONS' bytes, and recorded sessions start with a
+   SETUP: changing its layout would break every recording. A new message
+   leaves it alone, and a recording without one draws flat tabs.
+4. Not everyone has a Nerd Font (it would be tofu), and a font's
+   triangle rarely meets the next block to the pixel. Drawn per pixel it
+   always does.
+5. An arrow followed by a space would be drawn over two cells and no
+   longer meet the block right after it.
+6. The foreground is the block on the left (the triangle is that block's
+   point); the background is the block on the right.

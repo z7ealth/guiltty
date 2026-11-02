@@ -77,8 +77,10 @@ one byte.
 |  19 | PASTE_PRIMARY | Elixir->renderer | (empty): paste the primary selection (answered with PASTE) |
 |  20 | OPTIONS | Elixir->renderer | u16 padding, u8 opacity (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the bottom, bit 2: ligatures) |
 |  21 | OPEN_URL | Elixir->renderer | a URL to open with the desktop's app (the config file)     |
+|  22 | TAB_STYLE | Elixir->renderer | u8 style, u8 which colors are set (bit per color), then 5 colors of 3 bytes: bar, text, active, active text, accent (chapter 25) |
 
-This is version 9: OPTIONS gained the ligatures bit (chapter 14).
+This is version 10: TAB_STYLE, the tab bar's style and colors (chapter 25).
+Version 9: OPTIONS gained the ligatures bit (chapter 14).
 Version 8 gave STATUS its style byte, so a broken config shows in red.
 Version 7 added the tab bar's position to the OPTIONS flags.
 Version 6 (MVP 6) made SETUP carry the window options and ROWS the cursor

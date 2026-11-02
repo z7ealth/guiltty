@@ -46,6 +46,13 @@ seeds = %{
   "all" => [
     Protocol.setup(30, 4, Theme.default(), font, options),
     Protocol.tabs(["🔒 one -> two", "日本語", "three"], 1),
+    # Every tab style, so each way of drawing the bar is reached; one with
+    # its own colors.
+    Protocol.tab_style(:powerline, %{Theme.default() | tab_accent: {255, 121, 198}}),
+    Protocol.tab_style(:rounded, Theme.default()),
+    Protocol.tab_style(:minimal, %{Theme.default() | tab_bar: {0, 0, 0}}),
+    Protocol.tab_style(:separators, Theme.default()),
+    Protocol.tab_style(:flat, Theme.default()),
     Protocol.rows(screen.(text, 30, 4)),
     Protocol.title("a title"),
     Protocol.status("search: 3 of 7"),

@@ -86,6 +86,8 @@ the renderer, some reach the shell's process:
 | =window: columns, rows=        | Tabs            | the first tab of a new window |
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
 | =tab_bar= (=:bottom=, =:top=)  | renderer (OPTIONS) | live                       |
+| =tab_style= (=:flat=, =:powerline=, =:rounded=, =:minimal=, =:separators=) | renderer (TAB_STYLE) | live (chapter 25) |
+| =theme: tab_bar=, =tab_text=, =tab_active=, =tab_active_text=, =tab_accent= | renderer (TAB_STYLE) | live; unset ones derived from the theme (chapter 25) |
 | =ligatures=                    | renderer (OPTIONS) | live: every row sent again (chapter 14) |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
 | =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19); =GUILTTY_RENDERER= wins over it |

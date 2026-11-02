@@ -7,9 +7,11 @@ defmodule Guiltty.Window.Protocol do
   Keep in sync with `c_src/renderer/core/protocol.h`.
   """
 
+  import Bitwise
+
   alias Guiltty.Theme
 
-  @version 9
+  @version 10
 
   @hello 1
   @setup 2
@@ -32,6 +34,7 @@ defmodule Guiltty.Window.Protocol do
   @paste_primary 19
   @options 20
   @open_url 21
+  @tab_style 22
 
   @max_tab_title 255
   @max_grid 4096
@@ -80,6 +83,31 @@ defmodule Guiltty.Window.Protocol do
 
   @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."
   def open_url(url), do: <<@open_url, url::binary>>
+
+  @tab_styles [:flat, :powerline, :rounded, :minimal, :separators]
+
+  @doc """
+  How the tab bar looks: u8 style (flat, powerline, rounded, minimal,
+  separators), u8 which colors are given (bit i: the theme's i-th tab
+  color, see `Guiltty.Theme.tab_colors/0`), then those five colors, 3
+  bytes each (0, 0, 0 for one not given: the renderer derives it).
+  """
+  def tab_style(style, theme) do
+    colors = Enum.map(Theme.tab_colors(), &Map.get(theme, &1))
+
+    set =
+      colors
+      |> Enum.with_index()
+      |> Enum.reduce(0, fn {color, i}, acc -> if color, do: acc + (1 <<< i), else: acc end)
+
+    [
+      <<@tab_style, Enum.find_index(@tab_styles, &(&1 == style)), set>>,
+      for(
+        color <- colors,
+        do: if(color, do: <<elem(color, 0), elem(color, 1), elem(color, 2)>>, else: <<0, 0, 0>>)
+      )
+    ]
+  end
 
   @doc "A new theme: the same 259 colors as the setup."
   def theme(theme), do: [<<@theme>>, colors(theme)]
