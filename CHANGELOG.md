@@ -8,7 +8,7 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.16.1 — 2026-11-01 — Tab styles
 
 ### Added
 - Tab styles: `tab_style: :powerline` (colored blocks joined by arrows),
