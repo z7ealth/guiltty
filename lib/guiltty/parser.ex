@@ -30,6 +30,8 @@ defmodule Guiltty.Parser do
       [{:print, "hi"}, {:csi, nil, [1, 31], "", ?m}, {:print, "X"}, :cr, :lf]
   """
 
+  alias Guiltty.TextNif
+
   @max_params 32
   @max_param 65_535
   @max_string 4096
@@ -83,16 +85,18 @@ defmodule Guiltty.Parser do
 
   ## Ground: text and C0 controls
 
-  defp step(:ground, bytes, p, acc) do
-    case text_run(bytes, 0) do
-      0 ->
-        <<byte, rest::binary>> = bytes
-        ground_byte(byte, rest, p, acc)
+  # Text is most of what programs print. Where a run of it ends is found
+  # in C (Guiltty.TextNif.text_run/1), in one call instead of one step per
+  # byte (book chapter 22). A control byte is handled here without the
+  # call: between escape sequences, a call that answers 0 costs more than
+  # it saves.
+  defp step(:ground, <<byte, rest::binary>>, p, acc) when byte < 0x20 or byte == 0x7F,
+    do: ground_byte(byte, rest, p, acc)
 
-      n ->
-        <<run::binary-size(^n), rest::binary>> = bytes
-        text(run, rest, p, acc)
-    end
+  defp step(:ground, bytes, p, acc) do
+    n = TextNif.text_run(bytes)
+    <<run::binary-size(^n), rest::binary>> = bytes
+    text(run, rest, p, acc)
   end
 
   ## Escape: ESC seen, the next byte picks the kind of sequence
@@ -331,12 +335,6 @@ defmodule Guiltty.Parser do
   end
 
   ## Runs
-
-  # Printable ASCII and every byte of a UTF-8 character (all >= 0x80).
-  defp text_run(<<byte, rest::binary>>, n) when byte in 0x20..0x7E or byte >= 0x80,
-    do: text_run(rest, n + 1)
-
-  defp text_run(_, n), do: n
 
   # Bytes that are simply part of an OSC string.
   defp string_run(<<byte, rest::binary>>, n) when byte >= 0x20, do: string_run(rest, n + 1)

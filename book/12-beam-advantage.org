@@ -38,9 +38,10 @@ v0.13.0 there can be many windows, each a *desk* with its own tabs
 * What survives a crash, part by part
 
 Every Elixir part can crash and come back without taking the rest. Two
-things can't: the PTY NIF runs inside the BEAM, so its crash stops the
-whole VM, and so does the VM itself running out of memory. Then every
-tab goes (chapter 20 is how the NIF is kept from crashing).
+things can't: the NIFs (the PTY's and the text's) run inside the BEAM,
+so a crash in either stops the whole VM, and so does the VM itself
+running out of memory. Then every tab goes (chapter 20 is how the NIFs
+are kept from crashing).
 
 | What crashes            | What restarts                          | What you see                       |
 |-------------------------+----------------------------------------+------------------------------------|

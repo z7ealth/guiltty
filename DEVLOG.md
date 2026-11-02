@@ -1158,3 +1158,76 @@ two cells. Glyphs guiltty draws itself are now never widened.
 gave anti-aliased slopes and a flat side that fills its column, so they
 meet the next block exactly, in the tab bar and in powerline prompts.
 Vulkan and OpenGL agreed on every style to the pixel.
+
+## 2026-11-02 — Why `cat` is slow, and a second NIF
+
+_Draft: agent, awaiting user_
+
+**Tried.** A 1.1 GB log (colors, accents, ✓, 漢字, 🚀 on most lines)
+`cat`-ed into three terminals: 11 s, 17 s, and guiltty 4 min 36 s,
+about 4 MB/s, exactly the ceiling chapter 22 measured. `cat` itself
+used 3% of a CPU: the PTY backpressure works, guiltty is just reading
+slowly.
+
+**Broke.** The guess was the parser; the profile said otherwise. The
+parser alone ran at 57 MB/s; parser and grid together at 3.3 MB/s. A
+quarter of the time was `String.graphemes/1`, then interning and width
+lookups, one character at a time. The ASCII fast path existed, but only
+for a run that is ASCII from end to end, and one `ü` sends the whole
+line down the slow road.
+
+**Clicked.** You decided guiltty is Elixir *and* C, so a second NIF was
+allowed. The trick that keeps it small: two codepoints whose grapheme
+break property is "Other" always break apart (UAX #29, GB999). So C
+doesn't segment anything; it turns runs of "Other" codepoints into cells
+and hands everything that might join back to Elixir, cut where a break
+is certain. Measured alone: 108 MB/s, against 23 MB/s for the Elixir
+path. A test feeds it every codepoint there is, each between two
+letters, and checks it agrees with `String.graphemes/1` and
+`Unicode.width/1`. The table generator's first output called 가 wide
+instead of joining: `Regex.run` drops a trailing optional group that
+didn't match, so every single-codepoint line of the Unicode file was
+skipped. The test would have caught it; the spot check did first.
+
+**Then wired in.** Grid sends non-ASCII text through the NIF and writes
+its cells a row at a time, wrapping a wide character whole. A property
+test prints random text both ways, into narrow grids, at random columns,
+in insert mode, in several prints, and wants identical grids; it caught
+a planted wrap bug. The log stream: 3.8 to 7.6 MB/s in a real window.
+Twice, not five times: now no single thing dominates the profile.
+
+You asked whether this needs OTP 29. It shouldn't, so the suite ran on
+OTP 26, and it failed: one codepoint, U+11A3A, joined the next letter in
+Unicode 15.0 and not since. The table now takes the union of the four
+Unicode versions OTP 26 to 29 use. Both pass.
+
+### Later
+
+- A libFuzzer target for the text NIF (random bytes, checked against
+  the same equivalence), with the renderer's.
+- The NIF allocates 14 bytes of scratch per input byte on every call;
+  a fixed buffer, flushed when full, would make that constant.
+
+## 2026-11-02 — The small things, and a profiler that fibs
+
+_Draft: agent, awaiting user_
+
+**Tried.** The real-window test came back: the 1.1 GB log in 1 min 46 s,
+down from 4 min 36 s. Then four small things the profiles pointed at:
+the parser's text runs found in C, the ASCII check and ASCII cells in
+C, and a cell's attrs read with a binary match.
+
+**Broke.** Moving `text_run` into C made the parser *slower*, 55 to
+44 MB/s: it was now a NIF call at every step, even when the next byte
+was ESC and the answer was 0. Checking for a control byte in Elixir
+first, and calling C only when text starts, made it 63 MB/s.
+
+**Clicked.** The gains were smaller than promised: full-screen redraws
++55%, scrolling +10%, the colored stream not at all, though `attrs_at`
+had been "16%" of it. `tprof` times every call, and that timing costs
+about what a small function costs, so a function called a million times
+looks several times bigger than it is. And the desktop is noisy: the
+same code measured 3.9 and 4.7 MB/s a minute apart. Best of 15, old and
+new code taking turns, was the only way to get numbers worth writing
+down. Colored text's real cost is every short colored word rebuilding
+its whole row; that's the batch path's next job.

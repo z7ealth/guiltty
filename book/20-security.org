@@ -11,13 +11,17 @@ So the parts that read those bytes have to survive *anything*.
 #+begin_example
   untrusted                         guiltty
   ─────────                         ───────
-  bytes from programs ──> PTY NIF ──> Parser ──> Screen ──> Window
-  (cat, ssh, curl...)     (C, inside    (Elixir: a crash restarts
-                           the BEAM)     just that tab, chapter 12)
-                                                              │
-                                              port messages   │
-                                                              v
-  font files ───────────────────────────────────────────> renderer
+  bytes from programs ──> PTY NIF ──> Parser ──> Screen ──────> Window
+  (cat, ssh, curl...)     (C, inside  (Elixir: a crash │          │
+                           the BEAM)   restarts just   │ text     │
+                                       that tab, ch.12)│ to cells │
+                                                       v          │
+                                                   text NIF       │
+                                                   (C, inside     │
+                                                    the BEAM)     │
+                                                    port messages │
+                                                                  v
+  font files ───────────────────────────────────────────────> renderer
   (fontconfig picks them)                                (C, its own process)
 #+end_example
 
@@ -26,8 +30,8 @@ supervisor restarts it, and the BEAM goes on. C is not forgiving. A bad
 index in C doesn't stop the program: it reads or writes some other
 memory, and the program carries on with garbage, or crashes far from the
 mistake, or, in the worst case, does what an attacker's bytes tell it.
-guiltty's C sits in three places with narrow doors (the PTY NIF, the
-renderer, the client), so each door can be strict. This chapter is the
+guiltty's C sits in four places with narrow doors (the PTY NIF, the
+text NIF, the renderer, the client), so each door can be strict. This chapter is the
 layers that do it.
 
 * Layer 1: code that checks for itself
@@ -223,6 +227,28 @@ crash, to:
 - sixteen processes calling one pty at once, while one of them closes it;
 - fifty open-and-close cycles, then counting the BEAM's open files
   (=/proc/self/fd=): none may be left over.
+
+** The text NIF
+
+Since v0.17 a second NIF runs inside the BEAM ([[file:../c_src/text_nif.c][c_src/text_nif.c]],
+chapter 22), and what it reads is what programs print. Its door is
+narrower than the PTY NIF's: four pure functions (text to cells, the
+parser's text runs, an ASCII check, ASCII to cells), no syscalls, no
+state, no resources, so no races and nothing to leak. It still checks for
+itself:
+
+- It decodes UTF-8 strictly (RFC 3629: no overlong forms, no surrogates,
+  nothing past U+10FFFF) and answers anything else with =badarg=, even
+  though the Parser only ever hands it valid text.
+- Its output buffer is sized with =ckd_mul=: one input byte makes at
+  most one 14-byte cell (a wide character is two cells but three or four
+  bytes), so it can't be written past.
+- It's in =make analyze=, with GCC's and Clang's analyzers.
+
+[[file:../test/guiltty/text_nif_test.exs][text_nif_test.exs]] throws random bytes and junk arguments
+(StreamData's =term()=) at it: the answer is cells and text matching
+Elixir's, or an =ArgumentError=, never a crash. A libFuzzer target is
+still to come (DEVLOG, "Later").
 
 * Layer 7: what a program can make guiltty do
 

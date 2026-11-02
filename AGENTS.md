@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Instructions for coding agents working on **guiltty**, a GPU terminal emulator
-written in Elixir and C. The C is a PTY NIF, a renderer that runs as a separate
-OS process, and the `guiltty` client, plus fuzz targets and tools for
+written in Elixir and C. The C is two NIFs (the PTY, and text to grid cells),
+a renderer that runs as a separate OS process, and the `guiltty` client, plus fuzz targets and tools for
 development. By lines, C is a bit under half the code: don't describe it as "a
 little C".
 
@@ -127,6 +127,8 @@ guiltty/
 │       └── parser.ex
 ├── c_src/
 │   ├── pty_nif.c            # openpty, spawn, enif_select
+│   ├── text_nif.c           # printed text -> grid cells (the hot path)
+│   ├── text_table.h         # its codepoint classes (generated)
 │   ├── client/guiltty.c     # the `guiltty` command: asks the running guiltty
 │   │                        # for a window over a Unix socket, or starts it
 │   └── renderer/
@@ -146,9 +148,11 @@ Rules that keep the architecture intact:
 
 - **Elixir owns behavior and the authoritative screen; C owns syscalls and
   pixels.** The grid lives in the `Screen` process as plain terms.
-- **The only C inside the BEAM is the PTY NIF.** The renderer is always a
-  separate process behind an Erlang port, so a renderer crash takes down a
-  window and never a session.
+- **C inside the BEAM is two NIFs, and nothing else:** the PTY NIF
+  (syscalls) and the text NIF (pure functions on printed text: runs,
+  cells; no state). Hot paths may move into C, but the grid stays Elixir terms. The
+  renderer is always a separate process behind an Erlang port, so a
+  renderer crash takes down a window and never a session.
 - **The client has no logic.** `c_src/client/guiltty.c` connects, sends
   one versioned request, prints the answer and exits, or execs the
   release. Every decision about windows is made in Elixir
@@ -261,6 +265,7 @@ make valgrind               # both release renderers replay the recordings under
 make bench                  # throughput: parser + grid alone, then a real window (book chapter 22)
 mix run --no-start test/fixtures/fuzz/make_seeds.exs   # regenerate fuzz seeds (protocol change)
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
+make text-table             # regenerate the text NIF's codepoint table (after width-table)
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
 ./install.sh                # install for the user into ~/.local (--uninstall to remove)
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir

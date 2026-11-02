@@ -131,6 +131,176 @@ slow path full width until a block of 256 was sealed. No one would have
 seen it, but the test said "different", so now every row is trimmed when
 it's saved, and both paths agree byte for byte.
 
+* Text into cells: a second NIF
+
+** A 1.1 GB log
+
+=cat= of a 1.1 GB log took 11 s in one terminal, 17 s in another and
+4 min 36 s in guiltty: 4 MB/s. Every line had a colored level, accents,
+✓, 漢字 and 🚀. =cat= used 3% of a CPU, so it wasn't stuck: guiltty was
+reading slowly, and the PTY's backpressure held =cat= back. A profile of
+8 MB of that file, parser and grid alone:
+
+#+begin_example
+  parser only            57 MB/s
+  parser + grid         3.3 MB/s
+
+  FUNCTION                              CALLS  TIME (us)  [    %]
+  'Elixir.String':do_graphemes/1      1221674     167752  [14.96]
+  unicode_util:gc/1                   1221674     129629  [11.56]
+  'Elixir.Guiltty.Grid':'-intern_units/2-fun-1-'/2
+                                       598819      84981  [ 7.58]
+  'Elixir.Enum':'-map_reduce/3-...'/3  606831      79004  [ 7.04]
+  'Elixir.Guiltty.Grid':intern/2       598819      54246  [ 4.84]
+  'Elixir.Guiltty.Unicode':width/1     632218      46493  [ 4.15]
+#+end_example
+
+The grid had an ASCII fast path, but only for text that is ASCII from
+end to end. One =ü= sent the whole line down the slow road: split into
+grapheme clusters, each one interned and measured, one at a time.
+
+** The trick: most text can't join anything
+
+UAX #29 decides where clusters end by each codepoint's /grapheme break
+property/. Nearly everything printed has the property "Other": letters,
+digits, CJK, arrows, most emoji. And between two "Other" codepoints the
+answer is always "break" (rule GB999). Only the rest (Extend, ZWJ,
+SpacingMark, Prepend, regional indicators, Hangul jamo, controls) ever
+joins.
+
+So C doesn't segment anything. [[file:../c_src/text_nif.c::segments][segments/4]] makes a cell of each
+codepoint that is "Other" /and/ whose neighbours are both "Other", and
+returns the rest as text, which Elixir segments as before:
+
+#+begin_example
+  iex> Guiltty.TextNif.segments("abc🚀🏽def", 0, 0, 0)
+  [{<<0, 0, 0, 97, ...>>, 3}, "🚀🏽d", {<<0, 0, 0, 101, ...>>, 2}]
+
+   a  b  c  🚀 🏽 d  e  f
+   O  O  O  O  X  O  O  O        O = "Other", X = Extend (the skin tone)
+  [cells  ][text   ][cells]
+            ^        ^
+            🚀 and d touch an X: they go with it
+#+end_example
+
+The text pieces are cut between two "Other" codepoints, where a break is
+certain, so segmenting each piece alone gives the same clusters as
+segmenting the whole line. (Rules that look back, like a ZWJ sequence or
+an Indic conjunct, need a non-"Other" codepoint right before the joining
+point, and that one is always in the text piece too.)
+
+#+begin_example
+  Grid.print(text)
+    ASCII? ---------------------------------> put_text (one byte, one cell)
+    joins the last cluster printed? --------> segment again in Elixir
+    autowrap off? --------------------------> Elixir
+    otherwise: TextNif.segments(text, pen)
+       {cells, cols} --> put_cells: as many columns as fit per row;
+                         a wide character never splits across rows
+       "text"        --> String.graphemes -> put_graphemes (as before)
+#+end_example
+
+** The table
+
+The NIF looks each codepoint up in [[file:../c_src/text_table.h][c_src/text_table.h]]: 494 ranges in
+three classes, narrow, wide and complex. The generator,
+[[file:../c_src/tools/gen_text_table.exs][gen_text_table.exs]] (=make text-table=), takes the widths from
+=Guiltty.Unicode.WidthTable=, the table Elixir uses, so the two can't
+disagree on a width. Printable ASCII skips the search.
+
+The break property comes from Unicode's =GraphemeBreakProperty.txt=, but
+which version? Each OTP segments with its own: OTP 26 has Unicode 15.0,
+OTP 29 has 17.0. With 17.0 alone, the every-codepoint test passed on
+OTP 29 and failed on OTP 26 on one codepoint, U+11A3A (𑨺, Zanabazar
+Square), "Prepend" in 15.0 and "Other" since 15.1. So the table takes
+all four versions guiltty's OTPs use, and a codepoint is complex if it
+is in /any/ of them. Calling something complex is always safe: it only
+means the running OTP decides.
+
+#+begin_example
+  version       15.0     15.1     16.0     17.0     table
+  U+11A3A       Prepend  Other    Other    Other    complex
+  U+0301 ◌́      Extend   Extend   Extend   Extend   complex
+  U+0061 a      Other    Other    Other    Other    narrow
+#+end_example
+
+Its first output called 가 wide instead of complex: =Regex.run= leaves
+out an optional group that didn't match, so every single-codepoint line
+of the Unicode file was skipped. A spot check caught it before the tests
+did.
+
+** Faster, never different (again)
+
+Two tests, the same idea as the batch path's:
+
+- [[file:../test/guiltty/text_nif_test.exs][text_nif_test.exs]] feeds the NIF /every codepoint there is/, each
+  between two letters, plus random mixes of the pieces that join (ZWJ,
+  flags, jamo, a Devanagari conjunct), and checks the clusters and widths
+  are exactly =String.graphemes/1= and =Unicode.width/1='s, on whatever
+  OTP runs the suite. Run on OTP 26, it's what found U+11A3A.
+- [[file:../test/guiltty/print_nif_test.exs][print_nif_test.exs]] prints random text through the NIF and through
+  Elixir alone (=Grid.print_in_elixir/2=) into narrow grids, at random
+  columns, in insert mode or not, in several prints, and checks the
+  grids are identical. With a planted bug (the last column not blanked
+  when a wide character wraps), it fails.
+
+** Inside the scheduler
+
+A NIF holds its scheduler until it returns, and should return within
+about 1 ms. The input is at most one PTY read, 64 KB, which takes 0.41 ms
+here; the NIF tells the scheduler how much of its timeslice it used
+(=enif_consume_timeslice=). It has no state and makes no syscalls, so
+the reasons the renderer is a separate process don't apply: it can't
+block, and it's tested against Elixir on every codepoint.
+
+** What it bought
+
+The NIF alone: 108 MB/s, against 23 MB/s for the Elixir path. The whole
+pipeline on the log: 3.8 to 7.6 MB/s (see Results). Twice as fast, not
+five times, because the grid was only most of the time. Now nothing
+stands out; the biggest item is the parser walking text byte by byte
+(14%), then a long tail of small Elixir costs.
+
+* Small things, and a profiler that exaggerates
+
+Next came the items the profiles named, each small:
+
+- the parser's text runs found by the NIF (=text_run/1=) instead of one
+  Elixir step per byte, with control bytes kept in Elixir ([[file:03-parser.org][chapter 3]]);
+- =ascii?= done by the NIF instead of =:binary.match= with a pattern
+  fetched from =persistent_term= on every print;
+- ASCII text turned into cells by the NIF (=ascii_cells/4=), in
+  =write_cells= and the batch path, instead of a comprehension per byte;
+- a cell's attrs read by a binary match instead of =binary_part= plus
+  =:binary.decode_unsigned/1=. Every write checks the cells at its edges
+  for half a wide character, so this runs several times per write.
+
+The profiles had made them look big: =attrs_at= and =decode_unsigned=
+were 16% of the colored stream, =text_run= 9% of the scrolling one. Best
+of 15 runs, old and new code in turn, twice:
+
+| Stream (=parser + grid=) | before    | after     |       |
+|--------------------------+-----------+-----------+-------|
+| full screen              | 21.5 MB/s | 33 MB/s   | +55%  |
+| unicode                  | 5.05 MB/s | 5.7 MB/s  | +13%  |
+| scrolling                | 4.0 MB/s  | 4.45 MB/s | +10%  |
+| log                      | 7.5 MB/s  | 7.8 MB/s  | noise |
+| colors                   | 2.25 MB/s | 2.2 MB/s  | none  |
+
+The colored stream, where =attrs_at= "was" 16%, didn't move. =tprof='s
+=call_time= mode times every call, and timing a call costs about as
+much as a tiny function does: functions called millions of times look
+several times bigger than they are. It ranks well; its percentages of
+small functions are not to be believed. The measured runs are what
+count, and they need repeating: on a desktop that's doing other things,
+the same code gave 3.9 and 4.7 MB/s for scrolling a minute apart.
+
+What does the colored stream spend its time on, then? Every short
+colored word is its own print, and every print rebuilds its whole row
+binary (=replace_cells=: the cells before, the new ones, the cells
+after). A 120-column row is 1,680 bytes, rebuilt 24 times per line.
+That's the batch path's job (DEVLOG "Later": colored lines).
+
 * The renderer: only the rows that changed
 
 The OpenGL backend already kept last frame's cells on the GPU and
@@ -204,13 +374,24 @@ On one machine (AMD Ryzen 5 5600); the real-window rows use the release
 OpenGL renderer on SDL's offscreen driver, so they leave out putting
 frames on screen.
 
-| Measure (=make bench=)                  | v0.13.0  | v0.14.0  |
-|-----------------------------------------+----------+----------|
-| parser + grid, scrolling                | 0.8 MB/s | 4.4 MB/s |
-| parser + grid, colors                   | 2.2 MB/s | 2.3 MB/s |
-| real window, =cat= of scrolling text      | 1.2 MB/s | 4.0 MB/s |
-| real window, =cat= of colored text        | 3.0 MB/s | 2.9 MB/s |
-| cold boot to first frame (release)      | ~650 ms  | ~545 ms  |
+| Measure (=make bench=)                  | v0.13.0  | v0.14.0  | v0.17.0  |
+|-----------------------------------------+----------+----------+----------|
+| parser + grid, scrolling                | 0.8 MB/s | 4.4 MB/s | 4.5 MB/s |
+| parser + grid, colors                   | 2.2 MB/s | 2.3 MB/s | 2.5 MB/s |
+| parser + grid, log (not ASCII)          |          | 4.1 MB/s | 8.0 MB/s |
+| real window, =cat= of scrolling text      | 1.2 MB/s | 4.0 MB/s | 4.0 MB/s |
+| real window, =cat= of colored text        | 3.0 MB/s | 2.9 MB/s | 3.0 MB/s |
+| real window, =cat= of the log             |          | 3.8 MB/s | 7.6 MB/s |
+| parser + grid, full screen              |          | 21.5 MB/s | 33 MB/s |
+| cold boot to first frame (release)      | ~650 ms  | ~545 ms  |          |
+
+(The log rows' "v0.14.0" column is v0.16.1 measured with the NIF turned
+off; the grid hadn't changed for that kind of text since v0.14.0. The
+v0.17.0 column includes the small things of the next section; their
+own before and after is there.)
+
+On the development machine's real GPU window, the 1.1 GB log went from
+4 min 36 s to 1 min 46 s.
 
 * Not done (DEVLOG "Later")
 
@@ -221,8 +402,11 @@ frames on screen.
 - *Colored lines*: they have color codes between the text and the line
   feed, so they don't take the batch path. Batching them means following
   SGR inside the batch.
-- *The parser*: one function call per control byte; a faster scanner
-  would help everything, but it's a rewrite.
+- *Colored lines, again*: each colored word is a print that rebuilds
+  its whole row. Collecting a line's prints and rebuilding the row once
+  is the next real gain for =ls --color= and compilers.
+- *Parser and grid in C*: the only way to Ghostty's speed, but then the
+  grid stops being Elixir terms. Not planned.
 
 * Loot
 
@@ -236,6 +420,15 @@ frames on screen.
   buffering").
 - Damage tracking in other terminals: Alacritty's and kitty's
   =damage= tracking, to compare.
+- UAX #29, "Grapheme Cluster Boundary Rules": GB9 (Extend), GB9c (Indic
+  conjuncts), GB11 (ZWJ emoji), GB12/13 (flags), GB999.
+- =erl_nif(3)=: "Long-running NIFs", =enif_consume_timeslice=,
+  =enif_make_sub_binary= (a slice of a binary, no copy),
+  =enif_make_new_binary=.
+- RFC 3629: UTF-8, overlong forms and why surrogates are invalid.
+- =tprof(3)=: =call_time= vs =call_memory=, and why per-call timing
+  inflates small functions. Compare a sampling profiler: =perf= with the
+  BEAM JIT's =+JPperf true= (erl(1)).
 
 * Questions
 
@@ -247,6 +440,16 @@ frames on screen.
 4. Why must a changed row be marked stale in both Vulkan slots?
 5. Why is a bare VM boot the floor for guiltty's start, and what did
    interactive mode change about it?
+6. The text NIF never segments anything. How can it still return the
+   same clusters as =String.graphemes/1=?
+7. In =abc🚀🏽def=, why does =d= come back as text, though it's an
+   ordinary letter?
+8. Why is a NIF fine for this, when the renderer had to be a separate
+   process?
+9. Moving =text_run= into C first made the parser slower. Why, and what
+   fixed it?
+10. =attrs_at= was 16% of the colored stream's profile, and making it
+    cheaper gained nothing there. How can both be true?
 
 ** Answers
 :PROPERTIES:
@@ -271,3 +474,25 @@ frames on screen.
    (JIT-compiling the modules it loads) takes ~0.35 s here. Interactive
    mode loads modules as they're first used instead of all at boot, so
    fewer are compiled before the first frame.
+6. Between two codepoints whose break property is "Other", UAX #29
+   always breaks (GB999). The NIF only makes cells of codepoints that are
+   "Other" with "Other" on both sides; the rest goes to
+   =String.graphemes/1=, cut where a break is certain.
+7. Because the codepoint before it, the skin tone, is not "Other", and
+   a rule might join across that edge. The safe cut is the next one,
+   between =d= and =e=. (For a skin tone nothing joins after it, but the
+   NIF doesn't know rules, only "Other" or not.)
+8. It's a pure function with no syscalls: it can't block, it returns in
+   well under 1 ms, and a test checks it against Elixir on every
+   codepoint. The renderer talks to a GPU driver and a window system and
+   can crash in ways no test rules out; a crash there must not take down
+   the sessions.
+9. It was called at every ground step, also when the next byte was a
+   control (ESC, CR, LF) and the answer was 0. Between escape sequences
+   that's most calls, and a NIF call costs more than an Elixir step.
+   Handling control bytes in Elixir and calling C only when text starts
+   made it a win.
+10. The profiler times every call, and the timing costs about as much as
+    a small function: the 16% was mostly the profiler's own overhead,
+    multiplied by a million calls. Only the measured runs say what a
+    change gains.

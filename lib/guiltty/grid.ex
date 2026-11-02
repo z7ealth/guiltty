@@ -51,7 +51,7 @@ defmodule Guiltty.Grid do
 
   import Bitwise
 
-  alias Guiltty.Unicode
+  alias Guiltty.{TextNif, Unicode}
 
   @cell_size 14
   @block 256
@@ -276,17 +276,25 @@ defmodule Guiltty.Grid do
   (unless autowrap is off), shifts the rest of the line right in insert
   mode, and translates through the DEC line-drawing set if it's active.
 
-  ASCII takes a fast path, one byte per cell. Anything else is split into
-  grapheme clusters, each taking one cell, or two if it's wide.
+  ASCII takes a fast path, one byte per cell. Other text goes through the
+  text NIF (c_src/text_nif.c), which makes cells of everything that can't
+  join a neighbour; what might join is split into grapheme clusters here,
+  each taking one cell, or two if it's wide.
   """
-  def print(grid, <<>>), do: grid
+  def print(grid, text), do: print(grid, text, true)
 
-  def print(grid, text) do
+  # print/2 without the text NIF: the reference its path is tested against.
+  @doc false
+  def print_in_elixir(grid, text), do: print(grid, text, false)
+
+  defp print(grid, <<>>, _nif?), do: grid
+
+  defp print(grid, text, nif?) do
     text = translate(text, if(grid.gl == 1, do: grid.g1, else: grid.g0))
 
     if ascii?(text),
       do: grid |> put_text(text) |> remember_last(binary_part(text, byte_size(text) - 1, 1)),
-      else: put_clusters(grid, text)
+      else: put_clusters(grid, text, nif?)
   end
 
   @doc """
@@ -351,8 +359,7 @@ defmodule Guiltty.Grid do
   # on screen are made full width.
   defp batch_lines(grid, texts) do
     {blank, grid} = cached_blank(grid)
-    style = <<grid.attrs::16, grid.fg::32, grid.bg::32>>
-    cells = &for(<<c <- &1>>, into: <<>>, do: <<c::32, style::binary>>)
+    cells = &TextNif.ascii_cells(&1, grid.attrs, grid.fg, grid.bg)
 
     full =
       &(cells.(&1) <>
@@ -397,18 +404,7 @@ defmodule Guiltty.Grid do
       else: put_graphemes(grid, List.duplicate(text, n))
   end
 
-  # :binary.match searches in C, much faster than walking the bytes here.
-  # The compiled pattern is cached in persistent_term (it can't be a module
-  # attribute: it holds a reference).
-  defp ascii?(text), do: :binary.match(text, high_bytes()) == :nomatch
-
-  defp high_bytes do
-    with nil <- :persistent_term.get({__MODULE__, :high_bytes}, nil) do
-      pattern = :binary.compile_pattern(for b <- 0x80..0xFF, do: <<b>>)
-      :persistent_term.put({__MODULE__, :high_bytes}, pattern)
-      pattern
-    end
-  end
+  defp ascii?(text), do: TextNif.ascii?(text)
 
   # The cluster just printed ends right before the cursor.
   defp remember_last(grid, text) do
@@ -425,10 +421,25 @@ defmodule Guiltty.Grid do
   #
   # (Regional indicators pair from the start of a run: 🇯🇯🇯 is a flag and
   # a lone 🇯. Only segmenting them together gets that right.)
-  defp put_clusters(grid, text) do
+  #
+  # Otherwise the NIF cuts the text where clusters are sure to end. Its
+  # cells are written as they are; the rest is segmented here. (Autowrap
+  # off is rare, and piles text up in the last column: that stays here.)
+  defp put_clusters(grid, text, nif?) do
     case continued(grid, text) do
-      {row, col, graphemes} -> put_graphemes(%{grid | row: row, col: col}, graphemes)
-      nil -> put_graphemes(grid, String.graphemes(text))
+      {row, col, graphemes} ->
+        put_graphemes(%{grid | row: row, col: col}, graphemes)
+
+      nil when nif? and grid.autowrap ->
+        grid.attrs
+        |> then(&TextNif.segments(text, &1, grid.fg, grid.bg))
+        |> Enum.reduce(grid, fn
+          {cells, cols}, grid -> put_cells(grid, cells, cols)
+          text, grid -> put_graphemes(grid, String.graphemes(text))
+        end)
+
+      nil ->
+        put_graphemes(grid, String.graphemes(text))
     end
   end
 
@@ -437,14 +448,17 @@ defmodule Guiltty.Grid do
     grid |> put_units(units) |> remember_last(List.last(graphemes))
   end
 
-  defp continued(%{last_char: {row, col, prev}} = grid, text) do
+  # Whether a cluster ends after `prev` depends only on `prev` and the
+  # codepoint that follows (UAX #29's rules look back, never further
+  # ahead), so the check segments just that, not the whole text.
+  defp continued(%{last_char: {row, col, prev}} = grid, <<cp::utf8, _::binary>> = text) do
     width = Unicode.width(prev)
 
     with true <- grid.row == row and grid.col == col + width,
          {glyph, _, _, _} when glyph != 0 <- cell(grid, row, col),
          true <- glyph_text(grid, glyph) == prev,
-         [first | _] = graphemes when first != prev <- String.graphemes(prev <> text) do
-      {row, col, graphemes}
+         {first, _} when first != prev <- String.next_grapheme(prev <> <<cp::utf8>>) do
+      {row, col, String.graphemes(prev <> text)}
     else
       _ -> nil
     end
@@ -523,6 +537,57 @@ defmodule Guiltty.Grid do
     end
   end
 
+  # Cells from the text NIF, `n` columns of them, written as many per row
+  # as fit, like put_units/2: a wide character never splits across rows.
+  defp put_cells(grid, <<>>, 0), do: grid
+
+  defp put_cells(%{col: col, cols: cols} = grid, cells, n) when col >= cols do
+    grid |> Map.put(:col, 0) |> index() |> put_cells(cells, n)
+  end
+
+  defp put_cells(grid, cells, n) do
+    room = grid.cols - grid.col
+
+    cond do
+      n <= room ->
+        grid |> write_chunk(cells, n) |> remember_cell(cells, n)
+
+      # The last column would hold the left half of a wide character: it
+      # wraps whole, and that column is left blank.
+      wide?(cells, room - 1) ->
+        len = (room - 1) * @cell_size
+        <<chunk::binary-size(^len), rest::binary>> = cells
+
+        grid
+        |> write_chunk(chunk, room - 1)
+        |> blank_cells(grid.row, grid.cols - 1, grid.cols)
+        |> Map.put(:col, grid.cols)
+        |> put_cells(rest, n - room + 1)
+
+      true ->
+        len = room * @cell_size
+        <<chunk::binary-size(^len), rest::binary>> = cells
+        grid |> write_chunk(chunk, room) |> put_cells(rest, n - room)
+    end
+  end
+
+  defp write_chunk(grid, _chunk, 0), do: grid
+
+  defp write_chunk(grid, chunk, n) do
+    grid
+    |> then(&if(&1.insert, do: insert_chars(&1, n), else: &1))
+    |> replace_cells(grid.row, grid.col, chunk)
+    |> Map.put(:col, grid.col + n)
+  end
+
+  # The last character written, from its cell: for REP, and for a
+  # combining mark in the next read.
+  defp remember_cell(grid, cells, n) do
+    last = if spacer?(cells, n - 1), do: n - 2, else: n - 1
+    <<glyph::32>> = binary_part(cells, last * @cell_size, 4)
+    remember_last(grid, <<glyph::utf8>>)
+  end
+
   defp fitting([{_g, w} = unit | rest], room, acc, width) when width + w <= room,
     do: fitting(rest, room, [unit | acc], width + w)
 
@@ -572,8 +637,7 @@ defmodule Guiltty.Grid do
   end
 
   defp write_cells(grid, chunk) do
-    style = <<grid.attrs::16, grid.fg::32, grid.bg::32>>
-    cells = for <<c <- chunk>>, into: <<>>, do: <<c::32, style::binary>>
+    cells = TextNif.ascii_cells(chunk, grid.attrs, grid.fg, grid.bg)
     replace_cells(grid, grid.row, grid.col, cells)
   end
 
@@ -1120,12 +1184,15 @@ defmodule Guiltty.Grid do
   defp wide?(line, col), do: (attrs_at(line, col) &&& @wide) != 0
   defp spacer?(line, col), do: (attrs_at(line, col) &&& @spacer) != 0
 
+  # A match, not binary_part + :binary.decode_unsigned: no sub-binary is
+  # made and nothing is called, and it runs several times per write.
   defp attrs_at(line, col) do
     offset = col * @cell_size + 4
 
-    if offset < byte_size(line),
-      do: :binary.decode_unsigned(binary_part(line, offset, 2)),
-      else: 0
+    case line do
+      <<_::binary-size(^offset), attrs::16, _::binary>> -> attrs
+      _ -> 0
+    end
   end
 
   # Keeps the cell's background, so a colored line stays colored.

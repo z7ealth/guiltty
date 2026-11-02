@@ -86,6 +86,15 @@ Elixir implements them: =String.graphemes("👍🏽🇯🇵é")= is
 =["👍🏽", "🇯🇵", "é"]=. guiltty puts one cluster in one cell (or two, if
 it's wide).
 
+Most text never needs the rules, though. Two codepoints whose break
+property is "Other" (letters, CJK, most symbols, most emoji) always end
+up in separate clusters: rule GB999, "break everywhere else". Only
+combining marks, ZWJ, variation selectors, regional indicators, Hangul
+jamo and a few more can join a neighbour. So printing goes through a
+small NIF, [[file:../c_src/text_nif.c][c_src/text_nif.c]], that turns runs of "Other" codepoints straight
+into cells and hands only the joining parts to =String.graphemes/1=.
+How and why it's safe is in [[file:22-performance.org][chapter 22]].
+
 ** Clusters arrive in pieces too
 
 The accent can come in the read after its letter; one half of a flag in
@@ -100,8 +109,11 @@ cluster changes, it rewrites from the old cluster's cell:
                      [é][x][ ]
 #+end_example
 
-Regional indicators show why it has to be *all* the text, not just its
-first grapheme: they pair up counting from the start of the run, so
+Whether the old cluster changes depends only on it and the codepoint
+right after it (the rules look back, never further ahead), so that's all
+the check segments. When it does change, the rewrite segments the old
+cluster and *all* the new text together. Regional indicators show why it
+has to be all of it, not just its first grapheme: they pair up counting from the start of the run, so
 =🇯🇯🇯= is a flag and a lone 🇯. A property test feeds random mixes of
 these pieces in random chunks and checks that the screen is always the
 same as for the whole text in one go. It found exactly this bug.

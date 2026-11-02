@@ -3,7 +3,9 @@
 
 * What it is
 
-[[file:../c_src/pty_nif.c][c_src/pty_nif.c]] is the only C code that runs inside the BEAM. It does what
+[[file:../c_src/pty_nif.c][c_src/pty_nif.c]] is one of the two C files that run inside the BEAM (the
+other turns printed text into cells, [[file:22-performance.org][chapter 22]]), and the only one that makes
+syscalls. It does what
 [[file:01-pseudoterminals.org][the previous chapter]] described (=openpty=, =fork=, =setsid=, =TIOCSCTTY=,
 =exec=), and then hands the master fd to the BEAM and lets an Elixir process,
 [[file:../lib/guiltty/session/pty.ex][Guiltty.Session.Pty]], decide when to read and write.

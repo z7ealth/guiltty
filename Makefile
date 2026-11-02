@@ -13,6 +13,7 @@
 #   make valgrind    replay the recordings in both renderers under Valgrind
 #   make bench       throughput: parser + grid alone, then a real window
 #   make width-table regenerate the Unicode width table from glibc
+#   make text-table  regenerate the text NIF's codepoint table
 #   make icons       regenerate the icons from priv/icons/logo.svg
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]), halt().')
@@ -37,6 +38,8 @@ EXE = -fPIE -pie $(HARDEN_LD)
 
 PRIV = priv
 NIF = $(PRIV)/pty_nif.so
+# Text to grid cells, the hot path of printing (book chapter 22).
+TEXT_NIF = $(PRIV)/text_nif.so
 # The `guiltty` command: a small client for the running guiltty's socket
 # (book chapter 23). It links only the C library.
 CLIENT = $(PRIV)/guiltty
@@ -61,7 +64,7 @@ VK_CFLAGS = $(shell pkg-config --cflags vulkan)
 VK_LIBS = $(shell pkg-config --libs vulkan)
 RENDERER_VK = $(PRIV)/guiltty_vk
 
-all: $(NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
+all: $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
 
 $(CLIENT): c_src/client/guiltty.c
 	@mkdir -p $(PRIV)
@@ -76,6 +79,10 @@ $(ERTS_STAMP):
 	@rm -rf _build/erts && mkdir -p _build/erts && touch $@
 
 $(NIF): c_src/pty_nif.c $(ERTS_STAMP)
+	@mkdir -p $(PRIV)
+	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared $(HARDEN_LD) -I$(ERTS_INCLUDE_DIR) -o $@ $<
+
+$(TEXT_NIF): c_src/text_nif.c c_src/text_table.h $(ERTS_STAMP)
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) -O2 -fPIC -shared $(HARDEN_LD) -I$(ERTS_INCLUDE_DIR) -o $@ $<
 
@@ -109,6 +116,8 @@ ANALYZE_CLANG = clang -std=c23 --analyze -Xclang -analyzer-werror -o /dev/null
 analyze: $(VK_SPV)
 	$(ANALYZE_GCC) -I$(ERTS_INCLUDE_DIR) c_src/pty_nif.c
 	$(ANALYZE_CLANG) -I$(ERTS_INCLUDE_DIR) c_src/pty_nif.c
+	$(ANALYZE_GCC) -I$(ERTS_INCLUDE_DIR) c_src/text_nif.c
+	$(ANALYZE_CLANG) -I$(ERTS_INCLUDE_DIR) c_src/text_nif.c
 	$(ANALYZE_GCC) c_src/client/guiltty.c
 	$(ANALYZE_CLANG) c_src/client/guiltty.c
 	for f in $(RENDERER_CORE) $(GL_SRC); do \
@@ -180,6 +189,23 @@ width-table:
 	rm -f $(PRIV)/gen_width
 	mix format $(WIDTH_TABLE)
 
+# The text NIF's codepoint classes: the grapheme break property from the
+# Unicode Character Database, widths from the width table above. Checked
+# in; rebuild after `make width-table`. UNICODE_VERSIONS are those of the
+# OTPs guiltty supports (unicode_util:spec_version()): OTP 26 to 29. Add
+# one when a new OTP brings a new Unicode version.
+UNICODE_VERSIONS = 15.0.0 15.1.0 16.0.0 17.0.0
+TEXT_TABLE = c_src/text_table.h
+
+text-table:
+	@mkdir -p _build/ucd
+	for v in $(UNICODE_VERSIONS); do \
+	  curl -sSfo _build/ucd/GraphemeBreakProperty-$$v.txt \
+	    https://www.unicode.org/Public/$$v/ucd/auxiliary/GraphemeBreakProperty.txt || exit 1; \
+	done
+	mix run --no-start c_src/tools/gen_text_table.exs $(TEXT_TABLE) \
+	  $(foreach v,$(UNICODE_VERSIONS),_build/ucd/GraphemeBreakProperty-$(v).txt)
+
 # The icons, made from the logo (priv/icons/logo.svg, and logo-small.svg
 # for 16 and 24 pixels): PNGs in the sizes desktops look for, and a BMP
 # the renderer loads as its window icon. They're checked in; run this
@@ -188,6 +214,6 @@ icons:
 	sh c_src/tools/icons.sh
 
 clean:
-	rm -f $(NIF) $(CLIENT) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
+	rm -f $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
-.PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table icons
+.PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table text-table icons

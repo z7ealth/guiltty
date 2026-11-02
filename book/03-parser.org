@@ -123,6 +123,21 @@ in a row and emits them as a single ={:print, run}= (a sub-binary, no
 copying), instead of one command per byte. OSC data is collected in runs
 the same way.
 
+The counting happens in C: =Guiltty.TextNif.text_run/1= scans to the
+first control byte in one call, where an Elixir loop took one step per
+byte. A control byte right at the start (ESC, CR, LF) is handled in
+Elixir without the call, because between escape sequences most calls
+would answer 0, and a NIF call costs more than one Elixir step. That
+guard is what made it a win: without it the parser alone got /slower/,
+55 to 44 MB/s; with it, 63 MB/s ([[file:22-performance.org][chapter 22]]).
+
+#+begin_example
+  ground, next byte:
+    < 0x20 or DEL  -> ground_byte (Elixir): C0 control, or DEL dropped
+    anything else  -> TextNif.text_run(bytes) = n
+                      <<run::binary-size(n), rest>> -> text(run, ...)
+#+end_example
+
 * Loot
 
 - vt100.net, "A parser for DEC's ANSI-compatible video terminals": the state

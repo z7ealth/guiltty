@@ -5,16 +5,18 @@
 # guiltty
 
 A GPU terminal emulator in Elixir and C. Elixir holds the behavior: the
-parser, the screen, tabs, windows, config. C does the syscalls and the
-pixels: a PTY NIF, a renderer (Vulkan, or OpenGL) that runs as its own
-process, and the small `guiltty` command.
+parser, the screen, tabs, windows, config. C does the syscalls, the hot
+path and the pixels: two NIFs (the PTY, and printed text into screen
+cells), a renderer (Vulkan, or OpenGL) that runs as its own process, and
+the small `guiltty` command.
 
 Linux only. Tried on openSUSE Tumbleweed, X11 and an AMD GPU; Wayland,
 Intel, NVIDIA and other distributions should work but haven't been
 tried.
 
-It isn't fast at heavy output: a big `cat` goes by at about 3 to 4 MB/s
-(book chapter 22).
+It isn't fast at heavy output: a big `cat` goes by at about 3 to 8 MB/s,
+plain ASCII at the low end, text with accents, CJK or emoji at the high
+end (book chapter 22).
 
 ## Install
 
@@ -179,7 +181,7 @@ mix test
 iex -S mix         # the same, with an iex shell alongside
 ```
 
-`mix compile` also builds the C (the NIF and both renderers, each in a
+`mix compile` also builds the C (the two NIFs and both renderers, each in a
 normal and a debug build). To try a release without installing it:
 
 ```sh

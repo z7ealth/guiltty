@@ -27,6 +27,12 @@ File.mkdir_p!(dir)
 
 files = [
   {"scrolling", for(n <- 1..600_000, into: "", do: "#{n}\n")},
+  # A log with a little of everything on each line: a colored level,
+  # accents, symbols, CJK and an emoji. Not ASCII, so it takes the text NIF.
+  {"log",
+   for n <- 1..40_000, into: "" do
+     "2026-11-02T12:00:#{rem(n, 60)} [\e[33mWARN\e[0m] pid=#{n} ünïcödé ✓ → 漢字 🚀 retry pool\n"
+   end},
   {"colors",
    for n <- 1..40_000, into: "" do
      words = for w <- 1..12, do: "\e[#{31 + rem(n + w, 7)}mword#{w}\e[0m"

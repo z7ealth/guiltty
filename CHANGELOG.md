@@ -8,6 +8,17 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.17.0 — 2026-11-02 — Faster text
+
+### Changed
+- Text that isn't plain ASCII (accents, symbols, CJK, emoji) prints about
+  twice as fast: `cat` of a log with a little of each on every line went
+  from 3.8 to 7.6 MB/s. Letters that can't combine with their neighbours
+  are now turned into cells by a small piece of C inside guiltty; how
+  anything shows on screen is unchanged.
+- Full-screen programs redrawing (htop, vim scrolling) are processed
+  about 50% faster, and plain scrolling output about 10%.
+
 ## 0.16.1 — 2026-11-01 — Tab styles
 
 ### Added
