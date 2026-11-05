@@ -25,6 +25,9 @@
 
 static const struct atlas *uploaded;
 
+// Textures the core made and hasn't destroyed: a draw may only use these.
+static bool textures[max_images + 1];
+
 static bool check_configure(void) {
     return true;
 }
@@ -50,6 +53,36 @@ static void check_draw_frame(void *, const struct frame *f) {
         abort();
     if (f->dirty_first <= f->dirty_last && (f->dirty_first < 0 || f->dirty_last >= f->rows))
         abort();
+    // Every image drawn is one that exists, at a size that's a number.
+    for (int list = 0; list < 2; list++) {
+        const struct image_draw *d = list == 0 ? f->below : f->above;
+        size_t n = list == 0 ? f->below_count : f->above_count;
+        for (size_t i = 0; i < n; i++)
+            if (d[i].image == 0 || d[i].image > max_images || !textures[d[i].image] || !isfinite(d[i].x) ||
+                !isfinite(d[i].y) || !isfinite(d[i].w) || !isfinite(d[i].h))
+                abort();
+    }
+}
+
+// Hands out slots 1..max_images, as a real backend's handles. The pixels
+// must all be readable: touch every byte, for ASan.
+static uint32_t check_image_create(void *, uint32_t w, uint32_t h, const uint8_t *rgba) {
+    volatile uint8_t sum = 0;
+    for (size_t i = 0; i < (size_t)w * h * 4; i++)
+        sum += rgba[i];
+    (void)sum;
+    for (uint32_t i = 1; i <= max_images; i++)
+        if (!textures[i]) {
+            textures[i] = true;
+            return i;
+        }
+    return 0;
+}
+
+static void check_image_destroy(void *, uint32_t image) {
+    if (image == 0 || image > max_images || !textures[image])
+        abort();
+    textures[image] = false;
 }
 
 static void check_resize(void *, int, int) {}
@@ -63,6 +96,8 @@ const struct backend renderer_backend = {
     .draw_frame = check_draw_frame,
     .resize = check_resize,
     .shutdown = check_shutdown,
+    .image_create = check_image_create,
+    .image_destroy = check_image_destroy,
 };
 
 // LeakSanitizer, which libFuzzer runs after inputs, can't follow some of
@@ -170,8 +205,12 @@ done:
     // empties at the start of each run.
     fonts = r.fonts;
     atlas = r.atlas;
+    // As main() does at the end: every texture back to the backend.
+    for (size_t i = 0; i < r.image_count; i++)
+        check_image_destroy(r.backend, r.images[i].texture);
     free(r.cells);
     free(r.glyphs);
     free(r.clusters);
+    free(r.placements);
     return 0;
 }

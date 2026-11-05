@@ -77,7 +77,8 @@ Four pieces are C, the rest is Elixir, in about equal parts:
 The pipe above is still there, once per tab. Around it, MVP 4 and later
 added tabs that outlive windows, MVP 13 independent windows, MVP 15 the
 client, v0.16 smaller comforts for tabs (chapter 24), v0.16.1 tab
-styles (chapter 25) and v0.17 the text NIF (chapter 22):
+styles (chapter 25), v0.17 the text NIF (chapter 22) and v0.18 images
+(chapter 26):
 
 #+begin_example
   you: `guiltty`, or the menu
@@ -119,6 +120,7 @@ styles (chapter 25) and v0.17 the text NIF (chapter 22):
 | v0.16    | Tab comforts       | Busy-tab check, marks, move, rename, clear   |
 | v0.16.1  | Tab styles         | Powerline, rounded, minimal, separators; tab colors |
 | v0.17    | Faster text        | The text NIF: mixed text prints ~2x faster   |
+| v0.18    | Images             | Kitty graphics: yazi previews, =kitten icat= |
 
 * Loot
 

@@ -8,8 +8,26 @@ whose last expression is a keyword list. Anything it leaves out keeps its
 default. guiltty checks the file every second and applies changes to the
 open window (how, and why a config with a mistake in it can't crash
 guiltty, is in
-[[file:12-beam-advantage.org][chapter 12]]). Ctrl+, opens it in your editor, creating it from
+[[file:12-beam-advantage.org][chapter 12]]). Ctrl+, opens it, creating it from
 [[file:../priv/config.example.exs][the example]] first; the example lists every setting with a comment.
+
+Where it opens:
+
+- with =$VISUAL= (or else =$EDITOR=) set, in a *new tab running that
+  editor*: =VISUAL="nvim"= or =EDITOR="emacs -nw"= (split like a shell
+  would). The tab is a session whose program is the editor instead of a
+  shell (=Tabs.new_tab/2= with =:shell= and =:args=), so it closes when
+  you quit the editor. A graphical editor (=code=) opens its own window
+  and the tab closes right away;
+- otherwise, or if that program isn't installed, in the app your desktop
+  uses for the file: the renderer calls =SDL_OpenURL=, which runs
+  =xdg-open=. For =.exs= that's the default for =text/x-elixir=:
+  =xdg-mime default emacs.desktop text/x-elixir= picks it.
+
+The variable is read from guiltty's own environment, the one it was
+started with (the menu, your session), not from the shell in a tab: a
+line in =~/.zshrc= only reaches programs started from that shell. Set it
+in =~/.profile= or =~/.config/environment.d/editor.conf=.
 
 #+begin_src elixir
 [

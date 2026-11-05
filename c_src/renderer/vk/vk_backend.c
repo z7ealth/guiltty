@@ -34,9 +34,18 @@ alignas(4) static const unsigned char cell_vert_spv[] = {
 alignas(4) static const unsigned char cell_frag_spv[] = {
 #embed "shaders/cell.frag.spv"
 };
+alignas(4) static const unsigned char image_vert_spv[] = {
+#embed "shaders/image.vert.spv"
+};
+alignas(4) static const unsigned char image_frag_spv[] = {
+#embed "shaders/image.frag.spv"
+};
 
 constexpr uint32_t frames_in_flight = 2;
-constexpr uint32_t max_images = 8;
+constexpr uint32_t max_images = 8; // swapchain images
+// Textures for images programs show (Kitty graphics): each has its
+// own descriptor set, from a pool of this many.
+constexpr uint32_t max_textures = 256;
 
 // The push constants, laid out as the shaders' `Frame` block (std430).
 struct push {
@@ -52,6 +61,25 @@ struct push {
     float accent[4];
 };
 static_assert(sizeof(struct push) == 112 && offsetof(struct push, cursor_color) == 80);
+
+// The image pipeline's push constants (shaders/image.vert's `Image`
+// block). Same pipeline layout as the cells: it fits in their range.
+struct image_push {
+    float viewport[2];
+    float pad[2];
+    float dest[4];
+    float src[4];
+};
+static_assert(sizeof(struct image_push) == 48 && sizeof(struct image_push) <= sizeof(struct push));
+
+// An image's texture: GPU memory, a view the shader samples through, and
+// a descriptor set pointing at it.
+struct texture {
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+    VkDescriptorSet set;
+};
 
 struct buffer {
     VkBuffer buffer;
@@ -98,10 +126,15 @@ struct vk {
 
     VkDescriptorSetLayout set_layout;
     VkPipelineLayout layout;
-    VkPipeline backgrounds, glyphs;
+    VkPipeline backgrounds, glyphs, images_pipeline;
     VkDescriptorPool descriptor_pool;
     VkDescriptorSet set;
     VkSampler sampler;
+    // Images: linear filtering (they're scaled), their own descriptor
+    // pool, and the textures by handle - 1 (a null image: a free slot).
+    VkSampler image_sampler;
+    VkDescriptorPool image_pool;
+    struct texture textures[max_textures];
 
     VkImage atlas;
     VkDeviceMemory atlas_memory;
@@ -648,6 +681,57 @@ static void destroy_swapchain_views(struct vk *vk) {
     }
     vkDestroyShaderModule(vk->device, vert, nullptr);
     vkDestroyShaderModule(vk->device, frag, nullptr);
+    if (!good)
+        return false;
+
+    // Images: no vertex data (the quad comes from gl_VertexIndex), and
+    // premultiplied pixels blended "one, one minus source alpha".
+    VkShaderModule ivert = shader(vk, image_vert_spv, sizeof image_vert_spv);
+    VkShaderModule ifrag = shader(vk, image_frag_spv, sizeof image_frag_spv);
+    good = ivert != VK_NULL_HANDLE && ifrag != VK_NULL_HANDLE;
+    VkPipelineShaderStageCreateInfo istages[2] = {
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+         .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = ivert, .pName = "main"},
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+         .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = ifrag, .pName = "main"},
+    };
+    VkPipelineVertexInputStateCreateInfo no_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+    VkPipelineColorBlendAttachmentState premultiplied = {
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = rgba,
+    };
+    VkPipelineColorBlendStateCreateInfo iblend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &premultiplied,
+    };
+    VkGraphicsPipelineCreateInfo iinfo = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &rendering,
+        .stageCount = 2,
+        .pStages = istages,
+        .pVertexInputState = &no_input,
+        .pInputAssemblyState = &assembly,
+        .pViewportState = &viewport,
+        .pRasterizationState = &raster,
+        .pMultisampleState = &multisample,
+        .pColorBlendState = &iblend,
+        .pDynamicState = &dynamic_info,
+        .layout = vk->layout,
+    };
+    good = good && ok(vkCreateGraphicsPipelines(vk->device, VK_NULL_HANDLE, 1, &iinfo, nullptr,
+                                                &vk->images_pipeline),
+                      "image pipeline");
+    vkDestroyShaderModule(vk->device, ivert, nullptr);
+    vkDestroyShaderModule(vk->device, ifrag, nullptr);
     return good;
 }
 
@@ -818,6 +902,158 @@ static bool vk_upload_atlas(void *state, const struct atlas *atlas) {
     return run_now(vk, record_atlas_copy, &band);
 }
 
+// --- Images ---
+
+struct upload {
+    VkImage image;
+    struct buffer *staging;
+    uint32_t width, height;
+};
+
+static void record_image_copy(struct vk *, VkCommandBuffer cmd, void *arg) {
+    const struct upload *up = arg;
+    transition(cmd, up->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    VkBufferImageCopy region = {
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageExtent = {up->width, up->height, 1},
+    };
+    vkCmdCopyBufferToImage(cmd, up->staging->buffer, up->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &region);
+    transition(cmd, up->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
+static void free_texture(struct vk *vk, struct texture *t) {
+    if (t->set != VK_NULL_HANDLE)
+        vkFreeDescriptorSets(vk->device, vk->image_pool, 1, &t->set);
+    if (t->view != VK_NULL_HANDLE)
+        vkDestroyImageView(vk->device, t->view, nullptr);
+    if (t->image != VK_NULL_HANDLE)
+        vkDestroyImage(vk->device, t->image, nullptr);
+    if (t->memory != VK_NULL_HANDLE)
+        vkFreeMemory(vk->device, t->memory, nullptr);
+    *t = (struct texture){};
+}
+
+// Like the atlas: device-local memory, filled through a staging buffer
+// and a copy command. Images are rare, so the upload just waits for it.
+static uint32_t vk_image_create(void *state, uint32_t w, uint32_t h, const uint8_t *rgba) {
+    struct vk *vk = state;
+    uint32_t slot = 0;
+    while (slot < max_textures && vk->textures[slot].image != VK_NULL_HANDLE)
+        slot++;
+    VkDeviceSize bytes;
+    if (slot == max_textures || ckd_mul(&bytes, (VkDeviceSize)w * (VkDeviceSize)h, (VkDeviceSize)4))
+        return 0;
+    struct texture *t = &vk->textures[slot];
+    struct buffer staging = {};
+    VkImageCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent = {w, h, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkMemoryRequirements req;
+    uint32_t type;
+    if (!make_buffer(vk, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging) ||
+        !ok(vkCreateImage(vk->device, &info, nullptr, &t->image), "image texture"))
+        goto fail;
+    vkGetImageMemoryRequirements(vk->device, t->image, &req);
+    if (!memory_type(vk, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &type))
+        goto fail;
+    VkMemoryAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                  .allocationSize = req.size,
+                                  .memoryTypeIndex = type};
+    if (!ok(vkAllocateMemory(vk->device, &alloc, nullptr, &t->memory), "image memory") ||
+        !ok(vkBindImageMemory(vk->device, t->image, t->memory, 0), "bind image"))
+        goto fail;
+    VkImageViewCreateInfo view = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = t->image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    };
+    if (!ok(vkCreateImageView(vk->device, &view, nullptr, &t->view), "image view"))
+        goto fail;
+    VkDescriptorSetAllocateInfo set = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                       .descriptorPool = vk->image_pool,
+                                       .descriptorSetCount = 1,
+                                       .pSetLayouts = &vk->set_layout};
+    if (!ok(vkAllocateDescriptorSets(vk->device, &set, &t->set), "image descriptor set"))
+        goto fail;
+    VkDescriptorImageInfo image = {
+        .sampler = vk->image_sampler,
+        .imageView = t->view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
+    VkWriteDescriptorSet write = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = t->set,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &image,
+    };
+    vkUpdateDescriptorSets(vk->device, 1, &write, 0, nullptr);
+    memcpy(staging.map, rgba, (size_t)bytes);
+    struct upload up = {t->image, &staging, w, h};
+    if (!run_now(vk, record_image_copy, &up))
+        goto fail;
+    free_buffer(vk, &staging);
+    return slot + 1;
+fail:
+    free_buffer(vk, &staging);
+    free_texture(vk, t);
+    return 0;
+}
+
+static void vk_image_destroy(void *state, uint32_t image) {
+    struct vk *vk = state;
+    if (image == 0 || image > max_textures || vk->textures[image - 1].image == VK_NULL_HANDLE)
+        return;
+    // A frame in flight may still sample it.
+    vkDeviceWaitIdle(vk->device);
+    free_texture(vk, &vk->textures[image - 1]);
+}
+
+static void record_images(struct vk *vk, VkCommandBuffer cmd, const struct frame *frame,
+                          const struct image_draw *list, size_t count) {
+    if (count == 0)
+        return;
+    VkRect2D clip = {{frame->clip_x < 0 ? 0 : frame->clip_x, frame->clip_y < 0 ? 0 : frame->clip_y},
+                     {(uint32_t)(frame->clip_w < 0 ? 0 : frame->clip_w),
+                      (uint32_t)(frame->clip_h < 0 ? 0 : frame->clip_h)}};
+    vkCmdSetScissor(cmd, 0, 1, &clip);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->images_pipeline);
+    const VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    for (size_t i = 0; i < count; i++) {
+        const struct image_draw *d = &list[i];
+        if (d->image == 0 || d->image > max_textures || vk->textures[d->image - 1].image == VK_NULL_HANDLE)
+            continue;
+        struct image_push p = {
+            .viewport = {(float)vk->extent.width, (float)vk->extent.height},
+            .dest = {d->x, d->y, d->w, d->h},
+            .src = {d->u0, d->v0, d->u1, d->v1},
+        };
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->layout, 0, 1,
+                                &vk->textures[d->image - 1].set, 0, nullptr);
+        vkCmdPushConstants(cmd, vk->layout, stages, 0, sizeof p, &p);
+        vkCmdDraw(cmd, 4, 1, 0, 0);
+    }
+    // Back to the whole window and the atlas, for the cells.
+    VkRect2D whole = {{0, 0}, vk->extent};
+    vkCmdSetScissor(cmd, 0, 1, &whole);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->layout, 0, 1, &vk->set, 0, nullptr);
+}
+
 // --- Setup and teardown ---
 
 static bool vk_configure(void) { return true; }
@@ -870,6 +1106,19 @@ static void *vk_init(SDL_Window *window) {
                                         .maxSets = 1,
                                         .poolSizeCount = 1,
                                         .pPoolSizes = &size};
+    VkSamplerCreateInfo linear = sampler;
+    linear.magFilter = VK_FILTER_LINEAR;
+    linear.minFilter = VK_FILTER_LINEAR;
+    // FREE_DESCRIPTOR_SET: each image's set is freed on its own.
+    VkDescriptorPoolSize image_size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_textures};
+    VkDescriptorPoolCreateInfo ipool = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+                                        .maxSets = max_textures,
+                                        .poolSizeCount = 1,
+                                        .pPoolSizes = &image_size};
+    if (!ok(vkCreateSampler(vk->device, &linear, nullptr, &vk->image_sampler), "image sampler") ||
+        !ok(vkCreateDescriptorPool(vk->device, &ipool, nullptr, &vk->image_pool), "image pool"))
+        goto fail;
     if (!ok(vkCreateSampler(vk->device, &sampler, nullptr, &vk->sampler), "sampler") ||
         !ok(vkCreateDescriptorPool(vk->device, &dpool, nullptr, &vk->descriptor_pool), "descriptor pool") ||
         !create_swapchain(vk) || !create_pipelines(vk))
@@ -893,6 +1142,9 @@ static void vk_shutdown(void *state) {
     if (vk->device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(vk->device);
         destroy_atlas(vk);
+        for (uint32_t i = 0; i < max_textures; i++)
+            if (vk->textures[i].image != VK_NULL_HANDLE)
+                free_texture(vk, &vk->textures[i]);
         free_buffer(vk, &vk->readback);
         for (uint32_t i = 0; i < frames_in_flight; i++) {
             free_buffer(vk, &vk->slots[i].cells);
@@ -903,6 +1155,9 @@ static void vk_shutdown(void *state) {
         }
         vkDestroyPipeline(vk->device, vk->backgrounds, nullptr);
         vkDestroyPipeline(vk->device, vk->glyphs, nullptr);
+        vkDestroyPipeline(vk->device, vk->images_pipeline, nullptr);
+        vkDestroyDescriptorPool(vk->device, vk->image_pool, nullptr);
+        vkDestroySampler(vk->device, vk->image_sampler, nullptr);
         vkDestroyPipelineLayout(vk->device, vk->layout, nullptr);
         vkDestroyDescriptorPool(vk->device, vk->descriptor_pool, nullptr);
         vkDestroyDescriptorSetLayout(vk->device, vk->set_layout, nullptr);
@@ -1089,10 +1344,14 @@ static void vk_draw_frame(void *state, const struct frame *frame) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->backgrounds);
     vkCmdPushConstants(cmd, vk->layout, stages, 0, sizeof push, &push);
     vkCmdDraw(cmd, 4, (uint32_t)ncells, 0, 0);
+    // Images under the text (z < 0), over the backgrounds. They overwrite
+    // the push constants: the glyph pass pushes its own again below.
+    record_images(vk, cmd, frame, frame->below, frame->below_count);
     push.pass = 1;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->glyphs);
     vkCmdPushConstants(cmd, vk->layout, stages, 0, sizeof push, &push);
     vkCmdDraw(cmd, 4, (uint32_t)ncells, 0, 0);
+    record_images(vk, cmd, frame, frame->above, frame->above_count);
     vkCmdEndRendering(cmd);
 
     if (capture)
@@ -1162,4 +1421,6 @@ const struct backend renderer_backend = {
     .draw_frame = vk_draw_frame,
     .resize = vk_resize,
     .shutdown = vk_shutdown,
+    .image_create = vk_image_create,
+    .image_destroy = vk_image_destroy,
 };

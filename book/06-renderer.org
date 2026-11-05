@@ -30,6 +30,8 @@ of function pointers ([[file:../c_src/renderer/core/backend.h][backend.h]]):
 | =draw_frame=   | whenever something changed: draw and present          |
 | =resize=       | when the drawable size changes                        |
 | =shutdown=     | on exit                                               |
+| =image_create=  | an image arrived: its pixels become a texture (chapter 26) |
+| =image_destroy= | nothing shows that image any more                     |
 
 =gl_backend.c= defines =renderer_backend=, and the Makefile links core +
 gl into =guiltty_gl=. =vk/vk_backend.c= defines it too, and core + vk

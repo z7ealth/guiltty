@@ -154,7 +154,9 @@ defmodule Guiltty.Window do
       # GUILTTY_RECORD's file, or nil
       recording: open_recording(),
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
-      cheatsheet: nil
+      cheatsheet: nil,
+      # the images the renderer has, by uid (see show_graphics/2)
+      sent_images: MapSet.new()
     }
 
     {:ok, state, @hello_timeout}
@@ -333,8 +335,8 @@ defmodule Guiltty.Window do
   end
 
   # The user resized the window and the renderer worked out the new grid.
-  defp handle_event({:resize, cols, rows}, state) do
-    Tabs.resize(state.desk_tabs, cols, rows)
+  defp handle_event({:resize, cols, rows, cell_pixels}, state) do
+    Tabs.resize(state.desk_tabs, cols, rows, cell_pixels)
     state = %{state | size: {cols, rows}}
 
     {:noreply,
@@ -619,9 +621,11 @@ defmodule Guiltty.Window do
     state
   end
 
-  # Open the config file in the app the desktop uses for it, creating it
-  # from the example first. The renderer opens it (SDL_OpenURL): it runs in
-  # the user's session, with the right display.
+  # Open the config file, creating it from the example first: in a new
+  # tab running $VISUAL (or $EDITOR), the editor you'd use in a terminal;
+  # the tab closes when it exits. Without one, in the app the desktop uses
+  # for the file, which the renderer opens (SDL_OpenURL): it runs in the
+  # user's session, with the right display.
   defp run(:open_config, state) do
     path = Config.path()
 
@@ -630,8 +634,15 @@ defmodule Guiltty.Window do
       File.cp!(Path.join(:code.priv_dir(:guiltty), "config.example.exs"), path)
     end
 
-    send_port(state, Protocol.open_url("file://" <> path))
-    state
+    with {program, args} <- editor(System.get_env()),
+         {:ok, _id} <-
+           catch_exit(fn ->
+             Tabs.new_tab(state.desk_tabs, shell: program, args: args ++ [path])
+           end) do
+      state
+    else
+      _ -> tap(state, &send_port(&1, Protocol.open_url("file://" <> path)))
+    end
   end
 
   defp run(:cheatsheet, state), do: open_cheatsheet(state, 0)
@@ -668,6 +679,21 @@ defmodule Guiltty.Window do
 
   defp run(_unknown, state), do: state
 
+  @doc false
+  # The editor to open the config with: $VISUAL, else $EDITOR, split like
+  # a shell would ("emacs -nw" is emacs with -nw), as `{path, args}`, or
+  # nil when neither is set or the program isn't installed.
+  def editor(env) do
+    with value when is_binary(value) <-
+           Enum.find([env["VISUAL"], env["EDITOR"]], &(&1 not in [nil, ""])),
+         [program | args] <- OptionParser.split(value),
+         path when is_binary(path) <- System.find_executable(program) do
+      {path, args}
+    else
+      _ -> nil
+    end
+  end
+
   ## The cheatsheet
   #
   # Guiltty.Cheatsheet draws every key into rows, from the config. Instead
@@ -676,6 +702,9 @@ defmodule Guiltty.Window do
 
   defp open_cheatsheet(state, top) do
     {cols, _rows} = state.size
+    # The tab's images hide under it; closing it subscribes again, and
+    # the Screen sends them back.
+    send_port(state, Protocol.placements(state.size, []))
     state = %{state | cheatsheet: %{lines: Cheatsheet.render(state.config, cols), top: 0}}
     scroll_cheatsheet(state, top)
   end
@@ -848,6 +877,7 @@ defmodule Guiltty.Window do
       %{} = update ->
         # The program's cursor shape if it set one, otherwise the user's.
         default = {state.config.cursor.style, state.config.cursor.blink}
+        state = show_graphics(state, update)
         send_port(state, Protocol.rows(%{update | cursor_style: update.cursor_style || default}))
 
         if update.title != state.title,
@@ -868,6 +898,25 @@ defmodule Guiltty.Window do
       _gone ->
         state
     end
+  end
+
+  # Images: the renderer gets each one it doesn't have yet, forgets those
+  # nothing shows any more, then where they go. All before the ROWS, so
+  # the frame it draws for them has the images in place.
+  defp show_graphics(state, %{graphics: :same}), do: state
+
+  defp show_graphics(state, %{graphics: {placements, images}, size: size}) do
+    for {uid, image} <- images,
+        not MapSet.member?(state.sent_images, uid),
+        do: send_port(state, Protocol.image(uid, image))
+
+    keep = images |> Map.keys() |> MapSet.new()
+
+    for uid <- MapSet.difference(state.sent_images, keep),
+        do: send_port(state, Protocol.image_drop(uid))
+
+    send_port(state, Protocol.placements(size, placements))
+    %{state | sent_images: keep}
   end
 
   ## The status line, at the right of the tab bar

@@ -31,22 +31,54 @@ defmodule Guiltty.EscapeSafetyTest do
       end),
       StreamData.map(StreamData.binary(max_length: 40), &("\e]" <> &1 <> "\a")),
       StreamData.map(StreamData.binary(max_length: 40), &("\eP" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 40), &("\e_G" <> &1 <> "\e\\")),
+      StreamData.map(kitty_control(), &("\e_G" <> &1 <> ";AAAA\e\\")),
       StreamData.map(StreamData.binary(max_length: 40), &("\e]0;" <> &1 <> "\e\\")),
       StreamData.map(StreamData.integer(0x20..0x7E), &<<0x1B, &1>>),
       StreamData.binary(max_length: 20)
     ])
   end
 
+  # Kitty graphics keys a program might send, with any values.
+  defp kitty_control do
+    pair =
+      StreamData.bind(StreamData.member_of(~c"aitfsvoqmpIcrxyzCdXYUwh"), fn key ->
+        StreamData.map(
+          StreamData.one_of([
+            StreamData.integer(-5..5_000_000),
+            StreamData.member_of(~c"tTpdqfzaAiI")
+          ]),
+          fn
+            v when is_integer(v) and v > 255 -> <<key, ?=>> <> Integer.to_string(v)
+            v when v in ?a..?z or v in ?A..?Z -> <<key, ?=, v>>
+            v -> <<key, ?=>> <> Integer.to_string(v)
+          end
+        )
+      end)
+
+    StreamData.map(StreamData.list_of(pair, max_length: 6), &Enum.join(&1, ","))
+  end
+
+  @fixed_answers ["\e[?62;22c", "\e[>1;10;0c", "\e[0n", "\e[8;5;20t"]
+
   property "answers are only ever the fixed ones, never the program's data" do
     check all(seqs <- StreamData.list_of(sequence(), max_length: 30), max_runs: 1000) do
       {answers, _grid} = seqs |> Enum.join() |> run() |> Grid.take_responses()
 
       for answer <- answers do
-        assert answer in ["\e[?62;22c", "\e[>1;10;0c", "\e[0n"] or
-                 answer =~ ~r/\A\e\[\d{1,4};\d{1,4}R\z/,
+        assert answer in @fixed_answers or
+                 answer =~ ~r/\A\e\[\d{1,4};\d{1,4}R\z/ or
+                 answer =~ ~r/\A\eP>\|guiltty \d+\.\d+\.\d+\e\\\z/ or
+                 kitty_answer?(answer),
                "unexpected answer #{inspect(answer)}"
       end
     end
+  end
+
+  # A Kitty graphics answer echoes only numbers (the ids the program
+  # gave), then OK or one of guiltty's own fixed messages.
+  defp kitty_answer?(answer) do
+    answer =~ ~r/\A\e_G(?:[iIp]=\d+,?)+;(?:OK|[A-Z]+:[A-Za-z0-9 ,=()]+)\e\\\z/
   end
 
   property "a title is short, valid UTF-8, and has no controls or markers" do

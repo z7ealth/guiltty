@@ -23,7 +23,7 @@ two rules matter:
 
 | Elixir                                 | Does                                  |
 |----------------------------------------+---------------------------------------|
-| =PtyNif.open(path, argv, env, c, r, cwd)= | posix_openpt, fork, chdir, exec; ={:ok, pty, pid}= |
+| =PtyNif.open(path, argv, env, c, r, xpx, ypx, cwd)= | posix_openpt, fork, chdir, exec; ={:ok, pty, pid}= |
 | =PtyNif.foreground(pty)=              | tcgetpgrp: the foreground job's group (chapter 18) |
 | =PtyNif.read(pty)=                     | one non-blocking read                 |
 | =PtyNif.write(pty, bytes)=             | one non-blocking write                |
@@ -205,7 +205,7 @@ yet; =clone3= with =CLONE_PIDFD= does, at the cost of skipping glibc's
   or bash, or =/bin/sh=, the first that is an executable file.
 - On start it opens the PTY with =TERM=xterm-256color= and
   =COLORTERM=truecolor= (MVP 1 used =TERM=dumb=), but doesn't read yet.
-- =resize/3= calls the NIF's =resize=, an =ioctl(TIOCSWINSZ)= ([[file:09-resize.org][the resize
+- =resize/4= calls the NIF's =resize=, an =ioctl(TIOCSWINSZ)= with the size in cells and pixels ([[file:09-resize.org][the resize
   chapter]]).
 - When the parser attaches, it arms =select_read=.
 - On =:ready_input= it reads up to 16 chunks, sends each to the parser as

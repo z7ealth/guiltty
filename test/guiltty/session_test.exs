@@ -51,6 +51,14 @@ defmodule Guiltty.SessionTest do
     assert Session.dump(id) |> String.split("\n") |> length() == 30
   end
 
+  test "the text area in pixels: cells times the cell, 0 when unknown or too big" do
+    alias Guiltty.Session.Pty
+    assert Pty.pixels(100, 30, {9, 18}) == {900, 540}
+    assert Pty.pixels(100, 30, nil) == {0, 0}
+    # ws_xpixel is an unsigned short: 4096 cells of 20 pixels don't fit.
+    assert Pty.pixels(4096, 30, {20, 18}) == {0, 0}
+  end
+
   test "Ctrl+C interrupts the foreground job", %{id: id} do
     Session.write(id, "sleep 100\r")
     Process.sleep(200)

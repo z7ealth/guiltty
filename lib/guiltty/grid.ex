@@ -51,6 +51,7 @@ defmodule Guiltty.Grid do
 
   import Bitwise
 
+  alias Guiltty.Graphics
   alias Guiltty.{TextNif, Unicode}
 
   @cell_size 14
@@ -145,7 +146,12 @@ defmodule Guiltty.Grid do
     dirty: MapSet.new(),
     # {cols, bg, line}: the last blank line made, reused while the width
     # and background stay the same (each scroll needs one)
-    blank: nil
+    blank: nil,
+    # one cell's {width, height} in pixels, from the renderer, or nil
+    # before it said: programs that draw images ask for it (CSI 14 t / 16 t)
+    cell_pixels: nil,
+    # images and where they show (Guiltty.Graphics)
+    graphics: %Graphics{}
   ]
 
   @type t :: %__MODULE__{}
@@ -174,7 +180,10 @@ defmodule Guiltty.Grid do
 
   def cell_size, do: @cell_size
 
-  @doc "A blank grid. Options: `:scrollback` (rows to keep, default 10,000)."
+  @doc """
+  A blank grid. Options: `:scrollback` (rows to keep, default 10,000) and
+  `:cell_pixels` (see `set_cell_pixels/2`).
+  """
   @spec new(pos_integer(), pos_integer(), keyword()) :: t()
   def new(cols \\ 80, rows \\ 24, opts \\ []) do
     %__MODULE__{
@@ -182,10 +191,18 @@ defmodule Guiltty.Grid do
       rows: rows,
       bottom: rows - 1,
       lines: blank_screen(cols, rows),
-      scrollback_max: Keyword.get(opts, :scrollback, 10_000)
+      scrollback_max: Keyword.get(opts, :scrollback, 10_000),
+      cell_pixels: Keyword.get(opts, :cell_pixels)
     }
     |> all_dirty()
   end
+
+  @doc """
+  One cell's `{width, height}` in pixels, or nil when it isn't known (no
+  renderer has said yet). It describes the window, not the text, so a
+  reset keeps it.
+  """
+  def set_cell_pixels(grid, cell_pixels), do: %{grid | cell_pixels: cell_pixels}
 
   ## Reading
 
@@ -389,7 +406,7 @@ defmodule Guiltty.Grid do
       end
 
     grid = if grid.alt?, do: grid, else: save_lines(grid, gone)
-    %{grid | lines: List.to_tuple(screen)} |> all_dirty()
+    %{grid | lines: List.to_tuple(screen)} |> all_dirty() |> scrolled(n)
   end
 
   @doc "REP: prints the last printed character `n` more times."
@@ -820,7 +837,7 @@ defmodule Guiltty.Grid do
     grid = if grid.alt?, do: grid, else: save_lines(grid, [elem(grid.lines, 0)])
     {blank, grid} = cached_blank(grid)
     lines = grid.lines |> Tuple.delete_at(0) |> Tuple.insert_at(rows - 1, blank)
-    %{grid | lines: lines} |> all_dirty()
+    %{grid | lines: lines} |> all_dirty() |> scrolled(1)
   end
 
   defp shift_rows(grid, from, to, n) do
@@ -841,8 +858,17 @@ defmodule Guiltty.Grid do
         else: Enum.drop(region, -n) ++ List.duplicate(blank, -n)
 
     lines = List.to_tuple(before ++ region ++ after_)
-    %{grid | lines: lines} |> dirty_rows(from..to)
+    grid = %{grid | lines: lines} |> dirty_rows(from..to)
+    # Images scroll with the whole screen (not inside a smaller region).
+    if from == 0 and to == grid.rows - 1, do: scrolled(grid, -n), else: grid
   end
+
+  # The screen moved `n` lines up: images move with it. Nothing to do
+  # (the usual case) when none is placed.
+  defp scrolled(%{graphics: %{placements: []}} = grid, _n), do: grid
+
+  defp scrolled(grid, n),
+    do: %{grid | graphics: Graphics.scroll(grid.graphics, screen(grid), n)}
 
   # A blank line in the current width and background, made once and reused:
   # binaries are immutable, so every row that's blank can share it.
@@ -971,11 +997,21 @@ defmodule Guiltty.Grid do
     Enum.reduce(0..(grid.row - 1)//1, grid, &blank_row(&2, &1))
   end
 
-  def erase_display(grid, 2), do: Enum.reduce(0..(grid.rows - 1), grid, &blank_row(&2, &1))
+  def erase_display(grid, 2) do
+    grid = Enum.reduce(0..(grid.rows - 1), grid, &blank_row(&2, &1))
+    %{grid | graphics: Graphics.clear_screen(grid.graphics, screen(grid), grid.rows)}
+  end
 
   # 3: the scrollback (what `clear` sends after erasing the screen).
-  def erase_display(grid, 3),
-    do: %{grid | scrollback: %{}, recent: [], scrollback_first: grid.history}
+  def erase_display(grid, 3) do
+    %{
+      grid
+      | scrollback: %{},
+        recent: [],
+        scrollback_first: grid.history,
+        graphics: Graphics.clear_scrollback(grid.graphics)
+    }
+  end
 
   def erase_display(grid, _mode), do: grid
 
@@ -1038,14 +1074,24 @@ defmodule Guiltty.Grid do
         do: blank_screen(grid.cols, grid.rows),
         else: grid.other_lines
 
-    %{grid | other_lines: grid.lines, lines: alt, alt?: true} |> all_dirty()
+    graphics =
+      if opts[:clear],
+        do: Graphics.clear_screen(grid.graphics, :alt, grid.rows),
+        else: grid.graphics
+
+    %{grid | other_lines: grid.lines, lines: alt, alt?: true, graphics: graphics} |> all_dirty()
   end
 
   @doc "Back to the main screen, exactly as it was left."
   def leave_alt(%{alt?: false} = grid), do: grid
 
+  # The alternate screen's images go: what's left of a full-screen
+  # program's pictures isn't worth the memory.
   def leave_alt(grid) do
-    %{grid | other_lines: grid.lines, lines: grid.other_lines, alt?: false} |> all_dirty()
+    graphics = Graphics.clear_screen(grid.graphics, :alt, grid.rows)
+
+    %{grid | other_lines: grid.lines, lines: grid.other_lines, alt?: false, graphics: graphics}
+    |> all_dirty()
   end
 
   @doc "RIS: everything back to how a new grid starts, except the scrollback."
@@ -1054,7 +1100,7 @@ defmodule Guiltty.Grid do
       Map.take(
         grid,
         [:scrollback, :recent, :scrollback_first, :history, :scrollback_max] ++
-          [:clusters, :cluster_ids, :next_cluster]
+          [:clusters, :cluster_ids, :next_cluster, :cell_pixels]
       )
 
     grid.cols |> new(grid.rows) |> Map.merge(keep)
@@ -1104,6 +1150,7 @@ defmodule Guiltty.Grid do
         bottom: rows - 1
     }
     |> all_dirty()
+    |> scrolled(drop_top)
   end
 
   ## Helpers
@@ -1210,6 +1257,19 @@ defmodule Guiltty.Grid do
 
   @doc "Marks every row as changed, for a viewer that needs the whole screen."
   def mark_all_dirty(grid), do: all_dirty(grid)
+
+  @doc "Drops images that scrolled out of the scrollback (see `Guiltty.Graphics.prune/2`)."
+  def prune_graphics(%{graphics: %{placements: []}} = grid), do: grid
+
+  def prune_graphics(grid),
+    do: %{grid | graphics: Graphics.prune(grid.graphics, scrollback_size(grid))}
+
+  @doc "What images show: see `Guiltty.Graphics.view/4`."
+  def graphics_view(grid, scroll),
+    do: Graphics.view(grid.graphics, screen(grid), grid.rows, if(grid.alt?, do: 0, else: scroll))
+
+  @doc "Changes whenever what `graphics_view/2` returns may have."
+  def graphics_version(grid), do: {grid.graphics.version, grid.graphics.scrolled, grid.alt?}
 
   defp clamp(v, lo, hi), do: v |> max(lo) |> min(hi)
 end

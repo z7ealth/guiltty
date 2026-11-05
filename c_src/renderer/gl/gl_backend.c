@@ -22,6 +22,12 @@ static const char cell_vert_src[] = {
 static const char cell_frag_src[] = {
 #embed "shaders/cell.frag" suffix(, '\0')
 };
+static const char image_vert_src[] = {
+#embed "shaders/image.vert" suffix(, '\0')
+};
+static const char image_frag_src[] = {
+#embed "shaders/image.frag" suffix(, '\0')
+};
 
 // Every GL function we call, loaded at runtime through SDL. Core-profile GL
 // has no link-time entry points we can rely on; the driver hands them out.
@@ -34,6 +40,8 @@ static const char cell_frag_src[] = {
     X(PFNGLDISABLEPROC, Disable)                                                          \
     X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate)                                      \
     X(PFNGLUNIFORM1FPROC, Uniform1f)                                                      \
+    X(PFNGLUNIFORM4FPROC, Uniform4f)                                                      \
+    X(PFNGLSCISSORPROC, Scissor)                                                      \
     X(PFNGLCREATESHADERPROC, CreateShader)                                                \
     X(PFNGLSHADERSOURCEPROC, ShaderSource)                                                \
     X(PFNGLCOMPILESHADERPROC, CompileShader)                                              \
@@ -85,6 +93,13 @@ struct gl {
     SDL_GLContext context;
     struct gl_funcs f;
     GLuint program, vao, cell_buffer, atlas_texture;
+    // Images (Kitty graphics): their own program and an empty
+    // vertex array (the quad comes from gl_VertexID). Texture handles are
+    // index + 1 into textures; 0 marks a free slot.
+    GLuint image_program, image_vao;
+    GLint image_viewport, image_dest, image_src, image_sampler;
+    GLuint *textures;
+    size_t texture_cap;
     size_t capacity; // cells the buffer can hold
     uint16_t cols, rows; // the grid the buffer holds
     int width, height; // drawable size in pixels
@@ -126,28 +141,41 @@ struct gl {
     return shader;
 }
 
-[[nodiscard]] static bool build_program(struct gl *gl) {
-    GLuint vs = compile(gl, GL_VERTEX_SHADER, cell_vert_src);
-    GLuint fs = compile(gl, GL_FRAGMENT_SHADER, cell_frag_src);
+[[nodiscard]] static GLuint link(struct gl *gl, const char *vert, const char *frag) {
+    GLuint vs = compile(gl, GL_VERTEX_SHADER, vert);
+    GLuint fs = compile(gl, GL_FRAGMENT_SHADER, frag);
     if (vs == 0 || fs == 0) {
         gl->f.DeleteShader(vs);
         gl->f.DeleteShader(fs);
-        return false;
+        return 0;
     }
-    gl->program = gl->f.CreateProgram();
-    gl->f.AttachShader(gl->program, vs);
-    gl->f.AttachShader(gl->program, fs);
-    gl->f.LinkProgram(gl->program);
+    GLuint program = gl->f.CreateProgram();
+    gl->f.AttachShader(program, vs);
+    gl->f.AttachShader(program, fs);
+    gl->f.LinkProgram(program);
     gl->f.DeleteShader(vs); // the program keeps what it needs
     gl->f.DeleteShader(fs);
     GLint ok;
-    gl->f.GetProgramiv(gl->program, GL_LINK_STATUS, &ok);
+    gl->f.GetProgramiv(program, GL_LINK_STATUS, &ok);
     if (!ok) {
         char log[1024];
-        gl->f.GetProgramInfoLog(gl->program, sizeof log, nullptr, log);
+        gl->f.GetProgramInfoLog(program, sizeof log, nullptr, log);
         fprintf(stderr, "renderer: shader link failed:\n%s\n", log);
-        return false;
+        gl->f.DeleteProgram(program);
+        return 0;
     }
+    return program;
+}
+
+[[nodiscard]] static bool build_program(struct gl *gl) {
+    gl->program = link(gl, cell_vert_src, cell_frag_src);
+    gl->image_program = link(gl, image_vert_src, image_frag_src);
+    if (gl->program == 0 || gl->image_program == 0)
+        return false;
+    gl->image_viewport = gl->f.GetUniformLocation(gl->image_program, "u_viewport");
+    gl->image_dest = gl->f.GetUniformLocation(gl->image_program, "u_dest");
+    gl->image_src = gl->f.GetUniformLocation(gl->image_program, "u_src");
+    gl->image_sampler = gl->f.GetUniformLocation(gl->image_program, "u_image");
 
 #define LOC(field, name) gl->u.field = gl->f.GetUniformLocation(gl->program, name)
     LOC(viewport, "u_viewport");
@@ -220,6 +248,9 @@ static void *gl_init(SDL_Window *window) {
         f->EnableVertexAttribArray(i);
         f->VertexAttribDivisor(i, 1);
     }
+    // Core profile draws nothing without a vertex array bound, even one
+    // with no attributes.
+    f->GenVertexArrays(1, &gl->image_vao);
     return gl;
 }
 
@@ -285,6 +316,83 @@ static void capture(struct gl *gl, uint8_t *out) {
         memcpy(out + (size_t)bottom * row, tmp, row);
     }
     free(tmp);
+}
+
+// --- Images ---
+
+static uint32_t gl_image_create(void *state, uint32_t w, uint32_t h, const uint8_t *rgba) {
+    struct gl *gl = state;
+    size_t slot = 0;
+    while (slot < gl->texture_cap && gl->textures[slot] != 0)
+        slot++;
+    if (slot == gl->texture_cap) {
+        size_t cap = gl->texture_cap == 0 ? 16 : gl->texture_cap * 2;
+        GLuint *grown = realloc(gl->textures, cap * sizeof *grown);
+        if (grown == nullptr)
+            return 0;
+        memset(grown + gl->texture_cap, 0, (cap - gl->texture_cap) * sizeof *grown);
+        gl->textures = grown;
+        gl->texture_cap = cap;
+    }
+    GLuint tex;
+    gl->f.GenTextures(1, &tex);
+    gl->f.ActiveTexture(GL_TEXTURE1);
+    gl->f.BindTexture(GL_TEXTURE_2D, tex);
+    // Rows are tightly packed: no padding to 4 bytes (RGBA never needs it,
+    // but say so).
+    gl->f.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl->f.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    // Scaled to the cells it fills: smooth, unlike the atlas's exact texels.
+    gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    gl->f.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    gl->f.ActiveTexture(GL_TEXTURE0);
+    if (gl->f.GetError() != GL_NO_ERROR) {
+        gl->f.DeleteTextures(1, &tex);
+        return 0;
+    }
+    gl->textures[slot] = tex;
+    return (uint32_t)slot + 1;
+}
+
+static void gl_image_destroy(void *state, uint32_t image) {
+    struct gl *gl = state;
+    if (image == 0 || image > gl->texture_cap || gl->textures[image - 1] == 0)
+        return;
+    gl->f.DeleteTextures(1, &gl->textures[image - 1]);
+    gl->textures[image - 1] = 0;
+}
+
+static void draw_images(struct gl *gl, const struct frame *frame, const struct image_draw *list, size_t count) {
+    if (count == 0)
+        return;
+    struct gl_funcs *f = &gl->f;
+    f->UseProgram(gl->image_program);
+    f->BindVertexArray(gl->image_vao);
+    f->Uniform2f(gl->image_viewport, (float)gl->width, (float)gl->height);
+    f->Uniform1i(gl->image_sampler, 1);
+    f->ActiveTexture(GL_TEXTURE1);
+    // Premultiplied pixels: "over" is one, one minus source alpha.
+    f->Enable(GL_BLEND);
+    f->BlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    // Only the grid: GL counts scissor rows from the bottom.
+    f->Enable(GL_SCISSOR_TEST);
+    f->Scissor(frame->clip_x, gl->height - frame->clip_y - frame->clip_h, frame->clip_w, frame->clip_h);
+    for (size_t i = 0; i < count; i++) {
+        const struct image_draw *d = &list[i];
+        if (d->image == 0 || d->image > gl->texture_cap || gl->textures[d->image - 1] == 0)
+            continue;
+        f->BindTexture(GL_TEXTURE_2D, gl->textures[d->image - 1]);
+        f->Uniform4f(gl->image_dest, d->x, d->y, d->w, d->h);
+        f->Uniform4f(gl->image_src, d->u0, d->v0, d->u1, d->v1);
+        f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+    }
+    f->Disable(GL_SCISSOR_TEST);
+    f->ActiveTexture(GL_TEXTURE0);
+    // Back to the cells' program and vertex array for the next pass.
+    f->UseProgram(gl->program);
+    f->BindVertexArray(gl->vao);
 }
 
 static void gl_draw_frame(void *state, const struct frame *frame) {
@@ -354,6 +462,9 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1i(gl->u.pass, 0);
     f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
 
+    // Images under the text (z < 0), over the backgrounds.
+    draw_images(gl, frame, frame->below, frame->below_count);
+
     // Pass 1: glyphs, blended by coverage (out_color's alpha). Color: the
     // usual "over". Alpha: the glyph makes its pixels more opaque, never
     // less, and keeps what's there premultiplied.
@@ -361,6 +472,9 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     f->Uniform1i(gl->u.pass, 1);
     f->DrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)ncells);
+
+    // Images over the text.
+    draw_images(gl, frame, frame->above, frame->above_count);
 
     if (frame->capture != nullptr)
         capture(gl, frame->capture);
@@ -372,11 +486,17 @@ static void gl_shutdown(void *state) {
     if (gl == nullptr)
         return;
     if (gl->f.DeleteTextures != nullptr) {
+        for (size_t i = 0; i < gl->texture_cap; i++)
+            if (gl->textures[i] != 0)
+                gl->f.DeleteTextures(1, &gl->textures[i]);
         gl->f.DeleteTextures(1, &gl->atlas_texture);
         gl->f.DeleteBuffers(1, &gl->cell_buffer);
         gl->f.DeleteVertexArrays(1, &gl->vao);
+        gl->f.DeleteVertexArrays(1, &gl->image_vao);
         gl->f.DeleteProgram(gl->program);
+        gl->f.DeleteProgram(gl->image_program);
     }
+    free(gl->textures);
     if (gl->context != nullptr)
         SDL_GL_DestroyContext(gl->context);
     free(gl);
@@ -391,4 +511,6 @@ const struct backend renderer_backend = {
     .draw_frame = gl_draw_frame,
     .resize = gl_resize,
     .shutdown = gl_shutdown,
+    .image_create = gl_image_create,
+    .image_destroy = gl_image_destroy,
 };

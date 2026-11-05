@@ -59,8 +59,10 @@ defmodule Guiltty.Session.Pty do
   @doc """
   Tells the kernel the terminal's new size (TIOCSWINSZ). The kernel then
   sends SIGWINCH to the foreground job, and programs like `less` redraw.
+  With `cell_pixels` (`{width, height}`), the size in pixels goes too.
   """
-  def resize(id, cols, rows), do: GenServer.call(Session.via(id, :pty), {:resize, cols, rows})
+  def resize(id, cols, rows, cell_pixels \\ nil),
+    do: GenServer.call(Session.via(id, :pty), {:resize, cols, rows, cell_pixels})
 
   @doc "The parser has applied one chunk to the screen."
   def ack(id), do: GenServer.cast(Session.via(id, :pty), :ack)
@@ -106,7 +108,9 @@ defmodule Guiltty.Session.Pty do
     # Shells trust PWD when it names their directory; keep it truthful.
     env = if cwd != "", do: put_env(env, "PWD", cwd), else: env
 
-    case PtyNif.open(shell, argv, env, cols, rows, cwd) do
+    {xpixel, ypixel} = pixels(cols, rows, opts[:cell_pixels])
+
+    case PtyNif.open(shell, argv, env, cols, rows, xpixel, ypixel, cwd) do
       {:ok, pty, os_pid} ->
         Logger.debug("pty: started #{shell} as pid #{os_pid}")
 
@@ -262,8 +266,9 @@ defmodule Guiltty.Session.Pty do
     {:reply, :ok, arm(state)}
   end
 
-  def handle_call({:resize, cols, rows}, _from, state) do
-    {:reply, PtyNif.resize(state.pty, cols, rows), state}
+  def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
+    {xpixel, ypixel} = pixels(cols, rows, cell_pixels)
+    {:reply, PtyNif.resize(state.pty, cols, rows, xpixel, ypixel), state}
   end
 
   @impl true
@@ -323,6 +328,16 @@ defmodule Guiltty.Session.Pty do
     Task.start(fn -> reap(pty, @sighup) end)
     :ok
   end
+
+  # The text area in pixels, for struct winsize's ws_xpixel and ws_ypixel:
+  # programs that draw images divide it by cols and rows to get a cell.
+  # 0 says "unknown", the kernel's default, also when it wouldn't fit the
+  # struct's unsigned short.
+  @doc false
+  def pixels(cols, rows, {w, h}) when cols * w <= 0xFFFF and rows * h <= 0xFFFF,
+    do: {cols * w, rows * h}
+
+  def pixels(_cols, _rows, _cell_pixels), do: {0, 0}
 
   defp drain(state, 0), do: {:noreply, arm(state)}
 

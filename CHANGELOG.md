@@ -8,6 +8,27 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.18.0 — 2026-11-05 — Images
+
+### Added
+- Images: programs that use the Kitty graphics protocol show pictures in
+  guiltty. yazi previews images, `kitten icat`, `chafa` and `timg` work.
+  Raw RGB, RGBA and PNG, zlib-compressed or not, sent in chunks; images
+  scroll with the text and can be scrolled back to. Not supported:
+  sixel, animation, Unicode placeholders, and images read from a file
+  path (`t=f`), which a remote program could use to read your files.
+- Programs can ask how big a cell is in pixels: guiltty sets the pixel
+  size on the terminal (`TIOCGWINSZ`'s `ws_xpixel`/`ws_ypixel`) and answers
+  `CSI 14 t`, `CSI 16 t` and `CSI 18 t`.
+- guiltty answers `CSI > q` (XTVERSION) with its name and version.
+- Ctrl+, opens the config in a new tab running `$VISUAL` (or `$EDITOR`),
+  when one is set in guiltty's environment; the tab closes when you quit
+  the editor. Without one it opens in the desktop's app, as before.
+
+### Changed
+- Building guiltty now needs libpng's development files
+  (`libpng16-devel` on openSUSE, `libpng-dev` on Ubuntu; see the README).
+
 ## 0.17.1 — 2026-11-05 — Broadcast warning
 
 ### Fixed

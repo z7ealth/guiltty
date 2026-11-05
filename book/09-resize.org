@@ -11,6 +11,10 @@ Three places need to agree on how big the terminal is:
 | the Screen   | the grid's columns and rows     | where text wraps, where LF scrolls |
 | the kernel   | =struct winsize= on the PTY      | programs ask it: =tput cols=       |
 
+Since v0.18 there's a fourth thing to agree on: how big one *cell* is in
+pixels. Programs that draw images (yazi, chafa, timg) need it to know how
+many cells a picture covers. See "Pixels too" below.
+
 The renderer is the only one that sees the window, so it starts the chain.
 
 * The chain
@@ -22,14 +26,14 @@ The renderer is the only one that sees the window, so it starts the chain.
      |
   renderer: cols = (1100 - 2*6) / 11 = 98     rows = (420 - 2*6) / 23 - 1 = 16
      |      (since MVP 4 one row is the tab bar; this example predates it: read 17 as 16)
-     |      clears its cell mirror to 98x17, sends RESIZE 98 17
+     |      clears its cell mirror to 98x17, sends RESIZE 98 17 (cell 11x23)
      v
-  Window ----> Tabs.resize(98, 17) -> Session.resize(id, 98, 17) for every tab
+  Window ----> Tabs.resize(98, 17, {11, 23}) -> Session.resize(id, ...) for every tab
                  |
                  |-- 1. Screen.resize: Grid.resize (no reflow), every row dirty,
                  |      sends a full update tagged 98x17 -----------------> renderer draws
                  |
-                 `-- 2. Pty.resize: ioctl(master, TIOCSWINSZ, {17, 98})
+                 `-- 2. Pty.resize: ioctl(master, TIOCSWINSZ, {17, 98, 1078, 391})
                           |
                         kernel: size changed -> SIGWINCH to the foreground job
                           |
@@ -77,9 +81,66 @@ it redraw. Or check what programs see:
 tput cols; tput lines; stty size
 #+end_src
 
+* Pixels too
+
+=struct winsize= has always had two more fields than rows and columns:
+
+#+begin_src c
+struct winsize {
+    unsigned short ws_row, ws_col;        /* cells */
+    unsigned short ws_xpixel, ws_ypixel;  /* the text area in pixels, 0 = unknown */
+};
+#+end_src
+
+The kernel never reads the pixel fields. It only stores them for programs
+to ask. For years most terminals left them at 0. Programs that draw images
+need them: yazi asks the kernel first, and the terminal itself if the
+kernel says 0. Here is what yazi 26.8 writes when it starts, recorded from
+a PTY:
+
+#+begin_example
+ESC [ > q                               XTVERSION: who are you?
+ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \    Kitty graphics: can you draw?
+ESC [ 16 t                              XTWINOPS: how big is a cell, in pixels?
+ESC [ 0 c                               DA1, last: answers come in order, so
+                                        when this one arrives, every other
+                                        question has had its chance
+#+end_example
+
+So the renderer, the only one that knows the font, sends the cell size with
+every RESIZE. It also sends one at startup, even when the grid already
+fits, and after a new font changes the cell, even when cols and rows stay
+the same. From there it goes two ways:
+
+- *the kernel*: =Pty.resize= fills =ws_xpixel= = cols × cell width and
+  =ws_ypixel= = rows × cell height (0 if that wouldn't fit an unsigned
+  short);
+- *the Screen*: the grid keeps =cell_pixels=, and =Guiltty.Terminal=
+  answers the XTWINOPS questions from it:
+
+| Question                     | Sequence    | guiltty answers (98x17, cell 11x23) |
+|------------------------------+-------------+--------------------------------------|
+| text area in pixels          | =CSI 14 t=  | =CSI 4 ; 391 ; 1078 t= (height;width) |
+| one cell in pixels           | =CSI 16 t=  | =CSI 6 ; 23 ; 11 t=                   |
+| grid in cells                | =CSI 18 t=  | =CSI 8 ; 17 ; 98 t=                   |
+
+Until a renderer has said, the pixel questions get no answer at all. A
+program that gets no answer falls back to something else. A made-up answer
+would make it draw images at the wrong size.
+
+Check it yourself in guiltty:
+
+#+begin_src sh
+printf '\e[16t'; IFS= read -rsd t px; echo "${px#*[}"     # 6;23;11
+python3 -c 'import fcntl,struct,termios; print(struct.unpack("4H", fcntl.ioctl(0, termios.TIOCGWINSZ, bytes(8))))'
+#+end_src
+
 * Loot
 
-- =ioctl_tty(2)=: =TIOCGWINSZ=, =TIOCSWINSZ=.
+- =ioctl_tty(2)=: =TIOCGWINSZ=, =TIOCSWINSZ=; =struct winsize='s pixel
+  fields.
+- XTerm control sequences (ctlseqs): "Window manipulation (XTWINOPS)",
+  =CSI Ps t= with Ps = 14, 16, 18.
 - =signal(7)=: SIGWINCH.
 - =tput(1)=, =stty(1)=.
 
@@ -89,6 +150,10 @@ tput cols; tput lines; stty size
 2. Who receives SIGWINCH?
 3. Why resize the grid before the PTY?
 4. Why is it safe to drop a ROWS message of the wrong size?
+5. The window didn't change size, but you zoomed in. Why does a RESIZE
+   still go out?
+6. Before the renderer has said anything, why doesn't guiltty answer
+   =CSI 16 t= with a guess?
 
 ** Answers
 :PROPERTIES:
@@ -100,3 +165,7 @@ tput cols; tput lines; stty size
 3. So the program's redraw, triggered by SIGWINCH, already finds a grid of
    the right size.
 4. A resize always ends with a full update at the new size.
+5. A bigger font means a bigger cell. Programs that draw images need the
+   new cell size, even if cols and rows came out the same.
+6. A wrong answer makes images the wrong size. No answer makes the
+   program fall back to something that works.

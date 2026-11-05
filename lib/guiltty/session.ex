@@ -56,9 +56,10 @@ defmodule Guiltty.Session do
   @doc """
   Resizes the session: the grid first, then the PTY. In that order, the
   redraw that SIGWINCH triggers lands on a grid that already has the new size.
+  `cell_pixels` is one cell's `{width, height}` in pixels, or nil.
   """
-  def resize(id, cols, rows) do
-    :ok = Screen.resize(id, cols, rows)
-    Pty.resize(id, cols, rows)
+  def resize(id, cols, rows, cell_pixels \\ nil) do
+    :ok = Screen.resize(id, cols, rows, cell_pixels)
+    Pty.resize(id, cols, rows, cell_pixels)
   end
 end

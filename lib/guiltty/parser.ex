@@ -15,8 +15,12 @@ defmodule Guiltty.Parser do
       (`38:2::255:0:0` is `[38, 2, nil, 255, 0, 0]`).
     * `{:esc, intermediates, final}` - e.g. `ESC M` is `{:esc, "", ?M}`
     * `{:osc, data}` - an operating system command, e.g. `"0;title"`
+    * `{:apc, data}` - an application program command, e.g. a Kitty
+      graphics command: `ESC _ G a=T;AAAA ESC \\` is `{:apc, "Ga=T;AAAA"}`
 
-  DCS, SOS, PM and APC strings are consumed and dropped.
+  DCS, SOS and PM strings are consumed and dropped. APC strings carry
+  images (Kitty graphics), so they're kept up to 64 MB; a longer one is
+  dropped whole.
 
   Text is UTF-8. A byte sequence that isn't valid UTF-8 prints as U+FFFD
   (the replacement character, �), the way xterm does.
@@ -35,6 +39,8 @@ defmodule Guiltty.Parser do
   @max_params 32
   @max_param 65_535
   @max_string 4096
+  # APC strings carry images (Kitty graphics).
+  @max_big_string 64 * 1024 * 1024
 
   defstruct state: :ground,
             private: nil,
@@ -44,9 +50,11 @@ defmodule Guiltty.Parser do
             group: [],
             groups: [],
             seen_param: false,
-            # OSC data being collected, as reversed iodata
+            # OSC or APC data being collected, as reversed iodata
             string: [],
             string_size: 0,
+            # an APC string grew past @max_big_string: it's dropped
+            overflow: false,
             # the start of a UTF-8 character that the last read cut off
             pending: ""
 
@@ -63,6 +71,7 @@ defmodule Guiltty.Parser do
           | {:csi, byte() | nil, [param()], binary(), byte()}
           | {:esc, binary(), byte()}
           | {:osc, binary()}
+          | {:apc, binary()}
 
   @esc 0x1B
   @can 0x18
@@ -107,8 +116,8 @@ defmodule Guiltty.Parser do
       byte in 0x20..0x2F -> step(:escape_intermediate, rest, collect(p, byte), acc)
       byte == ?[ -> step(:csi_entry, rest, p, acc)
       byte == ?] -> step(:osc_string, rest, p, acc)
-      byte == ?P -> step(:ignored_string, rest, p, acc)
-      byte in [?X, ?^, ?_] -> step(:ignored_string, rest, p, acc)
+      byte == ?_ -> step(:apc_string, rest, p, acc)
+      byte in [?P, ?X, ?^] -> step(:ignored_string, rest, p, acc)
       byte in 0x30..0x7E -> esc_dispatch(byte, rest, p, acc)
       true -> step(:escape, rest, p, acc)
     end
@@ -166,7 +175,18 @@ defmodule Guiltty.Parser do
     end
   end
 
-  ## Strings: OSC is kept, DCS/SOS/PM/APC are dropped
+  ## APC: ESC _ string ST (Kitty graphics)
+
+  defp step(:apc_string, bytes, p, acc), do: apc_string(bytes, p, acc)
+
+  # ESC inside an APC: ESC \ (ST) ends it. Anything else drops it and
+  # starts a new escape sequence.
+  defp step(:apc_esc, <<?\\, rest::binary>>, p, acc),
+    do: step(:ground, rest, clear(p), apc_command(p, acc))
+
+  defp step(:apc_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
+
+  ## Strings: OSC is kept, DCS/SOS/PM are dropped
 
   defp step(:osc_string, bytes, p, acc) do
     case string_run(bytes, 0) do
@@ -205,6 +225,41 @@ defmodule Guiltty.Parser do
 
   defp step(:ignored_esc, <<?\\, rest::binary>>, p, acc), do: step(:ground, rest, clear(p), acc)
   defp step(:ignored_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
+
+  # An APC body: everything up to ESC (or CAN/SUB, which cancel it), found
+  # with one :binary.match instead of a step per byte. An image is
+  # megabytes of base64.
+  defp apc_string(bytes, p, acc) do
+    case :binary.match(bytes, [<<@esc>>, <<@can>>, <<@sub>>]) do
+      :nomatch ->
+        # the rest comes in the next read
+        {%{put_big_string(p, bytes) | state: :apc_string}, acc}
+
+      {at, 1} ->
+        <<run::binary-size(^at), byte, rest::binary>> = bytes
+        p = put_big_string(p, run)
+
+        if byte == @esc,
+          do: step(:apc_esc, rest, p, acc),
+          else: step(:ground, rest, clear(p), acc)
+    end
+  end
+
+  defp put_big_string(p, ""), do: p
+  defp put_big_string(%{overflow: true} = p, _run), do: p
+
+  defp put_big_string(p, run) do
+    size = p.string_size + byte_size(run)
+
+    if size > @max_big_string,
+      do: %{p | overflow: true, string: [], string_size: 0},
+      else: %{p | string: [run | p.string], string_size: size}
+  end
+
+  defp apc_command(%{overflow: true}, acc), do: acc
+
+  defp apc_command(p, acc),
+    do: [{:apc, p.string |> Enum.reverse() |> IO.iodata_to_binary()} | acc]
 
   ## Text
 
@@ -289,7 +344,8 @@ defmodule Guiltty.Parser do
         groups: [],
         seen_param: false,
         string: [],
-        string_size: 0
+        string_size: 0,
+        overflow: false
     }
   end
 

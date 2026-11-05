@@ -169,7 +169,7 @@ defmodule Guiltty.WindowTest do
 
   test "a resize from the renderer resizes every tab", %{id: id, window: window} do
     {:ok, second} = Tabs.new_tab(@tabs)
-    renderer(window, <<6, 100::16, 30::16>>)
+    renderer(window, <<6, 100::16, 30::16, 9::16, 18::16>>)
 
     assert eventually(fn ->
              Session.size(id) == {100, 30} and Session.size(second) == {100, 30}
@@ -177,6 +177,17 @@ defmodule Guiltty.WindowTest do
 
     Session.write(second, "stty size\r")
     assert eventually(fn -> Session.dump(second) =~ ~r/^30 100$/m end)
+
+    # The cell size reached the screen too: it answers CSI 16 t with it.
+    Session.write(second, "printf '\\e[16t'; IFS= read -rsd t px; echo cell${px#*[}\r")
+    assert eventually(fn -> Session.dump(second) =~ ~r/^cell6;18;9$/m end)
+  end
+
+  test "the renderer's first resize gives the tabs the cell size", %{id: id, window: window} do
+    # The real renderer sends one at startup, even when the setup's grid
+    # already fits: the cell size is news.
+    assert eventually(fn -> screen_state(id).grid.cell_pixels != nil end)
+    assert Port.info(port(window))
   end
 
   test "the program's queries are answered through the PTY", %{id: id} do
@@ -306,7 +317,7 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> Session.dump(id) =~ ~r/^100$/m end)
     mouse(window, 3, 0, 0, 0)
     assert eventually(fn -> screen_state(id).scroll == 3 end)
-    renderer(window, <<6, 80::16, 24::16>>)
+    renderer(window, <<6, 80::16, 24::16, 9::16, 18::16>>)
 
     # Shift+PgUp goes a page further; typing brings the view back.
     key(window, 0x4000004B, @shift)
@@ -440,6 +451,45 @@ defmodule Guiltty.WindowTest do
 
     assert {:warning, "Vulkan couldn't start" <> _} = :sys.get_state(window).status
     assert Application.get_env(:guiltty, :vulkan_failed)
+  end
+
+  test "an image a program shows reaches the renderer, and leaves it when deleted", %{
+    id: id,
+    window: window
+  } do
+    # A 1 x 1 red pixel, Kitty graphics, from the shell.
+    Session.write(id, "printf '\\e_Ga=T,f=24,s=1,v=1;/wAA\\e\\\\'\r")
+    assert eventually(fn -> MapSet.size(:sys.get_state(window).sent_images) == 1 end)
+
+    Session.write(id, "printf '\\e_Ga=d,d=A\\e\\\\'\r")
+    assert eventually(fn -> MapSet.size(:sys.get_state(window).sent_images) == 0 end)
+    assert Port.info(port(window)), "the renderer died"
+  end
+
+  test "the editor for the config: $VISUAL, else $EDITOR, split like a shell; nil if not installed" do
+    tail = System.find_executable("tail")
+    assert Window.editor(%{"VISUAL" => "tail -f", "EDITOR" => "nano"}) == {tail, ["-f"]}
+    assert Window.editor(%{"VISUAL" => "", "EDITOR" => "tail -n '1 0'"}) == {tail, ["-n", "1 0"]}
+    assert Window.editor(%{"EDITOR" => "no-such-editor-here"}) == nil
+    assert Window.editor(%{}) == nil
+  end
+
+  @tag :tmp_dir
+  test "Ctrl+, opens the config in a new tab running $VISUAL", %{window: window, tmp_dir: dir} do
+    config = Path.join(dir, "config.exs")
+    File.write!(config, "[font: [size: 15]] # opened in the editor\n")
+    System.put_env("GUILTTY_CONFIG", config)
+    System.put_env("VISUAL", "tail -f")
+
+    on_exit(fn ->
+      System.delete_env("GUILTTY_CONFIG")
+      System.delete_env("VISUAL")
+    end)
+
+    key(window, ?,, @ctrl)
+    assert eventually(fn -> length(elem(Tabs.list(@tabs), 0)) == 2 end)
+    editor_tab = Tabs.active(@tabs)
+    assert eventually(fn -> Session.dump(editor_tab) =~ "# opened in the editor" end)
   end
 
   test "a config error shows as a warning until a config loads", %{window: window} do

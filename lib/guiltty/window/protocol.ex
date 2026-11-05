@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 10
+  @version 12
 
   @hello 1
   @setup 2
@@ -35,6 +35,11 @@ defmodule Guiltty.Window.Protocol do
   @options 20
   @open_url 21
   @tab_style 22
+  @image 23
+  @image_drop 24
+  @placements 25
+
+  @image_formats %{rgb: 0, rgba: 1, png: 2}
 
   @max_tab_title 255
   @max_grid 4096
@@ -43,7 +48,8 @@ defmodule Guiltty.Window.Protocol do
           {:hello, version :: non_neg_integer(), backend :: binary()}
           | {:text, binary()}
           | {:key, keycode :: non_neg_integer(), mods :: non_neg_integer()}
-          | {:resize, cols :: pos_integer(), rows :: pos_integer()}
+          | {:resize, cols :: pos_integer(), rows :: pos_integer(),
+             cell_pixels :: {pos_integer(), pos_integer()} | nil}
           | {:paste, binary()}
           | {:mouse, :press | :release | :motion | :wheel, 0..3, non_neg_integer(),
              non_neg_integer(), non_neg_integer(), clicks :: 1..255}
@@ -83,6 +89,45 @@ defmodule Guiltty.Window.Protocol do
 
   @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."
   def open_url(url), do: <<@open_url, url::binary>>
+
+  @doc """
+  An image for the renderer to decode and keep, by `uid`: u64 uid, u8
+  format (0 RGB, 1 RGBA, 2 PNG), u32 width, u32 height, then the data.
+  """
+  def image(uid, image) do
+    [
+      <<@image, uid::64, Map.fetch!(@image_formats, image.format), image.width::32,
+        image.height::32>>,
+      image.data
+    ]
+  end
+
+  @doc "The renderer can forget an image: u64 uid."
+  def image_drop(uid), do: <<@image_drop, uid::64>>
+
+  @doc """
+  Where images show, for the grid of `{cols, rows}` (like ROWS, a
+  renderer with another size ignores it). u16 cols, u16 rows, u16
+  count, then per placement (see `Guiltty.Graphics.view/4`): u64 uid,
+  i32 row, u16 col, u16 x and y offset in the cell, u32 source x, y,
+  width, height, u16 cells wide and high (0: natural size), i32 z.
+  Drawn in this order.
+  """
+  def placements({cols, rows}, placements) do
+    placements = Enum.take(placements, 1024)
+
+    [
+      <<@placements, cols::16, rows::16, length(placements)::16>>,
+      for pl <- placements do
+        {ox, oy} = pl.offset
+        {sx, sy, sw, sh} = pl.source
+        {c, r} = pl.cells
+
+        <<pl.uid::64, pl.row::signed-32, pl.col::16, ox::16, oy::16, sx::32, sy::32, sw::32,
+          sh::32, c::16, r::16, pl.z::signed-32>>
+      end
+    ]
+  end
 
   @tab_styles [:flat, :powerline, :rounded, :minimal, :separators]
 
@@ -190,9 +235,12 @@ defmodule Guiltty.Window.Protocol do
 
   # The renderer's own limit (max_grid in main.c): a grid bigger than that
   # is a broken message, not a window.
-  def decode(<<@resize, cols::16, rows::16>>)
-      when cols in 1..@max_grid and rows in 1..@max_grid,
-      do: {:ok, {:resize, cols, rows}}
+  # The cell size in pixels comes after; 0 means the renderer doesn't know.
+  def decode(<<@resize, cols::16, rows::16, cell_w::16, cell_h::16>>)
+      when cols in 1..@max_grid and rows in 1..@max_grid do
+    cell_pixels = if cell_w > 0 and cell_h > 0, do: {cell_w, cell_h}
+    {:ok, {:resize, cols, rows, cell_pixels}}
+  end
 
   def decode(<<@paste, text::binary>>), do: {:ok, {:paste, text}}
 

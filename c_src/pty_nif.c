@@ -207,23 +207,42 @@ static void free_strings(char **strs) {
     _exit(127);
 }
 
-// open(path, argv, envp, cols, rows, cwd) -> {:ok, pty, os_pid} | {:error, reason}
-// cwd "" means: don't change directory.
+// Reads cols, rows, xpixel, ypixel from four consecutive arguments into a
+// struct winsize (ioctl_tty(2) TIOCSWINSZ). Every field is an unsigned
+// short; cols and rows must be at least 1. The pixel fields are only
+// information for programs (the kernel never looks at them): 0 means
+// unknown.
+[[nodiscard]] static bool get_winsize(ErlNifEnv *env, const ERL_NIF_TERM args[], struct winsize *ws) {
+    unsigned v[4];
+    for (int i = 0; i < 4; i++)
+        if (!enif_get_uint(env, args[i], &v[i]) || v[i] > USHRT_MAX)
+            return false;
+    if (v[0] == 0 || v[1] == 0)
+        return false;
+    *ws = (struct winsize){.ws_col = (unsigned short)v[0],
+                           .ws_row = (unsigned short)v[1],
+                           .ws_xpixel = (unsigned short)v[2],
+                           .ws_ypixel = (unsigned short)v[3]};
+    return true;
+}
+
+// open(path, argv, envp, cols, rows, xpixel, ypixel, cwd)
+//   -> {:ok, pty, os_pid} | {:error, reason}
+// xpixel and ypixel are the text area in pixels, 0 if unknown. cwd "" means:
+// don't change directory.
 //
 // Runs on a dirty I/O scheduler: forking a big BEAM copies its page tables,
 // which can take long enough to upset a normal scheduler.
 static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     ErlNifBinary path_bin;
-    unsigned cols, rows;
-    if (!enif_inspect_binary(env, argv[0], &path_bin) || !enif_get_uint(env, argv[3], &cols) ||
-        !enif_get_uint(env, argv[4], &rows) || cols == 0 || rows == 0 || cols > USHRT_MAX ||
-        rows > USHRT_MAX)
+    struct winsize ws;
+    if (!enif_inspect_binary(env, argv[0], &path_bin) || !get_winsize(env, argv + 3, &ws))
         return enif_make_badarg(env);
 
     // Everything the child needs is copied into C strings now: after fork
     // it can't call malloc.
     char *path = binary_to_string(env, argv[0]);
-    char *cwd = binary_to_string(env, argv[5]);
+    char *cwd = binary_to_string(env, argv[7]);
     char **child_argv = list_to_strings(env, argv[1]);
     char **child_envp = list_to_strings(env, argv[2]);
     if (path == nullptr || cwd == nullptr || child_argv == nullptr || child_envp == nullptr) {
@@ -237,7 +256,6 @@ static ERL_NIF_TERM nif_open(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     ERL_NIF_TERM result;
     int master = -1, slave = -1;
     ErlNifMutex *lock = nullptr;
-    struct winsize ws = {.ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols};
     // Both ends close-on-exec from the moment they exist, so no program
     // another thread starts can inherit them (a stray copy of the slave
     // would keep the master from ever seeing EIO). The master is
@@ -385,17 +403,14 @@ static ERL_NIF_TERM nif_select_write(ErlNifEnv *env, int, const ERL_NIF_TERM arg
     return do_select(env, argv, ERL_NIF_SELECT_WRITE);
 }
 
-// resize(pty, cols, rows) -> :ok | {:error, reason}
+// resize(pty, cols, rows, xpixel, ypixel) -> :ok | {:error, reason}
 // TIOCSWINSZ stores the new size in the terminal; if it changed, the kernel
 // sends SIGWINCH to the terminal's foreground process group (ioctl_tty(2)).
 static ERL_NIF_TERM nif_resize(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
     struct pty *pty;
-    unsigned cols, rows;
-    if (!get_pty(env, argv[0], &pty) || !enif_get_uint(env, argv[1], &cols) ||
-        !enif_get_uint(env, argv[2], &rows) || cols == 0 || rows == 0 || cols > USHRT_MAX ||
-        rows > USHRT_MAX)
+    struct winsize ws;
+    if (!get_pty(env, argv[0], &pty) || !get_winsize(env, argv + 1, &ws))
         return enif_make_badarg(env);
-    struct winsize ws = {.ws_row = (unsigned short)rows, .ws_col = (unsigned short)cols};
     enif_mutex_lock(pty->lock);
     int rc = pty->fd < 0 ? -1 : ioctl(pty->fd, TIOCSWINSZ, &ws);
     int err = pty->fd < 0 ? EBADF : errno;
@@ -515,12 +530,12 @@ static ERL_NIF_TERM nif_kill(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
 }
 
 static ErlNifFunc funcs[] = {
-    {"open", 6, nif_open, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"open", 8, nif_open, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"read", 1, nif_read, 0},
     {"write", 2, nif_write, 0},
     {"select_read", 1, nif_select_read, 0},
     {"select_write", 1, nif_select_write, 0},
-    {"resize", 3, nif_resize, 0},
+    {"resize", 5, nif_resize, 0},
     {"winch", 1, nif_winch, 0},
     {"foreground", 1, nif_foreground, 0},
     {"close", 1, nif_close, 0},

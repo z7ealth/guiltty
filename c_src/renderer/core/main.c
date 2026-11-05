@@ -34,6 +34,7 @@
 #include "atlas.h"
 #include "backend.h"
 #include "fonts.h"
+#include "images.h"
 #include "protocol.h"
 #include "sprites.h"
 
@@ -56,6 +57,29 @@ struct theme {
 struct tab {
     char title[max_short_text]; // UTF-8
     int start, end; // columns it occupies in the tab bar, for clicks
+};
+
+// An image Elixir sent (MSG_IMAGE), decoded and uploaded: the backend's
+// texture, by Elixir's uid.
+struct image {
+    uint64_t uid;
+    uint32_t texture;
+    uint32_t width, height;
+};
+
+// Images the renderer keeps at once. Elixir drops those no placement
+// shows, so this is plenty; past it, new ones are refused.
+constexpr size_t max_images = 256;
+
+// Where an image shows (MSG_PLACEMENTS), as Elixir sent it: in cells, so
+// a new font size moves and scales it on the next frame.
+struct placement {
+    uint64_t uid;
+    int32_t row;
+    uint16_t col, offset_x, offset_y;
+    uint32_t src_x, src_y, src_w, src_h;
+    uint16_t cells_w, cells_h;
+    int32_t z;
 };
 
 // The text of a cluster id (protocol.h), as Elixir defined it.
@@ -83,6 +107,9 @@ struct renderer {
     bool tab_bar_bottom;
     bool ligatures; // join "->", "!=" and friends when the font has them
     int cell_w, cell_h;
+    // The cell size last told to Elixir in a RESIZE (0 before the first):
+    // a new font can change it while cols and rows stay the same.
+    int sent_cell_w, sent_cell_h;
     // The terminal grid is cols x rows. The cell mirror has one more row on
     // top, the tab bar, so grid row i is cells row i + 1.
     uint16_t cols, rows;
@@ -122,6 +149,10 @@ struct renderer {
     bool replay_done;
     const char *screenshot;
     uint8_t *capture; // set for the one draw that's saved
+    struct image images[max_images];
+    size_t image_count;
+    struct placement *placements; // for the grid of cols x rows
+    size_t placement_count;
 };
 
 // Reader thread: blocks on stdin and hands each message to the main thread
@@ -201,11 +232,13 @@ static void send_mouse(enum mouse_kind kind, uint8_t button, int col, int row, u
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
 }
 
-static void send_resize(uint16_t cols, uint16_t rows) {
+static void send_resize(uint16_t cols, uint16_t rows, int cell_w, int cell_h) {
     uint8_t msg[resize_message_size];
     msg[0] = MSG_RESIZE;
     put_u16(msg + 1, cols);
     put_u16(msg + 3, rows);
+    put_u16(msg + 5, (uint16_t)SDL_clamp(cell_w, 0, UINT16_MAX));
+    put_u16(msg + 7, (uint16_t)SDL_clamp(cell_h, 0, UINT16_MAX));
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
 }
 
@@ -743,6 +776,9 @@ static void clean_text(const uint8_t *src, size_t len, char *dst, size_t size) {
     r->cursor_col = r->cursor_col < cols ? r->cursor_col : cols - 1;
     r->dirty_first = 0;
     r->dirty_last = rows;
+    // Placements are for a grid size: Elixir sends new ones with the
+    // update for this size.
+    r->placement_count = 0;
     build_tab_bar(r);
     return true;
 }
@@ -980,6 +1016,121 @@ static void set_clipboard(struct reader *rd) {
     free(text);
 }
 
+// --- Images ---
+
+static const struct image *find_image(const struct renderer *r, uint64_t uid) {
+    for (size_t i = 0; i < r->image_count; i++)
+        if (r->images[i].uid == uid)
+            return &r->images[i];
+    return nullptr;
+}
+
+static void drop_image(struct renderer *r, uint64_t uid) {
+    for (size_t i = 0; i < r->image_count; i++)
+        if (r->images[i].uid == uid) {
+            renderer_backend.image_destroy(r->backend, r->images[i].texture);
+            r->images[i] = r->images[--r->image_count];
+            r->dirty = true;
+            return;
+        }
+}
+
+// An image that can't be decoded or kept is skipped: the program's
+// picture is missing, and everything else goes on.
+static void read_image(struct renderer *r, struct reader *rd) {
+    uint64_t uid;
+    uint8_t format;
+    uint32_t w, h;
+    if (!rd_u64(rd, &uid) || !rd_u8(rd, &format) || !rd_u32(rd, &w) || !rd_u32(rd, &h) ||
+        format > IMAGE_PNG)
+        return;
+    drop_image(r, uid);
+    struct pixels px;
+    if (!image_decode((enum image_format)format, w, h, rd->p, rd->left, &px)) {
+        fprintf(stderr, "renderer: an image (format %u, %ux%u) couldn't be decoded\n", format, w, h);
+        return;
+    }
+    uint32_t texture = r->image_count < max_images
+                           ? renderer_backend.image_create(r->backend, px.width, px.height, px.rgba)
+                           : 0;
+    free(px.rgba);
+    if (texture == 0) {
+        fprintf(stderr, "renderer: no room for another image\n");
+        return;
+    }
+    r->images[r->image_count++] = (struct image){uid, texture, px.width, px.height};
+    r->dirty = true;
+}
+
+static void read_placements(struct renderer *r, struct reader *rd) {
+    uint16_t cols, rows, count;
+    if (!rd_u16(rd, &cols) || !rd_u16(rd, &rows) || !rd_u16(rd, &count) || count > max_placements)
+        return;
+    // For another grid size (sent before a resize reached Elixir): the
+    // update for this size brings its own.
+    if (cols != r->cols || rows != r->rows)
+        return;
+    struct placement *list = count > 0 ? calloc(count, sizeof *list) : nullptr;
+    if (count > 0 && list == nullptr)
+        return;
+    for (uint16_t i = 0; i < count; i++) {
+        struct placement *p = &list[i];
+        uint32_t row, z;
+        if (!rd_u64(rd, &p->uid) || !rd_u32(rd, &row) || !rd_u16(rd, &p->col) || !rd_u16(rd, &p->offset_x) ||
+            !rd_u16(rd, &p->offset_y) || !rd_u32(rd, &p->src_x) || !rd_u32(rd, &p->src_y) ||
+            !rd_u32(rd, &p->src_w) || !rd_u32(rd, &p->src_h) || !rd_u16(rd, &p->cells_w) ||
+            !rd_u16(rd, &p->cells_h) || !rd_u32(rd, &z)) {
+            free(list);
+            return;
+        }
+        p->row = (int32_t)row;
+        p->z = (int32_t)z;
+    }
+    free(r->placements);
+    r->placements = list;
+    r->placement_count = count;
+    r->dirty = true;
+}
+
+// Where a placement goes this frame, in window pixels, with the current
+// cell size. False if there's nothing to draw (no such image, an empty
+// part of it). Images keep their own pixel size unless the program asked
+// for a number of cells; asked for only one of the two, the other keeps
+// the picture's shape.
+[[nodiscard]] static bool place_image(const struct renderer *r, const struct placement *p, struct image_draw *out) {
+    const struct image *img = find_image(r, p->uid);
+    if (img == nullptr || p->src_x >= img->width || p->src_y >= img->height)
+        return false;
+    double sw = p->src_w == 0 || p->src_w > img->width - p->src_x ? img->width - p->src_x : p->src_w;
+    double sh = p->src_h == 0 || p->src_h > img->height - p->src_y ? img->height - p->src_y : p->src_h;
+    double cw = r->cell_w, ch = r->cell_h;
+    double w = sw, h = sh;
+    if (p->cells_w > 0 && p->cells_h > 0) {
+        w = p->cells_w * cw;
+        h = p->cells_h * ch;
+    } else if (p->cells_w > 0) {
+        w = p->cells_w * cw;
+        h = w * sh / sw;
+    } else if (p->cells_h > 0) {
+        h = p->cells_h * ch;
+        w = h * sw / sh;
+    }
+    // Grid row 0 is below the tab bar, unless the bar is at the bottom.
+    double top = r->padding + (r->tab_bar_bottom ? 0 : ch);
+    *out = (struct image_draw){
+        .image = img->texture,
+        .x = (float)(r->padding + p->col * cw + p->offset_x),
+        .y = (float)(top + p->row * ch + p->offset_y),
+        .w = (float)w,
+        .h = (float)h,
+        .u0 = (float)(p->src_x / (double)img->width),
+        .v0 = (float)(p->src_y / (double)img->height),
+        .u1 = (float)((p->src_x + sw) / img->width),
+        .v1 = (float)((p->src_y + sh) / img->height),
+    };
+    return true;
+}
+
 [[nodiscard]] static bool apply_message(struct renderer *r, const uint8_t *msg, uint32_t len) {
     struct reader rd = {msg, len};
     uint8_t tag;
@@ -1079,6 +1230,18 @@ static void set_clipboard(struct reader *rd) {
         r->dirty = true;
         return true;
     }
+    case MSG_IMAGE:
+        read_image(r, &rd);
+        return true;
+    case MSG_IMAGE_DROP: {
+        uint64_t uid;
+        if (rd_u64(&rd, &uid))
+            drop_image(r, uid);
+        return true;
+    }
+    case MSG_PLACEMENTS:
+        read_placements(r, &rd);
+        return true;
     case MSG_RAISE:
         SDL_RaiseWindow(r->window);
         return true;
@@ -1264,8 +1427,29 @@ static void draw(struct renderer *r) {
     // The halo is the padding around the grid, lit up for a moment.
     memcpy(frame.clear_rgb, halo_on(r) ? r->halo_rgb : r->theme.bg, 3);
 
+    // Images, split by z: under the text or over it, each in Elixir's order.
+    struct image_draw *draws = r->placement_count > 0 ? calloc(r->placement_count, sizeof *draws) : nullptr;
+    size_t below = 0, above = 0;
+    if (draws != nullptr) {
+        for (size_t pass = 0; pass < 2; pass++)
+            for (size_t i = 0; i < r->placement_count; i++) {
+                const struct placement *p = &r->placements[i];
+                if ((p->z < 0) == (pass == 0) && place_image(r, p, &draws[below + above]))
+                    *(pass == 0 ? &below : &above) += 1;
+            }
+        frame.below = draws;
+        frame.below_count = below;
+        frame.above = draws + below;
+        frame.above_count = above;
+    }
+    frame.clip_x = r->padding;
+    frame.clip_y = r->padding + (r->tab_bar_bottom ? 0 : r->cell_h);
+    frame.clip_w = r->cols * r->cell_w;
+    frame.clip_h = r->rows * r->cell_h;
+
     Uint64 start = SDL_GetTicksNS();
     renderer_backend.draw_frame(r->backend, &frame);
+    free(draws);
     if (r->frame_owed) {
         send_frame((uint32_t)((SDL_GetTicksNS() - start) / 1000));
         r->frame_owed = false;
@@ -1287,14 +1471,23 @@ static void draw(struct renderer *r) {
     r->dirty = true;
     uint16_t cols, rows;
     grid_for_pixels(r, w, h, &cols, &rows);
-    if (cols == r->cols && rows == r->rows)
+    bool same_grid = cols == r->cols && rows == r->rows;
+    // Programs that draw images ask for the cell size in pixels, so Elixir
+    // hears about it even when the grid stays: at startup, when the setup
+    // already had the right grid.
+    bool same_cell = r->cell_w == r->sent_cell_w && r->cell_h == r->sent_cell_h;
+    if (same_grid && same_cell)
         return true;
-    if (!set_grid_size(r, cols, rows))
+    if (!same_grid && !set_grid_size(r, cols, rows))
         return false;
-    if (r->demo)
-        fill_demo(r);
-    else
-        send_resize(cols, rows);
+    if (r->demo) {
+        if (!same_grid)
+            fill_demo(r);
+        return true;
+    }
+    send_resize(cols, rows, r->cell_w, r->cell_h);
+    r->sent_cell_w = r->cell_w;
+    r->sent_cell_h = r->cell_h;
     return true;
 }
 
@@ -1708,6 +1901,8 @@ int main(int argc, char *argv[]) {
     }
 
 out_backend:
+    for (size_t i = 0; i < r.image_count; i++)
+        renderer_backend.image_destroy(r.backend, r.images[i].texture);
     renderer_backend.shutdown(r.backend);
 out_window:
     SDL_DestroyWindow(r.window);
@@ -1719,5 +1914,6 @@ out_sdl:
     free(r.cells);
     free(r.glyphs);
     free(r.clusters);
+    free(r.placements);
     return status;
 }

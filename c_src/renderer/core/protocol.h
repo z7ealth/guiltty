@@ -10,10 +10,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 10;
+constexpr uint16_t protocol_version = 12;
 
-// Largest message we accept; anything bigger is a protocol error.
-constexpr uint32_t max_message_size = 1u << 24;
+// Largest message we accept; anything bigger is a protocol error. An IMAGE
+// can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
+constexpr uint32_t max_image_bytes = 1u << 26;
+constexpr uint32_t max_message_size = max_image_bytes + 4096;
 
 enum msg_tag : uint8_t {
     // renderer -> Elixir: u16 version, u8 name_len, name
@@ -35,7 +37,9 @@ enum msg_tag : uint8_t {
     MSG_TEXT = 4,
     // renderer -> Elixir: u32 SDL keycode, u16 SDL modifiers
     MSG_KEY = 5,
-    // renderer -> Elixir: u16 cols, u16 rows that now fit the window
+    // renderer -> Elixir: u16 cols, u16 rows that now fit the window, then
+    // u16 cell width, u16 cell height in pixels (for programs that draw
+    // images: ws_xpixel / ws_ypixel, CSI 14 t / 16 t)
     MSG_RESIZE = 6,
     // Elixir -> renderer: the window title, UTF-8
     MSG_TITLE = 7,
@@ -78,7 +82,29 @@ enum msg_tag : uint8_t {
     // tab_color_count colors of 3 bytes (r, g, b); a color whose bit is
     // clear is ignored, and derived from the theme instead.
     MSG_TAB_STYLE = 22,
+    // Elixir -> renderer: an image to decode and keep: u64 uid, u8 format
+    // (enum image_format), u32 width, u32 height, then the data (raw
+    // pixels or a PNG file).
+    MSG_IMAGE = 23,
+    // Elixir -> renderer: forget an image: u64 uid
+    MSG_IMAGE_DROP = 24,
+    // Elixir -> renderer: where images show, for a grid of u16 cols, u16
+    // rows (dropped, like ROWS, if that isn't the renderer's): u16 count,
+    // then count placements of placement_wire_size bytes: u64 uid, i32 row
+    // (may be negative: partly scrolled off), u16 col, u16 x and y offset
+    // in the cell (pixels), u32 source x, y, width, height (pixels of the
+    // image), u16 cells wide and high (0: from the image's own size), i32
+    // z (below 0: under the text). Drawn in order.
+    MSG_PLACEMENTS = 25,
 };
+enum image_format : uint8_t { IMAGE_RGB = 0, IMAGE_RGBA = 1, IMAGE_PNG = 2 };
+// An image's side, in pixels, at most: every GPU holds a 4096 texture.
+constexpr uint32_t max_image_side = 4096;
+constexpr size_t image_header_size = 1 + 8 + 1 + 4 + 4;
+constexpr size_t placement_wire_size = 8 + 4 + 3 * 2 + 4 * 4 + 2 * 2 + 4;
+constexpr uint16_t max_placements = 1024;
+static_assert(image_header_size == 18);
+static_assert(placement_wire_size == 42);
 enum cursor_shape : uint8_t { CURSOR_BLOCK = 0, CURSOR_UNDERLINE = 1, CURSOR_BAR = 2, CURSOR_HOLLOW = 3 };
 constexpr uint8_t cursor_blinks = 0x04;
 enum option_flag : uint8_t {
@@ -130,12 +156,13 @@ constexpr size_t setup_fixed_size =
 // Up to the cluster count; the row count follows the clusters.
 constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 2 + sizeof(uint16_t);
 constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
-constexpr size_t resize_message_size = 1 + 2 * sizeof(uint16_t);
+constexpr size_t resize_message_size = 1 + 4 * sizeof(uint16_t);
 constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t) + 1;
 static_assert(mouse_message_size == 10);
 static_assert(setup_fixed_size == 788);
 static_assert(rows_header_size == 13);
 static_assert(key_message_size == 7);
+static_assert(resize_message_size == 9);
 
 enum read_result { READ_OK, READ_EOF, READ_ERROR };
 
@@ -156,6 +183,7 @@ struct reader {
 [[nodiscard]] bool rd_u8(struct reader *r, uint8_t *out);
 [[nodiscard]] bool rd_u16(struct reader *r, uint16_t *out);
 [[nodiscard]] bool rd_u32(struct reader *r, uint32_t *out);
+[[nodiscard]] bool rd_u64(struct reader *r, uint64_t *out);
 [[nodiscard]] bool rd_bytes(struct reader *r, size_t n, const uint8_t **out);
 
 void put_u16(uint8_t *p, uint16_t v);

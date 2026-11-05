@@ -259,12 +259,15 @@ any escape sequence. The classic terminal attacks make the terminal
 the title, so a program sets the title to a command, asks, and the
 answer lands at your shell's prompt.
 
-guiltty answers four questions, all with text it makes itself (chapter
-11): =CSI c=, =CSI > c=, =CSI 5 n= and =CSI 6 n=. It never reports the
-title, never reads or writes the clipboard for a program (OSC 52), and
-ignores window operations (=CSI t=). A property test feeds thousands of
-random escape sequences, with random parameters and strings, and checks
-that every answer is one of those four shapes.
+guiltty answers a few questions, all with text it makes itself (chapter
+11): =CSI c=, =CSI > c=, =CSI 5 n=, =CSI 6 n=, its version (=CSI > q=)
+and sizes (=CSI 14/16/18 t=, chapter 9). Kitty graphics answers (chapter
+26) echo only the numeric ids a program gave, and a fixed message. It
+never reports the title, never reads or writes the clipboard for a
+program (OSC 52), and ignores the window operations that move or resize
+it. A property test feeds thousands of random escape sequences, Kitty
+commands among them, with random parameters and strings, and checks that
+every answer is one of those shapes.
 
 The audit still found two things.
 
@@ -308,6 +311,22 @@ boundary (=Terminal.clean_title/1=).
   program sends   OSC 0 ; 📡 prod 🔒 <U+202E>lmth.exe BEL
   tab shows       prod lmth.exe
 #+end_example
+
+** Pictures from strangers
+
+Since v0.18 a program can send images (chapter 26), and image data is
+the classic way into a program: decoders have bugs. So:
+
+- Elixir never decodes pixels. It checks sizes (4096 a side, 64 MB of
+  data, 64 MB for a whole session) and inflates zlib only up to what the
+  image can hold, so a few KB can't become gigabytes;
+- the PNG decoder (libpng) runs in the renderer, a separate process,
+  and reads the header first, so the size is checked before anything
+  big is allocated;
+- the fuzz seeds have every image format and placement shape, and
+  =make valgrind= replays them in both renderers;
+- an image named by a file path (=t=f=) is refused: over ssh, the
+  program could name your files.
 
 * Layer 8: the node's network door
 

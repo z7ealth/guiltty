@@ -22,6 +22,7 @@ guiltty learns a new sequence.
 | =ESC M=, =ESC ( B=          | ={:esc, "", ?M}=, ={:esc, "(", ?B}=  |
 | =ESC ] 0 ; title BEL=       | ={:osc, "0;title"}=                  |
 | =ESC P ... ESC \=           | (dropped: DCS)                       |
+| =ESC _ ... ESC \=           | ={:apc, data}= (Kitty graphics, chapter 26) |
 | UTF-8 text                  | ={:print, "señor 日本"}= (chapter 13) |
 
 * The anatomy of a CSI sequence
@@ -92,7 +93,9 @@ Three rules apply in every state except the strings:
   terminals behave this way, so we do too.
 
 Strings are different: inside an OSC everything up to BEL or ST (=ESC \=)
-is data. DCS, SOS, PM and APC strings are swallowed whole for now.
+is data. APC strings are kept too (they carry Kitty graphics, chapter
+26), found with one =:binary.match= for their end. DCS, SOS and PM
+strings are swallowed whole.
 
 * Limits
 
@@ -104,6 +107,7 @@ Anything the parser stores comes from a program you might not trust (try
 | parameters        | 32     | extra ones are dropped  |
 | one parameter     | 65535  | it stays at 65535       |
 | OSC data          | 4 KiB  | the rest is dropped     |
+| APC data          | 64 MiB | the whole APC is dropped |
 
 * Sequences that cross reads
 

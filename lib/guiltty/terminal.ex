@@ -23,6 +23,9 @@ defmodule Guiltty.Terminal do
   | `CSI ... m`              | SGR         | colors and attributes (`Guiltty.SGR`)   |
   | `CSI c`, `CSI > c`       | DA1, DA2    | answer: what kind of terminal this is   |
   | `CSI 5 n`, `CSI 6 n`     | DSR, CPR    | answer: status OK, cursor position      |
+  | `CSI 14/16/18 t`         | XTWINOPS    | answer: text area, cell size (pixels), grid size |
+  | `CSI > q`                | XTVERSION   | answer: guiltty and its version         |
+  | `APC G ... ST`           | Kitty graphics | images, see `Guiltty.Graphics`       |
   | `CSI ! p`                | DECSTR      | soft reset                              |
   | `CSI n SP q`             | DECSCUSR    | cursor shape: 1-2 block, 3-4 underline, 5-6 bar (odd blinks); 0 the user's |
   | `CSI ? n h/l`            | DECSET/RST  | private modes, see `dec_mode/3`         |
@@ -37,17 +40,18 @@ defmodule Guiltty.Terminal do
   Anything else is ignored.
   """
 
-  alias Guiltty.{Grid, Parser, SGR}
+  alias Guiltty.{Graphics, Grid, Parser, SGR}
 
   # What we answer to "what are you?": a VT220 (62) with ANSI color (22).
   # A low DA2 version keeps programs like vim from assuming a recent xterm
   # and asking for features guiltty doesn't have yet.
   @da1 "\e[?62;22c"
+  @version Mix.Project.config()[:version]
   @da2 "\e[>1;10;0c"
   @max_title 256
 
   @spec apply(Grid.t(), [Parser.command()]) :: Grid.t()
-  def apply(grid, commands), do: run(commands, grid)
+  def apply(grid, commands), do: commands |> run(grid) |> Grid.prune_graphics()
 
   # Lines of plain text (print, CR, LF), however many come in a row, go to
   # the grid together: it can lay them all down and scroll once.
@@ -97,6 +101,13 @@ defmodule Guiltty.Terminal do
   defp command({:esc, ")", final}, grid), do: Grid.designate(grid, :g1, charset(final))
 
   defp command({:osc, data}, grid), do: osc(data, grid)
+
+  # Images: Kitty graphics (APC G). See Guiltty.Graphics.
+  defp command({:apc, "G" <> body}, grid), do: Graphics.kitty(grid, body)
+
+  # XTVERSION: our name and version, as DCS > | text ST.
+  defp command({:csi, ?>, params, "", ?q}, grid) when params in [[], [0]],
+    do: Grid.respond(grid, "\eP>|guiltty #{@version}\e\\")
 
   defp command(_ignored, grid), do: grid
 
@@ -153,6 +164,17 @@ defmodule Guiltty.Terminal do
     {_row, col} = Grid.cursor(grid)
     Grid.respond(grid, "\e[#{Grid.report_row(grid) + 1};#{col + 1}R")
   end
+
+  # XTWINOPS reports, for programs that draw images: the text area (14)
+  # and one cell (16) in pixels, as height;width, and the grid in cells
+  # (18). The pixel ones only once the renderer has told us the cell size:
+  # no answer makes a program fall back, a made-up one makes it draw
+  # images the wrong size.
+  defp csi(?t, [14], %{cell_pixels: {w, h}} = grid),
+    do: Grid.respond(grid, "\e[4;#{h * grid.rows};#{w * grid.cols}t")
+
+  defp csi(?t, [16], %{cell_pixels: {w, h}} = grid), do: Grid.respond(grid, "\e[6;#{h};#{w}t")
+  defp csi(?t, [18], grid), do: Grid.respond(grid, "\e[8;#{grid.rows};#{grid.cols}t")
 
   defp csi(_final, _params, grid), do: grid
 

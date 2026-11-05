@@ -10,7 +10,7 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
 
   # Valid, harmless arguments for open/6: a program that doesn't exist,
   # so a child that does start just exits 127.
-  @open_args ["/nonexistent/guiltty-test", ["x"], [], 80, 24, ""]
+  @open_args ["/nonexistent/guiltty-test", ["x"], [], 80, 24, 720, 432, ""]
 
   defp wait_gone(pty, tries \\ 300) do
     case PtyNif.wait(pty) do
@@ -38,7 +38,7 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   defp junk, do: StreamData.term()
 
   property "open with a junk argument raises or returns, never crashes" do
-    check all(position <- StreamData.integer(0..5), value <- junk(), max_runs: 300) do
+    check all(position <- StreamData.integer(0..7), value <- junk(), max_runs: 300) do
       args = List.replace_at(@open_args, position, value)
 
       result =
@@ -63,7 +63,7 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
       &PtyNif.close/1,
       &PtyNif.wait/1,
       &PtyNif.write(&1, "x"),
-      &PtyNif.resize(&1, 80, 24),
+      &PtyNif.resize(&1, 80, 24, 0, 0),
       &PtyNif.kill(&1, 15)
     ]
 
@@ -73,11 +73,12 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   end
 
   property "junk sizes, signals and data on a real pty are refused or handled" do
-    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, "")
+    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, 0, 0, "")
 
     check all(a <- junk(), b <- junk(), max_runs: 300) do
       for call <- [
-            fn -> PtyNif.resize(pty, a, b) end,
+            fn -> PtyNif.resize(pty, a, b, 0, 0) end,
+            fn -> PtyNif.resize(pty, 80, 24, a, b) end,
             fn -> PtyNif.write(pty, a) end,
             # Never a signal by mistake: only 1..64 reach the child.
             fn -> if a in [9, 19, 17, 18], do: :skip, else: PtyNif.kill(pty, a) end
@@ -97,7 +98,7 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   end
 
   test "signal numbers outside 1..64 are refused" do
-    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, "")
+    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, 0, 0, "")
 
     for sig <- [0, -1, -9, 65, 1000, 2 ** 40],
         do: assert_raise(ArgumentError, fn -> PtyNif.kill(pty, sig) end)
@@ -107,14 +108,14 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   end
 
   test "a closed pty answers every call, and closes twice" do
-    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, "")
+    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, 0, 0, "")
     assert PtyNif.close(pty) == :ok
     assert PtyNif.close(pty) == :ok
     assert PtyNif.read(pty) == :eof
     assert PtyNif.write(pty, "x") == {:error, :ebadf}
     assert PtyNif.select_read(pty) == {:error, :ebadf}
     assert PtyNif.select_write(pty) == {:error, :ebadf}
-    assert PtyNif.resize(pty, 80, 24) == {:error, :ebadf}
+    assert PtyNif.resize(pty, 80, 24, 0, 0) == {:error, :ebadf}
     assert PtyNif.winch(pty) == {:error, :ebadf}
     assert PtyNif.foreground(pty) == {:error, :ebadf}
     # Closing the master hung up cat: it ends by itself.
@@ -122,7 +123,7 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   end
 
   test "once the child is gone, signals can't reach anyone" do
-    {:ok, pty, os_pid} = PtyNif.open("/bin/true", ["true"], [], 80, 24, "")
+    {:ok, pty, os_pid} = PtyNif.open("/bin/true", ["true"], [], 80, 24, 0, 0, "")
     drain(pty)
     assert wait_gone(pty) in [:gone, {:exited, 0}]
     assert PtyNif.wait(pty) == :gone
@@ -139,14 +140,14 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
     before = settled(count)
 
     for _ <- 1..50 do
-      {:ok, pty, _} = PtyNif.open("/bin/true", ["true"], [], 80, 24, "")
+      {:ok, pty, _} = PtyNif.open("/bin/true", ["true"], [], 80, 24, 0, 0, "")
       drain(pty)
       PtyNif.close(pty)
       wait_gone(pty)
     end
 
     # A pty dropped without close or wait: its destructor cleans up.
-    {:ok, _pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, "")
+    {:ok, _pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, 0, 0, "")
     :erlang.garbage_collect()
     Process.sleep(50)
 
@@ -165,12 +166,12 @@ defmodule Guiltty.Session.PtyNifSafetyTest do
   end
 
   test "many processes calling one pty at once don't crash the BEAM" do
-    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, "")
+    {:ok, pty, _} = PtyNif.open("/bin/cat", ["cat"], [], 80, 24, 0, 0, "")
 
     calls = [
       fn -> PtyNif.read(pty) end,
       fn -> PtyNif.write(pty, "hello\r") end,
-      fn -> PtyNif.resize(pty, Enum.random(1..300), Enum.random(1..100)) end,
+      fn -> PtyNif.resize(pty, Enum.random(1..300), Enum.random(1..100), 0, 0) end,
       fn -> PtyNif.foreground(pty) end,
       fn -> PtyNif.winch(pty) end,
       fn -> PtyNif.wait(pty) end,

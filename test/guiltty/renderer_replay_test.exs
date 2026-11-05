@@ -151,6 +151,142 @@ defmodule Guiltty.RendererReplayTest do
     end
   end
 
+  ## Images (book chapter 26)
+  #
+  # A solid red image, sent the way a Window sends one, in each format the
+  # renderer decodes. What's checked is where the red lands in the
+  # screenshot: its exact size in pixels, and its place.
+
+  @red_w 30
+  @red_h 40
+
+  defp red_image(:rgb), do: %{format: :rgb, data: :binary.copy(<<255, 0, 0>>, @red_w * @red_h)}
+
+  defp red_image(:rgba),
+    do: %{format: :rgba, data: :binary.copy(<<255, 0, 0, 255>>, @red_w * @red_h)}
+
+  defp red_image(:png), do: %{format: :png, data: png(@red_w, @red_h, <<255, 0, 0>>)}
+
+  # The smallest honest PNG: a signature, IHDR (8-bit RGB), one IDAT with
+  # every row behind a 0 (no filter) byte, IEND. Each chunk has its CRC.
+  defp png(w, h, rgb) do
+    chunk = fn type, data ->
+      [<<byte_size(data)::32>>, type, data, <<:erlang.crc32([type, data])::32>>]
+    end
+
+    rows = for _ <- 1..h, into: <<>>, do: <<0>> <> :binary.copy(rgb, w)
+
+    IO.iodata_to_binary([
+      <<137, ?P, ?N, ?G, 13, 10, 26, 10>>,
+      chunk.("IHDR", <<w::32, h::32, 8, 2, 0, 0, 0>>),
+      chunk.("IDAT", :zlib.compress(rows)),
+      chunk.("IEND", <<>>)
+    ])
+  end
+
+  defp image_msgs(dir, name, image, placement) do
+    alias Guiltty.{Grid, Theme}
+    alias Guiltty.Window.Protocol
+
+    options = %{padding: 6, opacity: 1.0, bold_is_bright: true}
+    grid = Grid.new(20, 8)
+
+    placement =
+      Map.merge(
+        %{
+          uid: 7,
+          row: 0,
+          col: 0,
+          offset: {0, 0},
+          source: {0, 0, @red_w, @red_h},
+          cells: {0, 0},
+          z: 0
+        },
+        placement
+      )
+
+    messages = [
+      Protocol.setup(20, 8, Theme.default(), %{family: "monospace", size: 16}, options),
+      Protocol.image(7, Map.merge(%{width: @red_w, height: @red_h}, image)),
+      Protocol.placements({20, 8}, [placement]),
+      Protocol.rows(%{
+        size: {20, 8},
+        rows: Grid.snapshot(grid),
+        cursor: {0, 0},
+        cursor_visible: false
+      })
+    ]
+
+    path = Path.join(dir, "#{name}.msgs")
+
+    File.write!(
+      path,
+      Enum.map(messages, fn m ->
+        bin = IO.iodata_to_binary(m)
+        [<<byte_size(bin)::32>>, bin]
+      end)
+    )
+
+    path
+  end
+
+  # The box around the red pixels: {x, y, w, h}, or nil.
+  defp red_box({w, _h, pixels}) do
+    red =
+      for {[r, g, b], i} <-
+            pixels |> :binary.bin_to_list() |> Enum.chunk_every(3) |> Enum.with_index(),
+          r > 200 and g < 60 and b < 60,
+          do: {rem(i, w), div(i, w)}
+
+    if red != [] do
+      {xs, ys} = Enum.unzip(red)
+
+      {Enum.min(xs), Enum.min(ys), Enum.max(xs) - Enum.min(xs) + 1,
+       Enum.max(ys) - Enum.min(ys) + 1}
+    end
+  end
+
+  for renderer <- ["guiltty_gl-dbg", "guiltty_vk-dbg"], format <- [:rgb, :rgba, :png] do
+    @tag if(renderer =~ "vk", do: :vulkan, else: :gl)
+    test "#{renderer} draws a #{format} image at its own size, where it's placed", %{tmp_dir: dir} do
+      at_top = image_msgs(dir, "top", red_image(unquote(format)), %{})
+      lower = image_msgs(dir, "lower", red_image(unquote(format)), %{row: 2, col: 3})
+      {x0, y0, w, h} = red_box(replay(unquote(renderer), dir, at_top))
+      assert {w, h} == {@red_w, @red_h}
+
+      # Two rows down, three columns right: cell sizes, whatever the font.
+      {x1, y1, ^w, ^h} = red_box(replay(unquote(renderer), dir, lower))
+      assert rem(x1 - x0, 3) == 0 and rem(y1 - y0, 2) == 0
+      assert x1 > x0 and y1 > y0
+    end
+  end
+
+  @tag :gl
+  test "an image partly scrolled off is cut at the grid's top, not drawn over the tab bar",
+       %{tmp_dir: dir} do
+    {_x, top, _w, _h} =
+      red_box(replay("guiltty_gl-dbg", dir, image_msgs(dir, "a", red_image(:rgba), %{})))
+
+    # The grid's first row starts one cell below the padding (the tab bar).
+    cell_h = top - 6
+    up = image_msgs(dir, "b", red_image(:rgba), %{row: -1})
+    assert {_x, ^top, @red_w, h} = red_box(replay("guiltty_gl-dbg", dir, up))
+    assert h == @red_h - cell_h
+  end
+
+  @tag :gl
+  test "asked for a number of cells, an image is scaled to fill them", %{tmp_dir: dir} do
+    {_x, top, _w, _h} =
+      red_box(replay("guiltty_gl-dbg", dir, image_msgs(dir, "a", red_image(:rgba), %{})))
+
+    cell_h = top - 6
+    msgs = image_msgs(dir, "c", red_image(:rgba), %{cells: {0, 3}})
+    {_x, _y, w, h} = red_box(replay("guiltty_gl-dbg", dir, msgs))
+    assert h == 3 * cell_h
+    # Only the rows were asked for: the width keeps the picture's shape.
+    assert_in_delta w, h * @red_w / @red_h, 1.5
+  end
+
   # Ligatures need a font that has them; JetBrains Mono does (its "NL"
   # builds don't). The messages are made here, as a Window would send them.
   @tag :ligature_font

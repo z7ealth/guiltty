@@ -15,7 +15,8 @@ defmodule Guiltty.Session.Screen do
   update, so a flood of output costs the window one update per frame, not
   one per chunk.
 
-  An update is a map with `:size` (`{cols, rows}`), `:rows` (`[{index, row}]`),
+  An update is a map with `:graphics` (the images that show, or `:same`;
+  see `Guiltty.Graphics.view/4`), `:size` (`{cols, rows}`), `:rows` (`[{index, row}]`),
   `:clusters` (`[{id, text}]`, the clusters the viewer hasn't seen yet),
   `:cursor` (`{row, col}`), `:cursor_visible`, `:title`, `:input` (the
   modes that change what keys, paste and the mouse send), `:scroll` and
@@ -65,8 +66,9 @@ defmodule Guiltty.Session.Screen do
   @doc "Everything that changed since the last update, as a map (see the moduledoc)."
   def take_update(id), do: GenServer.call(Session.via(id, :screen), :take_update)
 
-  @doc "Resizes the grid (no reflow)."
-  def resize(id, cols, rows), do: GenServer.call(Session.via(id, :screen), {:resize, cols, rows})
+  @doc "Resizes the grid (no reflow); `cell_pixels` is `{width, height}` or nil."
+  def resize(id, cols, rows, cell_pixels \\ nil),
+    do: GenServer.call(Session.via(id, :screen), {:resize, cols, rows, cell_pixels})
 
   @doc "The current title."
   def title(id), do: GenServer.call(Session.via(id, :screen), :title)
@@ -111,7 +113,10 @@ defmodule Guiltty.Session.Screen do
     scrollback = Keyword.get_lazy(opts, :scrollback, fn -> Config.get().scrollback end)
 
     grid =
-      Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24), scrollback: scrollback)
+      Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24),
+        scrollback: scrollback,
+        cell_pixels: opts[:cell_pixels]
+      )
 
     {:ok,
      %{
@@ -123,6 +128,8 @@ defmodule Guiltty.Session.Screen do
        # whether the viewer was told about changes it hasn't taken yet
        notified: false,
        sent_state: nil,
+       # what the images looked like in the last update (see graphics/2)
+       sent_graphics: nil,
        # cluster ids below this one were sent to the viewer
        sent_clusters: 0,
        title: "",
@@ -164,6 +171,7 @@ defmodule Guiltty.Session.Screen do
         viewer_ref: Process.monitor(pid),
         grid: Grid.mark_all_dirty(state.grid),
         sent_state: nil,
+        sent_graphics: nil,
         sent_clusters: 0,
         notified: false,
         mark: nil
@@ -192,13 +200,15 @@ defmodule Guiltty.Session.Screen do
 
     clusters = Grid.clusters_since(grid, state.sent_clusters)
 
-    update = update(grid, rows, clusters, state)
+    {graphics, sent_graphics} = graphics(grid, state)
+    update = Map.put(update(grid, rows, clusters, state), :graphics, graphics)
 
     state = %{
       state
       | grid: grid,
         notified: false,
         sent_state: viewer_state(state, grid),
+        sent_graphics: sent_graphics,
         sent_clusters: grid.next_cluster,
         decorated: decorated
     }
@@ -206,8 +216,11 @@ defmodule Guiltty.Session.Screen do
     {:reply, update, state}
   end
 
-  def handle_call({:resize, cols, rows}, _from, state) do
-    state = %{state | selection: nil} |> update_grid(&Grid.resize(&1, cols, rows))
+  def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
+    state =
+      %{state | selection: nil}
+      |> update_grid(&(&1 |> Grid.resize(cols, rows) |> Grid.set_cell_pixels(cell_pixels)))
+
     quiet_until = System.monotonic_time(:millisecond) + @resize_quiet_ms
     state = %{state | quiet_until: quiet_until}
     {:reply, :ok, state |> keep_view(state.grid.history) |> after_change()}
@@ -405,7 +418,18 @@ defmodule Guiltty.Session.Screen do
 
   defp viewer_state(state, grid) do
     {Grid.cursor(grid), grid.cursor_visible, grid.cursor_style, grid.title, grid.input, grid.alt?,
-     state.scroll, state.selection, state.search, Grid.scrollback_size(grid)}
+     state.scroll, state.selection, state.search, Grid.scrollback_size(grid),
+     Grid.graphics_version(grid)}
+  end
+
+  # The images to show ({placements, images}, see Guiltty.Graphics.view/4),
+  # or :same when nothing about them changed since the last update.
+  defp graphics(grid, state) do
+    key = {Grid.graphics_version(grid), state.scroll, grid.cols, grid.rows}
+
+    if key == state.sent_graphics,
+      do: {:same, key},
+      else: {Grid.graphics_view(grid, state.scroll), key}
   end
 
   defp update(grid, rows, clusters, state) do

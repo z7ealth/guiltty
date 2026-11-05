@@ -49,11 +49,20 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
     assert Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0x40>>) == {:ok, {:key, ?c, 0x40}}
-    assert Protocol.decode(<<6, 100::16, 30::16>>) == {:ok, {:resize, 100, 30}}
+
+    assert Protocol.decode(<<6, 100::16, 30::16, 9::16, 18::16>>) ==
+             {:ok, {:resize, 100, 30, {9, 18}}}
+
+    # A cell size of 0: the renderer doesn't know it.
+    assert Protocol.decode(<<6, 100::16, 30::16, 0::16, 18::16>>) ==
+             {:ok, {:resize, 100, 30, nil}}
+
     # Past the renderer's own limit: a broken message, not a window.
-    assert {:error, _} = Protocol.decode(<<6, 4097::16, 30::16>>)
-    assert {:error, _} = Protocol.decode(<<6, 100::16, 65_535::16>>)
-    assert {:error, {:bad_message, _}} = Protocol.decode(<<6, 0::16, 30::16>>)
+    assert {:error, _} = Protocol.decode(<<6, 4097::16, 30::16, 9::16, 18::16>>)
+    assert {:error, _} = Protocol.decode(<<6, 100::16, 65_535::16, 9::16, 18::16>>)
+    assert {:error, {:bad_message, _}} = Protocol.decode(<<6, 0::16, 30::16, 9::16, 18::16>>)
+    # The version 10 resize, without the cell size.
+    assert {:error, {:bad_message, _}} = Protocol.decode(<<6, 100::16, 30::16>>)
     assert {:error, {:bad_message, _}} = Protocol.decode(<<99>>)
     assert Protocol.decode(<<8, "a\nb">>) == {:ok, {:paste, "a\nb"}}
 

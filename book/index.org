@@ -30,3 +30,4 @@ the loot (what to read next) and a few questions to check yourself.
 24. [[file:23-client-server.org][Client and server: the guiltty command]]
 25. [[file:24-tab-comforts.org][Tab comforts: busy tabs, marks, names, order]]
 26. [[file:25-tab-styles.org][Tab styles: five ways to draw one row]]
+27. [[file:26-images.org][Images: pictures in a grid of characters]]

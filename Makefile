@@ -46,7 +46,7 @@ CLIENT = $(PRIV)/guiltty
 
 RENDERER_CORE = $(wildcard c_src/renderer/core/*.c)
 RENDERER_HEADERS = $(wildcard c_src/renderer/core/*.h)
-RENDERER_DEPS = sdl3 freetype2 fontconfig harfbuzz
+RENDERER_DEPS = sdl3 freetype2 fontconfig harfbuzz libpng
 RENDERER_CFLAGS = $(shell pkg-config --cflags $(RENDERER_DEPS))
 RENDERER_LIBS = $(shell pkg-config --libs $(RENDERER_DEPS))
 
@@ -59,7 +59,8 @@ RENDERER_GL = $(PRIV)/guiltty_gl
 # products (gitignored).
 VK_SRC = c_src/renderer/vk/vk_backend.c
 VK_SHADER_DIR = c_src/renderer/vk/shaders
-VK_SPV = $(VK_SHADER_DIR)/cell.vert.spv $(VK_SHADER_DIR)/cell.frag.spv
+VK_SPV = $(VK_SHADER_DIR)/cell.vert.spv $(VK_SHADER_DIR)/cell.frag.spv \
+         $(VK_SHADER_DIR)/image.vert.spv $(VK_SHADER_DIR)/image.frag.spv
 VK_CFLAGS = $(shell pkg-config --cflags vulkan)
 VK_LIBS = $(shell pkg-config --libs vulkan)
 RENDERER_VK = $(PRIV)/guiltty_vk
@@ -162,7 +163,8 @@ VALGRIND = SDL_VIDEO_DRIVER=offscreen \
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
   valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite \
   --track-origins=yes --num-callers=30 --quiet
-REPLAYS = test/fixtures/replay/session.msgs test/fixtures/fuzz/messages/all.msgs
+REPLAYS = test/fixtures/replay/session.msgs test/fixtures/fuzz/messages/all.msgs \
+          test/fixtures/fuzz/messages/images.msgs
 
 valgrind: $(RENDERER_GL) $(RENDERER_VK)
 	@mkdir -p $(FUZZ_DIR)

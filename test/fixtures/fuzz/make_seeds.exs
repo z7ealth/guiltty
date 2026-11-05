@@ -66,6 +66,34 @@ seeds = %{
     Protocol.font(%{font | size: 20}),
     Protocol.rows(screen.("after", 30, 4))
   ],
+  # Images (Kitty graphics): each format, placements of every shape (own
+  # size, cells, one of the two, cut by the grid's edge, under and over
+  # the text), then one dropped while a placement still names it.
+  "images" => [
+    Protocol.setup(20, 6, Theme.default(), font, options),
+    Protocol.image(1, %{format: :rgb, width: 3, height: 2, data: :binary.copy(<<255, 0, 0>>, 6)}),
+    Protocol.image(2, %{
+      format: :rgba,
+      width: 2,
+      height: 2,
+      data: :binary.copy(<<0, 255, 0, 128>>, 4)
+    }),
+    Protocol.image(3, %{
+      format: :png,
+      width: 30,
+      height: 40,
+      data: File.read!(Path.join(dir, "../images/red.png"))
+    }),
+    Protocol.placements({20, 6}, [
+      %{uid: 1, row: 0, col: 0, offset: {0, 0}, source: {0, 0, 3, 2}, cells: {0, 0}, z: -1},
+      %{uid: 2, row: -1, col: 18, offset: {3, 4}, source: {1, 0, 1, 2}, cells: {4, 0}, z: 0},
+      %{uid: 3, row: 4, col: 2, offset: {0, 0}, source: {0, 0, 30, 40}, cells: {0, 3}, z: 5},
+      %{uid: 3, row: 1, col: 5, offset: {0, 0}, source: {0, 0, 0, 0}, cells: {2, 2}, z: -9}
+    ]),
+    Protocol.rows(screen.("over the images", 20, 6)),
+    Protocol.image_drop(1),
+    Protocol.rows(screen.("dropped", 20, 6))
+  ],
   "resize" => [
     Protocol.setup(10, 2, Theme.default(), font, options),
     # An update for a size the renderer doesn't have: dropped.

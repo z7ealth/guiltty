@@ -14,9 +14,11 @@ defmodule Guiltty.Session.PtyNif do
 
   @doc """
   Opens a PTY and runs `path` on it, in directory `cwd` ("" for the BEAM's
-  own). Returns `{:ok, pty, os_pid}`.
+  own). `xpixel` and `ypixel` are the text area in pixels (0: unknown).
+  Returns `{:ok, pty, os_pid}`.
   """
-  def open(_path, _argv, _envp, _cols, _rows, _cwd), do: :erlang.nif_error(:not_loaded)
+  def open(_path, _argv, _envp, _cols, _rows, _xpixel, _ypixel, _cwd),
+    do: :erlang.nif_error(:not_loaded)
 
   @doc "Non-blocking read: `{:ok, bytes} | :eagain | :eof | {:error, reason}`."
   def read(_pty), do: :erlang.nif_error(:not_loaded)
@@ -30,8 +32,8 @@ defmodule Guiltty.Session.PtyNif do
   @doc "Sends `{:select, pty, :undefined, :ready_output}` once writable."
   def select_write(_pty), do: :erlang.nif_error(:not_loaded)
 
-  @doc "Sets the terminal size (TIOCSWINSZ); the kernel sends SIGWINCH."
-  def resize(_pty, _cols, _rows), do: :erlang.nif_error(:not_loaded)
+  @doc "Sets the terminal size (TIOCSWINSZ), in cells and pixels; the kernel sends SIGWINCH."
+  def resize(_pty, _cols, _rows, _xpixel, _ypixel), do: :erlang.nif_error(:not_loaded)
 
   @doc "Sends SIGWINCH to the foreground job, so full-screen programs redraw."
   def winch(_pty), do: :erlang.nif_error(:not_loaded)

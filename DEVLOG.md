@@ -1260,3 +1260,47 @@ way, one real bug: a config error outranked "⚠ broadcast paused" in the
 bar, so a paused group could look like a broken one. Now the warning
 wins. Fixed in v0.17.1. The original "stops working" isn't reproduced
 yet.
+
+## 2026-11-05 — v0.18: pictures in a grid of characters
+
+_Draft: agent, awaiting user_
+
+**Tried.** yazi shows image previews, and in guiltty it showed nothing.
+The first thing was to watch it: run yazi on a pseudoterminal, play the
+terminal, and record what it writes. It asks four questions at startup
+(who are you, can you draw Kitty graphics, how big is a cell, and DA1
+last), and when the answers say yes, it sends each picture as base64
+chunks in `ESC _ G` strings, placed with the cursor and deleted with
+`a=d,d=A`. That recording became the test fixture, and the plan: the
+cell size in pixels first (RESIZE carries it now, the kernel's
+`ws_xpixel` too), then the parser keeping APC strings, then
+`Guiltty.Graphics` holding images and placements as plain terms, then
+three new port messages, libpng in the renderer, and an image pass in
+both backends.
+
+**Broke.** My recorder answered yazi's questions in the wrong order, and
+yazi decided there were no graphics: it stops listening at DA1's answer,
+so anything after it is lost. A real terminal answers in order; mine
+didn't. I also built sixel support halfway, until the call was to drop
+it: every program that draws images prefers Kitty graphics, and one
+protocol is half the code to review and to trust. And a test of mine
+expected an image two rows above the screen to show; it was one row
+tall, so correctly it didn't.
+
+**Clicked.** Images scroll for free. A placement stores its line as
+"row plus how far the screen had scrolled", so a line feed only bumps a
+counter, and only while some image is placed. And deciding *where* in
+pixels happens in the renderer, every frame, from cells: zoom in and the
+picture moves and grows with the text. The first screenshot of yazi in
+guiltty, taken by recording the port messages of a headless run and
+replaying them, showed the preview right where yazi put it.
+
+### Later
+
+- Once, nvim-tree (NvChad) showed its folder rows without the arrow and
+  folder icon, the names shifted about four cells left, in a half-screen
+  window. Not reproduced since, neither by hand nor headless with the
+  same config, font and renderer; yazi, Emacs Treemacs and nvim-tree all
+  draw the same Nerd Font icons fine. Suspect: a redraw nvim made after a
+  resize or zoom. If it comes back: `GUILTTY_RECORD=/tmp/nvim.msgs
+  guiltty`, reproduce, replay the file.

@@ -65,8 +65,13 @@ defmodule Guiltty.Tabs do
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
 
-  @doc "Opens a new tab after the active one and makes it active. Returns its id."
-  def new_tab(tabs), do: GenServer.call(tabs, :new_tab)
+  @doc """
+  Opens a new tab after the active one and makes it active. Returns
+  `{:ok, id}`. Options go to its session, over the config's: `:shell`
+  and `:args` run a program instead of the shell (the tab closes when it
+  exits).
+  """
+  def new_tab(tabs, opts \\ []), do: GenServer.call(tabs, {:new_tab, opts})
 
   @doc "Closes a tab: its shell gets SIGHUP."
   def close(tabs, id), do: GenServer.call(tabs, {:close, id})
@@ -118,8 +123,12 @@ defmodule Guiltty.Tabs do
   @doc "`{[{id, title}], active_id}`."
   def list(tabs), do: GenServer.call(tabs, :list)
 
-  @doc "Resizes every tab, and makes it the size of tabs opened from now on."
-  def resize(tabs, cols, rows), do: GenServer.call(tabs, {:resize, cols, rows})
+  @doc """
+  Resizes every tab, and makes it the size of tabs opened from now on.
+  `cell_pixels` is one cell's `{width, height}` in pixels, or nil.
+  """
+  def resize(tabs, cols, rows, cell_pixels \\ nil),
+    do: GenServer.call(tabs, {:resize, cols, rows, cell_pixels})
 
   @doc "Registers a window: it gets the tab list now and on every change."
   def attach_window(tabs, pid), do: GenServer.call(tabs, {:attach_window, pid})
@@ -142,6 +151,8 @@ defmodule Guiltty.Tabs do
       check_scheduled: false,
       active: nil,
       size: {Config.get().window.columns, Config.get().window.rows},
+      # one cell in pixels, once a window has said (see resize/4)
+      cell_pixels: nil,
       windows: MapSet.new(),
       # monitor ref => session id
       monitors: %{},
@@ -191,8 +202,8 @@ defmodule Guiltty.Tabs do
   end
 
   @impl true
-  def handle_call(:new_tab, _from, state) do
-    case open_tab(state) do
+  def handle_call({:new_tab, opts}, _from, state) do
+    case open_tab(state, opts) do
       {:ok, id, state} -> {:reply, {:ok, id}, notify_windows(state)}
       {:error, _} = error -> {:reply, error, state}
     end
@@ -292,9 +303,9 @@ defmodule Guiltty.Tabs do
   def handle_call(:active, _from, state), do: {:reply, state.active, state}
   def handle_call(:list, _from, state), do: {:reply, {tab_list(state), state.active}, state}
 
-  def handle_call({:resize, cols, rows}, _from, state) do
-    for id <- state.tabs, do: Session.resize(id, cols, rows)
-    {:reply, :ok, %{state | size: {cols, rows}}}
+  def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
+    for id <- state.tabs, do: Session.resize(id, cols, rows, cell_pixels)
+    {:reply, :ok, %{state | size: {cols, rows}, cell_pixels: cell_pixels}}
   end
 
   def handle_call({:attach_window, pid}, _from, state) do
@@ -382,7 +393,7 @@ defmodule Guiltty.Tabs do
   defp start_dir(:home, _state), do: System.user_home()
   defp start_dir(dir, _state), do: dir
 
-  defp open_tab(state) do
+  defp open_tab(state, extra \\ []) do
     # Unique across every desk, and increasing: the Registry names sessions
     # by id, and running_sessions/1 sorts by it.
     id = System.unique_integer([:positive, :monotonic])
@@ -391,8 +402,10 @@ defmodule Guiltty.Tabs do
     # start (tests use them) win over it.
     opts =
       [id: id, desk: state.desk, cols: cols, rows: rows, owner: self()]
+      |> Keyword.put(:cell_pixels, state.cell_pixels)
       |> Keyword.merge(config_opts(state))
       |> Keyword.merge(state.session_opts)
+      |> Keyword.merge(extra)
 
     case DynamicSupervisor.start_child(@sessions, {Session.Supervisor, opts}) do
       {:ok, pid} ->

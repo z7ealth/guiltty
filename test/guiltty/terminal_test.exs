@@ -139,6 +139,21 @@ defmodule Guiltty.TerminalTest do
       assert responses("\e[3;7H\e[6n") == "\e[3;7R"
       assert responses("\e[2;4r\e[?6h\e[2;2H\e[6n") == "\e[2;2R"
     end
+
+    test "sizes in pixels and cells (XTWINOPS), for programs that draw images" do
+      grid = Grid.new(10, 5, cell_pixels: {9, 18})
+      {resp, _} = "\e[14t\e[16t\e[18t" |> run(10, 5, grid) |> Grid.take_responses()
+      assert IO.iodata_to_binary(resp) == "\e[4;90;90t\e[6;18;9t\e[8;5;10t"
+    end
+
+    test "no pixel sizes until the renderer has said, but the grid size" do
+      assert responses("\e[14t\e[16t\e[18t") == "\e[8;5;10t"
+    end
+
+    test "a full reset keeps the cell size: it belongs to the window" do
+      grid = Grid.new(10, 5, cell_pixels: {9, 18})
+      assert run("\ec", 10, 5, grid).cell_pixels == {9, 18}
+    end
   end
 
   describe "modes and title" do

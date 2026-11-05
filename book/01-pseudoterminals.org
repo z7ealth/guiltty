@@ -141,7 +141,7 @@ In =iex -S mix=, talk to a PTY directly through the NIF:
 #+begin_src elixir
 alias Guiltty.Session.PtyNif
 env = for {k, v} <- Map.put(System.get_env(), "TERM", "xterm-256color"), do: "#{k}=#{v}"
-{:ok, pty, _pid} = PtyNif.open("/usr/bin/bash", ["bash"], env, 80, 24)
+{:ok, pty, _pid} = PtyNif.open("/usr/bin/bash", ["bash"], env, 80, 24, 0, 0, "")
 Process.sleep(300); PtyNif.read(pty)        # the prompt, raw
 PtyNif.write(pty, "echo hi\r")
 Process.sleep(100); PtyNif.read(pty)        # the echo and the output

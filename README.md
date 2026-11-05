@@ -48,14 +48,14 @@ package listings.
 
 ```sh
 sudo zypper install gcc make pkg-config SDL3-devel freetype2-devel \
-  fontconfig-devel harfbuzz-devel vulkan-devel shaderc elixir erlang-epmd
+  fontconfig-devel harfbuzz-devel libpng16-devel vulkan-devel shaderc elixir erlang-epmd
 ```
 
 **Fedora 45 or newer**
 
 ```sh
 sudo dnf install gcc make pkgconf-pkg-config SDL3-devel freetype-devel \
-  fontconfig-devel harfbuzz-devel vulkan-loader-devel vulkan-headers glslc elixir
+  fontconfig-devel harfbuzz-devel libpng-devel vulkan-loader-devel vulkan-headers glslc elixir
 ```
 
 If Fedora's Elixir is older than 1.18 (`elixir --version`), leave out
@@ -65,7 +65,7 @@ If Fedora's Elixir is older than 1.18 (`elixir --version`), leave out
 
 ```sh
 sudo apt install build-essential pkg-config libsdl3-dev libfreetype-dev \
-  libfontconfig-dev libharfbuzz-dev libvulkan-dev glslc elixir erlang-dev
+  libfontconfig-dev libharfbuzz-dev libpng-dev libvulkan-dev glslc elixir erlang-dev
 ```
 
 Older Ubuntus have neither SDL3 nor GCC 15.
@@ -73,7 +73,7 @@ Older Ubuntus have neither SDL3 nor GCC 15.
 **Arch Linux**
 
 ```sh
-sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz \
+sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz libpng \
   vulkan-icd-loader vulkan-headers shaderc elixir
 ```
 
@@ -155,7 +155,11 @@ switch to it.
 
 The config file is `~/.config/guiltty/config.exs`. Ctrl+, creates it from
 [priv/config.example.exs](priv/config.example.exs), which documents every
-setting, and opens it in your editor. Saving applies most changes to the
+setting, and opens it in your editor: in a new tab running `$VISUAL` (or
+`$EDITOR`) if one is set, otherwise in your desktop's app for the file.
+guiltty reads the variable from its own environment, so set it where your
+session starts (`~/.profile`, or `~/.config/environment.d/`), not only in
+your shell's rc file. Saving applies most changes to the
 open window. Mistakes show in red in the tab bar, so they don't go
 unnoticed.
 

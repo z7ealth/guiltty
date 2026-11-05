@@ -1,0 +1,320 @@
+#+TITLE: Images: pictures in a grid of characters
+#+STARTUP: overview
+
+* A picture is not a character
+
+Everything so far has been cells: a glyph, two colors, some attributes.
+A picture doesn't fit in that. It's thousands of pixels, it covers many
+cells, and a program that shows one (yazi previewing a file, =kitten
+icat=, =chafa=, =timg=) needs three things from the terminal:
+
+1. a way to *send* the pixels, through the same byte stream as the text;
+2. a way to say *where* they go and when they go away;
+3. how big a cell is in *pixels*, to know how many cells a picture covers.
+
+The third is chapter 9's "Pixels too": =TIOCGWINSZ='s pixel fields and
+=CSI 16 t=. This chapter is about the first two.
+
+There are a few protocols for this. guiltty speaks the *Kitty graphics
+protocol*, the one most modern programs use: Kitty, Ghostty, WezTerm and
+Konsole speak it too. (Sixel, the 1980s DEC format, isn't supported:
+every program above prefers Kitty graphics when it's there.)
+
+* The Kitty graphics protocol
+
+A command is an APC string (Application Program Command, =ESC _=) that
+starts with =G=:
+
+#+begin_example
+  ESC _ G <control data> ; <payload> ESC \
+
+  control data   key=value pairs, comma separated: what to do
+  payload        base64: the image's bytes (or nothing)
+#+end_example
+
+The keys that matter:
+
+| Key       | Means                                   | Values guiltty takes                 |
+|-----------+-----------------------------------------+--------------------------------------|
+| =a=       | the action                              | =t= send, =T= send and show, =p= show, =d= delete, =q= query |
+| =f=       | the format of the payload               | =24= RGB, =32= RGBA, =100= PNG       |
+| =s=, =v=  | width and height in pixels (raw formats)| 1 to 4096                            |
+| =o=       | compression                             | =z= (zlib)                           |
+| =t=       | how the data travels                    | only =d= (in the payload itself)     |
+| =m=       | more chunks follow                      | =1=, then =0= on the last            |
+| =i=, =I=  | the image's id, or a number to name it  | 32-bit                               |
+| =p=       | a placement id                          |                                      |
+| =x y w h= | a part of the image                     | pixels                               |
+| =c=, =r=  | cells to fill (scaled)                  |                                      |
+| =X=, =Y=  | offset inside the first cell            | pixels                               |
+| =z=       | below 0: under the text; otherwise over |                                      |
+| =C=       | =1=: don't move the cursor              |                                      |
+| =q=       | =1=: no OK answers, =2=: no answers     |                                      |
+| =d=       | what to delete (with =a=d=)             | =a i n c p x y z r=, upper case also frees the image |
+
+** What yazi actually sends
+
+Recorded from yazi 26.8 ([[file:../test/fixtures/images/record_yazi.py][record_yazi.py]], fixture
+[[file:../test/fixtures/images/yazi_kitty.bytes][yazi_kitty.bytes]]). At startup it asks:
+
+#+begin_example
+  ESC _ G i=31,s=1,v=1,a=q,t=d,f=24 ; AAAA ESC \     "could you take a 1x1 RGB image?"
+  ESC [ 16 t                                          "how big is a cell?"
+  ESC [ 0 c                                           DA1, asked last: once its answer
+                                                      is in, every other answer is too
+#+end_example
+
+guiltty answers =ESC _ G i=31;OK ESC \=, so yazi picks Kitty graphics.
+To preview a 48 x 32 picture:
+
+#+begin_example
+  ESC [ s                                   save the cursor
+  ESC [ 2 ; 64 H                            go to the preview pane
+  ESC _ G q=2,a=T,z=-1,C=1,f=24,s=48,v=32,m=1 ; /QAA/wMA/wkA...  ESC \
+  ESC _ G m=0 ; /VEA/1UA/1sB... ESC \       the last chunk
+  ESC [ u                                   back to where the cursor was
+#+end_example
+
+Show it now (=a=T=), under the text (=z=-1=), don't move the cursor
+(=C=1=), RGB pixels, keep quiet (=q=2=), in two chunks. And when you move
+to the next file:
+
+#+begin_example
+  ESC _ G q=2,a=d,d=A ESC \                 delete every image on the screen
+#+end_example
+
+* Where it lives
+
+#+begin_example
+  program --bytes--> Parser ----{:apc, "G..."}----> Terminal
+                                                       |
+                                       Guiltty.Graphics.kitty/2 (pure)
+                                       decode base64, inflate, check sizes
+                                                       |
+                                       grid.graphics: images + placements
+                                                       |
+  Screen: take_update ---- :graphics, only when it changed ----> Window
+                                                       |
+                       IMAGE (once per image), IMAGE_DROP, PLACEMENTS, then ROWS
+                                                       |
+  renderer (own OS process): decode PNG (libpng), upload a texture,
+  draw: backgrounds, images z<0, glyphs, images z>=0
+#+end_example
+
+** The parser keeps APC strings
+
+Until v0.18 the parser swallowed APC strings ([[file:03-parser.org][chapter 3]]). Now it keeps
+them, up to 64 MB (a longer one is dropped whole), and finds where one
+ends with a single =:binary.match= for ESC, CAN or SUB instead of one
+step per byte: a picture is megabytes of base64. A string cut by the
+end of a read waits for the next one, like any other sequence.
+
+** Images and placements: =Guiltty.Graphics=
+
+[[file:../lib/guiltty/graphics.ex][graphics.ex]] keeps two things apart, in the grid's =:graphics= field:
+
+- an *image*: what was sent (raw pixels or a PNG file), its size in
+  pixels, and a =uid= unique in the whole node. *Nothing is decoded in
+  Elixir*: base64 and zlib, yes (they're =:base64= and =:zlib=), but the
+  pixels stay as they came. For a PNG, its size is read from its header
+  (the IHDR chunk, right after the 8-byte signature), so the cells it
+  covers are known without decoding it;
+- a *placement*: an image shown at a cell. yazi's, from the fixture:
+
+#+begin_example
+  %{image: 4294967298, screen: :alt, line: 1, col: 63, span: {4, 3},
+    source: {0, 0, 32, 48}, cells: {0, 0}, offset: {0, 0}, z: -1, pid: 0}
+#+end_example
+
+=span= is the cells it covers: 32 x 48 pixels in 9 x 18 cells is 4
+columns by 3 rows. =cells= is what the program asked for (=c=, =r=;
+={0, 0}=: its own size). The id is past 2^32: yazi sent no =i=, so the
+image is anonymous, and is forgotten when its last placement goes.
+
+** Scrolling for free
+
+A placement doesn't store its row. It stores a *line*: the row, plus how
+many lines its screen had scrolled up when it was placed
+(=graphics.scrolled=). When the screen scrolls, the grid adds to that
+counter, and every placement moves up with its text, with no list to
+walk. The row it shows at is =line - scrolled=, plus how far you scrolled
+back:
+
+#+begin_example
+  placed at row 4 when scrolled = 10   ->  line 14
+  10 line feeds later: scrolled = 20   ->  row 14 - 20 = -6 (above the screen)
+  you scroll back 8 rows               ->  row -6 + 8 = 2: it shows again
+#+end_example
+
+And while there's no placement, the grid doesn't count at all: a line
+feed checks one field (=placements == []=) and goes on. Only scrolls of
+the whole screen move images; a scroll region (a pager's, vim's) leaves
+them where they are.
+
+Placements go when they scroll past the scrollback (or off the top of
+the alternate screen), on =ESC [ 2 J=, =ESC [ 3 J= (the ones above),
+=ESC c=, and when a full-screen program leaves the alternate screen.
+Text written over an image doesn't remove it: it's under the cells or
+over them, not in them.
+
+** Limits
+
+| What                     | Limit      | Beyond it                                  |
+|--------------------------+------------+--------------------------------------------|
+| an image's side          | 4096 px    | =EINVAL= answer, nothing kept              |
+| one image's data         | 64 MB      | =EFBIG=; zlib stops inflating at the size the image can hold |
+| all images of a session  | 64 MB      | the oldest go, those that don't show first |
+| placements per session   | 256        | the oldest go                              |
+| an APC string            | 64 MB      | dropped whole                              |
+
+** Answers
+
+=reply/3= answers only when the program named the image (=i= or =I=),
+and as =q= says. An answer has numbers the program gave (its ids) and a
+fixed message of guiltty's, never anything else the program sent:
+
+#+begin_example
+  ESC _ G i=5 ; OK ESC \
+  ESC _ G i=5 ; ENOENT:no such image ESC \
+  ESC _ G i=1 ; EINVAL:only direct transmission (t=d) is supported ESC \
+#+end_example
+
+That's checked by a property test ([[file:../test/guiltty/escape_safety_test.exs][escape_safety_test.exs]]):
+random Kitty commands, and every answer must match that shape (chapter
+20 says why an answer must never echo a program's data).
+
+* To the renderer
+
+The Screen puts =:graphics= in an update only when something about the
+images changed (it compares a version the graphics bump on every
+change, how far it scrolled, the grid's size). Then it's
+={placements, images}=: what shows, with rows counted from the top of the
+view, and every image they use.
+
+The Window remembers which images the renderer already has
+(=sent_images=), and before the ROWS of that update sends, in order:
+
+| Message      | When                                             |
+|--------------+--------------------------------------------------|
+| =IMAGE=      | an image the renderer doesn't have yet           |
+| =IMAGE_DROP= | one it has that nothing shows any more           |
+| =PLACEMENTS= | where they all go, for this grid size            |
+
+So the frame drawn for those ROWS has the images in place. Switching
+tabs, the new tab's Screen sends its images; the old tab's are dropped.
+The cheatsheet hides them (an empty PLACEMENTS) and closing it brings
+them back with the rest of the screen.
+
+The wire formats are in [[file:05-port-protocol.org][chapter 5]] (version 12).
+
+* In the renderer
+
+** Decoding, in its own process
+
+[[file:../c_src/renderer/core/images.c][images.c]] turns an IMAGE's data into premultiplied RGBA:
+
+- *RGB, RGBA*: the size must be exactly =w x h x 3= (or 4) bytes;
+- *PNG*: libpng's "simplified API" (=png_image_begin_read_from_memory=,
+  then =png_image_finish_read=). The header is read first, so the size is
+  checked (at most 4096 a side) *before* anything big is allocated: a
+  tiny file claiming to be 100000 x 100000 stops there.
+
+Why here and not in Elixir? Image decoders are where memory bugs live.
+The renderer is a separate OS process (chapter 6): a broken PNG can
+crash a window, never the BEAM that holds every session. And it's
+fuzzed: =fuzz_messages= starts from a seed with every format and
+placement shape ([[file:../test/fixtures/fuzz/messages/images.msgs][images.msgs]]), and =make valgrind= replays it.
+
+*Premultiplied* means each color is already multiplied by its alpha
+(half-transparent pure green is =0, 128, 0, 128=). The backends blend
+"one, one minus source alpha", which is right for that and for a
+translucent window.
+
+** Where an image goes, every frame
+
+The core keeps the placements as Elixir sent them, in cells, and turns
+them into pixels each frame (=place_image= in [[file:../c_src/renderer/core/main.c::place_image][main.c]]). So zooming
+moves and scales them right away:
+
+#+begin_example
+  x = padding + col * cell_w + X           y = padding + (tab bar) + row * cell_h + Y
+  size: c and r given   -> c * cell_w  by  r * cell_h
+        only c (or r)   -> that one, and the other keeps the picture's shape
+        neither         -> the image's own pixels
+#+end_example
+
+** Drawing: two more passes
+
+The backend seam ([[file:06-renderer.org][chapter 6]]) gained =image_create= (pixels in, a
+texture handle out) and =image_destroy=. A frame now has four passes:
+
+#+begin_example
+  1. cell backgrounds
+  2. images with z < 0       (yazi's previews: under any text)
+  3. glyphs
+  4. images with z >= 0      (over the text)
+#+end_example
+
+Each image is one quad: four vertices, no vertex data, the shader makes
+the corners from the vertex index, as the cells do. It's clipped to the
+grid (=glScissor=, =vkCmdSetScissor=), so a picture partly scrolled off
+never covers the tab bar. The textures sample with linear filtering:
+unlike the atlas, an image is often scaled. In Vulkan each texture has
+its own descriptor set, from a pool made with
+=FREE_DESCRIPTOR_SET_BIT= so one can be freed alone, and uploads go
+through a staging buffer, like the atlas ([[file:19-vulkan.org][chapter 19]]).
+
+* Not supported
+
+- *=t=f=, =t=t=, =t=s=*: the image in a file, a temporary file or shared
+  memory, by name. A program on the other end of ssh could name your
+  files: guiltty would read them and maybe show them. Refused with an
+  answer, so the program sends the data instead.
+- Animation (=a=f=, =a=a=, =a=c=), Unicode placeholders (=U=1=, what tmux
+  needs), placements relative to others (=P=, =Q=).
+- Sixel.
+
+* Loot
+
+- Kitty's "Terminal graphics protocol" (sw.kovidgoyal.net/kitty/graphics-protocol).
+- ECMA-48 8.3.2 (APC) and 8.3.143 (ST).
+- =png(3)=, libpng-manual.txt section V, "Simplified API".
+- =zlib(3)=, and Erlang's =:zlib.safeInflate/2=; RFC 4648 (base64).
+- Premultiplied alpha: "Alpha compositing" (Porter and Duff, 1984), and
+  LearnOpenGL "Blending".
+- =glScissor=; =vkCmdSetScissor=; Vulkan descriptor pools,
+  =VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT=.
+
+* Questions
+
+1. Why are images decoded in the renderer and not in Elixir?
+2. A line feed scrolls the screen. What happens to the placements, and
+   how much work is it?
+3. Why doesn't guiltty support =t=f=, when Kitty does?
+4. yazi sends its query before =ESC [ 0 c=. Why does the order of the
+   answers matter?
+5. Why is the PNG's size read in Elixir, if Elixir doesn't decode it?
+6. Why is an image's place in pixels worked out in the renderer, every
+   frame, and not in Elixir?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Decoders are a classic place for memory bugs, and the data comes from
+   any program, maybe on another machine. In the renderer, a crash takes
+   a window down; in a NIF it would take the BEAM, and every session.
+2. Nothing happens to them: the grid adds to its =scrolled= counter, and
+   each placement's row is its =line= minus that counter. With no
+   placements the counter isn't even touched.
+3. It makes the terminal read a file by name. A remote program (over
+   ssh) could name your private files.
+4. Answers come back in the order the questions were asked. yazi stops
+   listening when DA1's answer arrives; an answer sent after it would be
+   missed, and yazi would think there are no Kitty graphics.
+5. To know how many cells the picture covers: for the cursor to move
+   past it, and for deleting by cell. The header has the size in fixed
+   bytes, no decoding needed.
+6. Only the renderer knows the cell size right now. Zoom, and the next
+   frame already has the picture moved and scaled.

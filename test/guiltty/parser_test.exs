@@ -89,9 +89,24 @@ defmodule Guiltty.ParserTest do
       assert parse("\e]0;t\e[1m") == [{:osc, "0;t"}, {:csi, nil, [1], "", ?m}]
     end
 
-    test "DCS, SOS, PM and APC are dropped" do
-      assert parse("\ePq#0;2;0;0;0\e\\a") == [{:print, "a"}]
-      assert parse("\e_app\e\\b\eXsos\e\\c") == [{:print, "b"}, {:print, "c"}]
+    test "APC is kept; DCS, SOS and PM are dropped" do
+      assert parse("\eP9;1q#0;2;0;0;0\e\\a") == [{:print, "a"}]
+
+      assert parse("\e_Ga=q;AAAA\e\\b\eXsos\e\\c") ==
+               [{:apc, "Ga=q;AAAA"}, {:print, "b"}, {:print, "c"}]
+    end
+
+    test "an APC is cancelled by CAN, and ends at any other ESC" do
+      assert parse("\e_Gabc\x18x") == [{:print, "x"}]
+      assert parse("\e_Gabc\e[1mx") == [{:csi, nil, [1], "", ?m}, {:print, "x"}]
+    end
+
+    test "an APC string waits across reads, however long" do
+      chunk = String.duplicate("A", 100_000)
+      {p, []} = Parser.feed(Parser.new(), "\e_G" <> chunk)
+      {p, []} = Parser.feed(p, chunk)
+      {_p, [{:apc, data}]} = Parser.feed(p, chunk <> "\e\\")
+      assert byte_size(data) == 300_001
     end
 
     test "OSC data is capped" do
@@ -139,6 +154,7 @@ defmodule Guiltty.ParserTest do
         "\e]0;title\a",
         "\e]2;x\e\\",
         "\ePdata\e\\",
+        "\e_Ga=T,f=24,s=1,v=1;/wAA\e\\",
         "\e7",
         "\e[?25l",
         "plain text",

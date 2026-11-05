@@ -51,6 +51,15 @@ struct cell {
 static_assert(sizeof(struct cell) == 12, "uploaded as-is, 12 bytes per cell");
 static_assert(offsetof(struct cell, fg) == 4 && offsetof(struct cell, bg) == 8);
 
+// An image to draw this frame: a texture the backend made (image_create),
+// where it goes in window pixels, and which part of it, in 0..1 texture
+// coordinates. The core has done the arithmetic.
+struct image_draw {
+    uint32_t image;
+    float x, y, w, h;
+    float u0, v0, u1, v1;
+};
+
 // Everything needed to draw one frame. cells holds cols * rows entries,
 // row-major. Only rows dirty_first..dirty_last changed since the previous
 // frame (none if dirty_first > dirty_last); the backend may upload just
@@ -74,6 +83,15 @@ struct frame {
     uint8_t cursor_rgb[3];
     uint8_t clear_rgb[3]; // the padding around the grid
     int origin_x, origin_y; // padding from the window's top-left, in pixels
+    // Images (Kitty graphics): those with z below 0 go over the
+    // backgrounds and under the text, the others over the text. Each list
+    // is drawn in order, clipped to the grid (clip_*, in window pixels,
+    // from the top-left), so an image never covers the tab bar.
+    const struct image_draw *below;
+    size_t below_count;
+    const struct image_draw *above;
+    size_t above_count;
+    int clip_x, clip_y, clip_w, clip_h;
 };
 
 // Callers must check every bool and pointer result ([[nodiscard]] can't be
@@ -94,6 +112,12 @@ struct backend {
     void (*draw_frame)(void *state, const struct frame *frame);
     void (*resize)(void *state, int width_px, int height_px);
     void (*shutdown)(void *state);
+    // Makes a texture of width x height premultiplied RGBA pixels, top row
+    // first. Returns its handle (not 0), or 0 if it can't (out of memory,
+    // too many images). The pixels can be freed afterwards.
+    uint32_t (*image_create)(void *state, uint32_t width, uint32_t height, const uint8_t *rgba);
+    // Frees a texture image_create made. No frame drawn after uses it.
+    void (*image_destroy)(void *state, uint32_t image);
 };
 
 extern const struct backend renderer_backend;
