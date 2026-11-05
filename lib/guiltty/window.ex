@@ -897,11 +897,10 @@ defmodule Guiltty.Window do
 
   defp status_text(%{flash: flash}) when is_binary(flash), do: {:warning, flash}
 
-  defp status_text(%{config_error: error}) when is_binary(error),
-    do: {:warning, "⚠ " <> error}
-
   # A lost connection in the broadcast group: say which. Typing goes
   # nowhere until that tab leaves the group (Ctrl+Shift+B on it) or closes.
+  # It comes before a config error: that one stays until the file is fixed,
+  # and would hide why your keys go nowhere.
   defp status_text(%{lost: [_ | _] = lost} = state) do
     names =
       Enum.map_join(lost, ", ", fn id ->
@@ -913,6 +912,9 @@ defmodule Guiltty.Window do
     # Short, so the tabs stay visible; how to go on is on the cheatsheet.
     {:warning, "⚠ broadcast paused: #{names} disconnected"}
   end
+
+  defp status_text(%{config_error: error}) when is_binary(error),
+    do: {:warning, "⚠ " <> error}
 
   defp status_text(%{group: group, active: active}) when is_map_key(group, active) do
     count = map_size(group)

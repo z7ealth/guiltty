@@ -454,6 +454,32 @@ defmodule Guiltty.WindowTest do
     assert Port.info(port(window))
   end
 
+  test "a paused broadcast shows over a config error, which comes back after", %{
+    id: id,
+    window: window
+  } do
+    send(window, {:config_error, "config.exs:4: theme: unknown name"})
+
+    assert eventually(fn ->
+             :sys.get_state(window).status == {:warning, "⚠ config.exs:4: theme: unknown name"}
+           end)
+
+    # What Tabs sends when the group's check finds tab 1's ssh gone.
+    info = Tabs.attach_window(@tabs, self())
+    send(window, {:tabs, %{info | group: %{id => "web-01"}, lost: MapSet.new([id])}})
+
+    assert eventually(fn ->
+             :sys.get_state(window).status ==
+               {:warning, "⚠ broadcast paused: tab 1 (web-01) disconnected"}
+           end)
+
+    send(window, {:tabs, info})
+
+    assert eventually(fn ->
+             :sys.get_state(window).status == {:warning, "⚠ config.exs:4: theme: unknown name"}
+           end)
+  end
+
   test "Ctrl+Shift+/ opens the cheatsheet; typing doesn't reach the shell; Esc closes it", %{
     id: id,
     window: window

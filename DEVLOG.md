@@ -1231,3 +1231,32 @@ same code measured 3.9 and 4.7 MB/s a minute apart. Best of 15, old and
 new code taking turns, was the only way to get numbers worth writing
 down. Colored text's real cost is every short colored word rebuilding
 its whole row; that's the batch path's next job.
+
+## 2026-11-05 — Broadcast's honest limits
+
+_Draft: agent, awaiting user_
+
+**Tried.** Three things about broadcast that felt like bugs. zsh's
+autosuggestions didn't carry over to the other tabs; neither did ↑
+through history; and once, typing reached only the tab I was looking at.
+We weighed copying the completed line to the other tabs, sending the
+command on Enter, and a key that sends the selection. Each one needs
+guiltty to know where a remote shell's command line starts, and only the
+shell knows that.
+
+**Broke.** Nothing in the code, but the ideas did. Every key *was*
+reaching every tab. A suggestion, a completion or a history entry is
+written by each server's own shell, from its own history and files.
+Same keys in, different lines out. tmux and ClusterSSH have the same
+limit. So the book now says it plainly (chapter 18, "Known issues"), and
+the plans went to the bin rather than to "Later".
+
+**Clicked.** For the third one, reading the code found no path that
+reaches the active tab and skips the rest. The likely suspect is a
+*frozen* ssh: still running, so the guard is happy, but its connection
+is dead, and keys sit in its buffers. `ServerAliveInterval` turns a
+frozen ssh into an exited one, which the guard does catch. Along the
+way, one real bug: a config error outranked "⚠ broadcast paused" in the
+bar, so a paused group could look like a broken one. Now the warning
+wins. Fixed in v0.17.1. The original "stops working" isn't reproduced
+yet.

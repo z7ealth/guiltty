@@ -8,6 +8,13 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.17.1 — 2026-11-05 — Broadcast warning
+
+### Fixed
+- "⚠ broadcast paused" now shows in the bar even while there's a config
+  error. Before, the config error hid it, and keys seemed to go nowhere
+  for no reason.
+
 ## 0.17.0 — 2026-11-02 — Faster text
 
 ### Changed

@@ -105,12 +105,57 @@ no terminal can close that gap completely. In practice a connection
 drops while you're reading the output, and the once-a-second check has
 paused the group before your next key.
 
+* Known issues
+
+** Keys go out, not commands
+
+Broadcast sends the /keys/ you press, the same bytes to every tab. What
+a key does is up to the shell at the other end, and each server's shell
+decides on its own. Anything a shell writes for you, rather than what
+you typed, can come out differently on every server:
+
+#+begin_example
+you type:        s y s →          (→ accepts a zsh-autosuggestions suggestion)
+
+tab 1 web-01     history has "systemctl restart nginx"
+                 → systemctl restart nginx
+tab 2 web-02     different history, or none
+                 → sys            (→ only moves the cursor)
+#+end_example
+
+The same goes for Tab completion (each server completes against its own
+files) and menus like =zsh-autocomplete='s. History is the risky one:
+↑ and Ctrl+R bring back each server's /own/ last commands, so the
+tabs can show different commands, or none, and Enter would run each
+server's own one. tmux's =synchronize-panes= and ClusterSSH work the
+same way: none of them can see a remote shell's command line.
+
+Making completion match on every tab would mean reading each command line
+off the screen, which depends on the shell, the prompt and every plugin.
+guiltty doesn't try. In a broadcast group, type the whole command, or
+paste it. Look at one other tab before pressing Enter if it matters.
+
+** A frozen connection isn't a lost one
+
+The guard notices an =ssh= that /exited/. An ssh that's still running
+but whose connection has stopped (the laptop slept, the Wi-Fi or VPN
+changed, a firewall dropped the idle TCP connection) still has the
+foreground, so the guard sees nothing wrong. Keys reach it and wait in
+its buffers, and that tab shows nothing until the connection comes back
+or ssh gives up, which can take minutes.
+
+The cure is on the ssh side: =ServerAliveInterval 15= and
+=ServerAliveCountMax 3= in =~/.ssh/config= make ssh give up on a dead
+connection within about 45 seconds. Its tab is then lost, and the group
+pauses.
+
 * Loot
 
 - =tcgetpgrp(3)=; =credentials(7)= (process groups and sessions).
 - =proc_pid_comm(5)=, =proc_pid_cmdline(5)=: what =/proc= says about a
   process.
-- =ssh(1)=: which options take a value.
+- =ssh(1)=: which options take a value; =ssh_config(5)=:
+  =ServerAliveInterval=, =ServerAliveCountMax=.
 - tmux's =synchronize-panes=, ClusterSSH (=cssh=), and for config changes
   across a fleet, Ansible's =lineinfile=.
 
@@ -125,6 +170,8 @@ paused the group before your next key.
    fixed completely?
 5. Why does a local tab take two presses to join, and why isn't it
    checked?
+6. You press Tab to complete a file name in a broadcast group. Why can
+   the tabs end up with different commands?
 
 ** Answers
 :PROPERTIES:
@@ -145,3 +192,6 @@ paused the group before your next key.
 5. So a remote tab whose ssh just died can't join as "local" by accident.
    It isn't checked because it has no connection to lose, and every local
    command takes the foreground, which would pause the group constantly.
+6. guiltty sends the Tab key to every tab, but each server's shell
+   completes against its own files. Where they differ, the completions
+   do too.
