@@ -156,7 +156,11 @@ defmodule Guiltty.Keymap do
                  "up" => @up,
                  "down" => @down,
                  "left" => @left,
-                 "right" => @right
+                 "right" => @right,
+                 # The key that types + without Shift (Latin American, Spanish,
+                 # German...). "+" can't be written in a key name: it joins
+                 # the parts.
+                 "plus" => ?+
                },
                Map.new(1..12, fn n -> {"f#{n}", @f1 + n - 1} end)
              )
@@ -164,7 +168,9 @@ defmodule Guiltty.Keymap do
   @doc """
   Parses a key name like `"ctrl+shift+t"` into `{keycode, modifiers}`,
   where modifiers is a set of `:ctrl`, `:shift` and `:alt`. Single letters,
-  digits and punctuation (`"ctrl+="`) are their own keycode.
+  digits and punctuation (`"ctrl+="`) are their own keycode: the key that
+  types that character *without* Shift in the current layout. `"plus"` is
+  the `+` key.
   """
   @spec parse_key(binary()) :: {:ok, {non_neg_integer(), MapSet.t()}} | :error
   def parse_key(name) do

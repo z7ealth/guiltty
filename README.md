@@ -166,9 +166,9 @@ guiltty stops after its last window.
 | Ctrl+Shift+F                  | search; Enter older, Shift+Enter newer, Escape ends |
 | select with the mouse         | copies to the primary selection          |
 | Ctrl+Shift+C, Ctrl+Shift+V    | copy, paste (middle click pastes the selection) |
-| Ctrl+=, Ctrl+-, Ctrl+0        | zoom in, out, reset                      |
+| Ctrl+= (or Ctrl and the + key), Ctrl+-, Ctrl+0 | zoom in, out, reset |
 | Ctrl+,                        | open the config file in your editor      |
-| Ctrl+Shift+/                  | the cheatsheet: every key, on one page   |
+| Ctrl+Shift+H (or Ctrl+Shift+/) | the cheatsheet: every key, on one page  |
 | Ctrl+Shift+L                  | lock the tab: it outlives the window     |
 | Ctrl+Shift+B                  | broadcast: type into all tabs in the group, every pane of each (ssh) |
 

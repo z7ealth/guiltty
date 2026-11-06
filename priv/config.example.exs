@@ -30,8 +30,12 @@
   #   tab_text: "#6272a4",         # the other tabs' titles
   #   tab_active: "#ff79c6",       # the active tab's background
   #   tab_active_text: "#282a36",  # the active tab's title
-  #   tab_accent: "#ff79c6"        # the line along the active tab (flat,
+  #   tab_accent: "#ff79c6",       # the line along the active tab (flat,
   #                                # minimal), the filled tab's color (others)
+  #   # The border between split panes, and along the focused one. Left
+  #   # out: the palette's bright black and blue.
+  #   pane_border: "#44475a",
+  #   pane_border_active: "#bd93f9"
   # ],
 
   # :block, :bar or :underline. Programs can change it while they run (vim
@@ -88,6 +92,11 @@
   # Their colors are in theme: (tab_bar, tab_active, ... above).
   tab_style: :flat,
 
+  # The border between split panes (Ctrl+Shift+O / E): one cell wide, a
+  # line of style :solid, :dashed, :double or :none (blank), :thin or
+  # :thick. Its colors are in theme: (pane_border, pane_border_active).
+  pane_border: [style: :solid, thickness: :thin],
+
   # Join ->, !=, |>, => and the like into one symbol, when the font has
   # ligatures (JetBrains Mono and Fira Code do; Source Code Pro doesn't).
   ligatures: true,
@@ -104,9 +113,14 @@
   scrollback: 10_000,
 
   # Each action takes a list of keys. Names: letters, digits, f1-f12,
-  # tab, enter, page_up, page_down, home, end, insert, delete, or a
-  # punctuation character like = or -, with any of the ctrl+, shift+ and
-  # alt+ modifiers.
+  # tab, enter, page_up, page_down, home, end, insert, delete, up, down,
+  # left, right, plus (the + key), or a punctuation character like = or -,
+  # with any of the ctrl+, shift+ and alt+ modifiers.
+  #
+  # A punctuation key is named by what it types *without* Shift on your
+  # layout. "ctrl+shift+/" is the / ? key on a US keyboard; on a Latin
+  # American one / is Shift+7, so no key matches it there, and the ' ?
+  # key is "ctrl+shift+'". Letters are the same on every layout.
   keys: [
     # A new window, with its own tabs (closing it never touches the others).
     new_window: ["ctrl+shift+n"],
@@ -128,13 +142,15 @@
     clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
     copy: ["ctrl+shift+c"],
-    zoom_in: ["ctrl+=", "ctrl+shift+="],
+    # Ctrl and the + key: "plus" names the key that types + without Shift
+    # (Latin American, Spanish, German layouts).
+    zoom_in: ["ctrl+=", "ctrl+shift+=", "ctrl+plus"],
     zoom_out: ["ctrl+-"],
     zoom_reset: ["ctrl+0"],
     # Opens this file in your editor (creating it from the example first).
     open_config: ["ctrl+,"],
     # Shows every key (this list, as you bound it).
-    cheatsheet: ["ctrl+shift+/"],
+    cheatsheet: ["ctrl+shift+h", "ctrl+shift+/"],
     # Locks the tab: closing the window ends every tab but the locked ones,
     # which keep running; the next `guiltty` brings that window back with
     # them, where you left them.

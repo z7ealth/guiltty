@@ -32,16 +32,32 @@ defmodule Guiltty.Window.Compose do
   @default_cell {10, 20}
 
   # Box drawing for the separators: which neighbors are separators too
-  # (up, down, left, right) picks the piece, so crossings join.
+  # (up, down, left, right) picks the piece, so crossings join. In order:
+  # vertical, horizontal, cross, then the T's pointing right, left, down, up.
+  @shapes [
+    {true, true, false, false},
+    {false, false, true, true},
+    {true, true, true, true},
+    {true, true, false, true},
+    {true, true, true, false},
+    {false, true, true, true},
+    {true, false, true, true}
+  ]
+
+  # Each look's pieces, in @shapes' order. Dashed lines have no T's or
+  # crosses of their own: they use the solid ones of their thickness.
   @pieces %{
-    {true, true, false, false} => ?│,
-    {false, false, true, true} => ?─,
-    {true, true, true, true} => ?┼,
-    {true, true, false, true} => ?├,
-    {true, true, true, false} => ?┤,
-    {false, true, true, true} => ?┬,
-    {true, false, true, true} => ?┴
+    {:solid, :thin} => ~c"│─┼├┤┬┴",
+    {:solid, :thick} => ~c"┃━╋┣┫┳┻",
+    {:dashed, :thin} => ~c"┆┄┼├┤┬┴",
+    {:dashed, :thick} => ~c"┇┅╋┣┫┳┻",
+    {:double, :thin} => ~c"║═╬╠╣╦╩",
+    {:double, :thick} => ~c"║═╬╠╣╦╩",
+    {:none, :thin} => ~c"       ",
+    {:none, :thick} => ~c"       "
   }
+
+  @default_look %{style: :solid, thickness: :thin, color: nil, active_color: nil}
 
   defstruct size: {0, 0},
             # visible panes, in layout order: [{id, {x, y, w, h}}]
@@ -56,7 +72,10 @@ defmodule Guiltty.Window.Compose do
             # clusters, with several panes: id => %{local => global}
             clusters: %{},
             next_cluster: @first_cluster,
-            cell_pixels: nil
+            cell_pixels: nil,
+            # what the separators look like (see look/2), and where they are
+            look: @default_look,
+            separators: []
 
   @type t :: %__MODULE__{}
 
@@ -65,7 +84,13 @@ defmodule Guiltty.Window.Compose do
   in a grid of `size`. `order` is the panes in layout order: a pane too
   small to show shares a rect with another, and the first one wins.
   """
-  def new(size, %{rects: rects, separators: seps, focus: focus}, order, cell_pixels \\ nil) do
+  def new(
+        size,
+        %{rects: rects, separators: seps, focus: focus},
+        order,
+        cell_pixels \\ nil,
+        look \\ nil
+      ) do
     panes =
       Enum.reduce(order, [], fn id, shown ->
         rect = Map.fetch!(rects, id)
@@ -76,9 +101,34 @@ defmodule Guiltty.Window.Compose do
       end)
       |> Enum.reverse()
 
-    %__MODULE__{size: size, panes: panes, focus: focus, cell_pixels: cell_pixels}
-    |> Map.put(:base, base(size, seps, Map.new(panes), focus))
+    c = %__MODULE__{
+      size: size,
+      panes: panes,
+      focus: focus,
+      cell_pixels: cell_pixels,
+      look: look || @default_look,
+      separators: seps
+    }
+
+    %{c | base: base(c)}
   end
+
+  @doc """
+  What the separators look like, from the config: its `pane_border`
+  (`style`, `thickness`) and the theme's `pane_border` and
+  `pane_border_active` colors (nil: the palette's bright black and blue).
+  """
+  def look(pane_border, theme) do
+    %{
+      style: pane_border.style,
+      thickness: pane_border.thickness,
+      color: Map.get(theme, :pane_border),
+      active_color: Map.get(theme, :pane_border_active)
+    }
+  end
+
+  @doc "Draws the separators another way: every row changes."
+  def restyle(c, look), do: %{c | look: look} |> then(&%{&1 | base: base(&1)})
 
   @doc "Whether there's more than one pane to show."
   def split?(%__MODULE__{panes: [_, _ | _]}), do: true
@@ -136,7 +186,8 @@ defmodule Guiltty.Window.Compose do
 
   @doc "Moves the focus: the separators around the new one light up."
   def refocus(c, focus, separators) do
-    %{c | focus: focus, base: base(c.size, separators, Map.new(c.panes), focus)}
+    c = %{c | focus: focus, separators: separators}
+    %{c | base: base(c)}
   end
 
   @doc "A pane's cursor, `{row, col}`, moved to where the pane is."
@@ -201,23 +252,27 @@ defmodule Guiltty.Window.Compose do
   end
 
   # Blank cells and the separators: dim, except along the focused pane.
-  defp base({cols, rows}, separators, rects, focus) do
+  defp base(%__MODULE__{size: {cols, rows}, look: look} = c) do
+    rects = Map.new(c.panes)
+
     sep_cells =
-      separators
+      c.separators
       |> Enum.flat_map(fn
         {:vertical, x, y, h} -> for cy <- y..(y + h - 1)//1, do: {x, cy}
         {:horizontal, x, y, w} -> for cx <- x..(x + w - 1)//1, do: {cx, y}
       end)
       |> MapSet.new()
 
-    lit = around(Map.get(rects, focus))
+    lit = around(Map.get(rects, c.focus))
+    pieces = Map.fetch!(@pieces, {look.style, look.thickness})
+    colors = {color(look.color, 8), color(look.active_color, 4)}
     blank = <<?\s::32, 0::16, 0::32, 0::32>>
 
     lines =
       for r <- 0..(rows - 1)//1 do
         for col <- 0..(cols - 1)//1, into: <<>> do
           if MapSet.member?(sep_cells, {col, r}),
-            do: separator_cell(sep_cells, col, r, MapSet.member?(lit, {col, r})),
+            do: separator_cell(sep_cells, col, r, MapSet.member?(lit, {col, r}), pieces, colors),
             else: blank
         end
       end
@@ -225,18 +280,22 @@ defmodule Guiltty.Window.Compose do
     List.to_tuple(lines)
   end
 
-  defp separator_cell(cells, col, r, lit?) do
+  defp separator_cell(cells, col, r, lit?, pieces, {dim, lit}) do
     has = &MapSet.member?(cells, &1)
     shape = {has.({col, r - 1}), has.({col, r + 1}), has.({col - 1, r}), has.({col + 1, r})}
 
-    glyph =
-      Map.get_lazy(@pieces, shape, fn ->
-        if elem(shape, 0) or elem(shape, 1), do: ?│, else: ?─
-      end)
+    # A shape not in the list (a line's end): its vertical or horizontal.
+    index =
+      Enum.find_index(@shapes, &(&1 == shape)) ||
+        if elem(shape, 0) or elem(shape, 1), do: 0, else: 1
 
-    fg = if lit?, do: Grid.indexed(4), else: Grid.indexed(8)
-    <<glyph::32, 0::16, fg::32, 0::32>>
+    fg = if lit?, do: lit, else: dim
+    <<Enum.at(pieces, index)::32, 0::16, fg::32, 0::32>>
   end
+
+  # A theme color, or a palette entry when the theme doesn't set one.
+  defp color({r, g, b}, _index), do: Grid.rgb(r, g, b)
+  defp color(nil, index), do: Grid.indexed(index)
 
   # The ring of cells around a rect: the separators that border it.
   defp around(nil), do: MapSet.new()

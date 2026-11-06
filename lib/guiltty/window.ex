@@ -984,7 +984,7 @@ defmodule Guiltty.Window do
 
   defp new_layout(state, tab, panes, order, size, key) do
     state = if tab != state.active_tab, do: leave_tab(state), else: state
-    compose = Compose.new(size, panes, order, state.cell_pixels)
+    compose = Compose.new(size, panes, order, state.cell_pixels, pane_look(state.config))
     gone = if state.compose, do: Compose.ids(state.compose) -- Compose.ids(compose), else: []
     state = Enum.reduce(gone, state, &unview(&2, &1))
 
@@ -1298,9 +1298,18 @@ defmodule Guiltty.Window do
     if config.cursor != old.cursor or config.bold_is_bright != old.bold_is_bright,
       do: resubscribe(state)
 
+    # The panes' borders: drawn again in the new look.
+    state =
+      if state.compose && pane_look(config) != pane_look(old),
+        do:
+          pull(%{state | compose: Compose.restyle(state.compose, pane_look(config)), full: true}),
+        else: state
+
     # The keys on the cheatsheet may have changed.
     if state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state
   end
+
+  defp pane_look(config), do: Compose.look(config.pane_border, config.theme)
 
   defp tab_style(config),
     do:

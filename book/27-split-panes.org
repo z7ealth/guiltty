@@ -33,6 +33,30 @@ moves windows with Ctrl+Shift+Alt+arrows. A key the desktop grabs never
 reaches the window, so guiltty uses Ctrl+Shift and Alt+Shift instead.
 Every one can be changed under =keys:= (chapter 16).
 
+* How the border looks
+
+The separator is one cell of box drawing, and its look is in the config
+(chapter 16):
+
+#+begin_src elixir
+pane_border: [style: :solid, thickness: :thick],
+theme: [name: "dracula", pane_border: "#44475a", pane_border_active: "#bd93f9"]
+#+end_src
+
+| =style= / =thickness= | =:thin=              | =:thick=             |
+|-----------------------+----------------------+----------------------|
+| =:solid= (default)    | =│ ─ ┼ ├ ┤ ┬ ┴=      | =┃ ━ ╋ ┣ ┫ ┳ ┻=      |
+| =:dashed=             | =┆ ┄=, solid joins   | =┇ ┅=, solid joins   |
+| =:double=             | =║ ═ ╬ ╠ ╣ ╦ ╩=      | (the same)           |
+| =:none=               | blank cells          | blank cells          |
+
+The thickness is the line's, not the gap's: the border is always one
+cell, so no room is lost. Solid lines, thin or thick, are drawn by
+guiltty itself (chapter 14's sprites), so they join seamlessly; dashed
+and double ones come from the font. =pane_border_active= colors the
+border along the focused pane; unset, the colors are the palette's bright
+black and blue.
+
 * A pane is a session
 
 Nothing about sessions changed. A pane is exactly what a tab used to be:

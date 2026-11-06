@@ -255,7 +255,8 @@ defmodule Guiltty.Cheatsheet do
     "up" => "Up",
     "down" => "Down",
     "left" => "Left",
-    "right" => "Right"
+    "right" => "Right",
+    "plus" => "+"
   }
 
   @doc false

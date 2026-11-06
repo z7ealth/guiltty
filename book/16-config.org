@@ -40,6 +40,26 @@ in =~/.profile= or =~/.config/environment.d/editor.conf=.
 ]
 #+end_src
 
+* Keys and keyboard layouts
+
+A key in =keys:= is named by what it types *without* Shift, on the
+layout you're using: the renderer reports SDL's keycode, which is that
+character. So ="ctrl+shift+/"= is the =/ ?= key on a US keyboard, but on a
+Latin American one =/= is Shift+7 and no key types it on its own: nothing
+matches. Letters, digits, arrows and the named keys are the same
+everywhere. That's why the defaults lean on them:
+
+| Action     | Defaults                                   | US           | Latin American |
+|------------+--------------------------------------------+--------------+----------------|
+| cheatsheet | =ctrl+shift+h=, =ctrl+shift+/=             | both         | Ctrl+Shift+H   |
+| zoom_in    | =ctrl+==, =ctrl+shift+==, =ctrl+plus=      | Ctrl+= or +  | Ctrl and the + key |
+| zoom_out, zoom_reset, open_config | =ctrl+-=, =ctrl+0=, =ctrl+,= | yes | yes        |
+
+=plus= names the =+= key, on layouts where it has one of its own: =+= can't
+be written in a key name, it joins the parts. For any other key that
+doesn't fit your layout, name the key you press as your layout types it
+unshifted (LatAm's =' ?= key: ="ctrl+shift+'"=).
+
 * When the file is broken
 
 A typo shouldn't leave you wondering why nothing changed. When the file
@@ -106,6 +126,8 @@ the renderer, some reach the shell's process:
 | =tab_bar= (=:bottom=, =:top=)  | renderer (OPTIONS) | live                       |
 | =tab_style= (=:flat=, =:powerline=, =:rounded=, =:minimal=, =:separators=) | renderer (TAB_STYLE) | live (chapter 25) |
 | =theme: tab_bar=, =tab_text=, =tab_active=, =tab_active_text=, =tab_accent= | renderer (TAB_STYLE) | live; unset ones derived from the theme (chapter 25) |
+| =pane_border: style= (=:solid=, =:dashed=, =:double=, =:none=), =thickness= (=:thin=, =:thick=) | Window (Compose) | live: every row sent again (chapter 27) |
+| =theme: pane_border=, =pane_border_active= | Window (Compose) | live; unset: the palette's bright black and blue (chapter 27) |
 | =ligatures=                    | renderer (OPTIONS) | live: every row sent again (chapter 14) |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
 | =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19); =GUILTTY_RENDERER= wins over it |
@@ -113,7 +135,7 @@ the renderer, some reach the shell's process:
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |
 | =copy_on_select=, =wheel_lines= | Window         | live                          |
-| =keys=                         | Window          | live                          |
+| =keys=                         | Window          | live; a punctuation key is named by what it types without Shift on your layout (see below) |
 
 The renderer can't read the config itself: it's a separate program with
 no Elixir in it, and it shouldn't need to know where files are. The

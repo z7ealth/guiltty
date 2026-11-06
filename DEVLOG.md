@@ -1344,6 +1344,31 @@ two panes' emoji would collide in the renderer's one table. Renumbering
 them window-wide, and only in panes that have any, kept the one-pane
 case free.
 
+## 2026-11-06 — v0.19.1: keys for every layout, borders with a look
+
+_Draft: agent, awaiting user_
+
+**Tried.** Two reports from using v0.19. Ctrl+Alt+arrows, the keys for
+moving between panes, never reached guiltty: XFCE switches workspaces
+with them, and moves windows with Ctrl+Shift+Alt+arrows, so both pane
+keys moved to Ctrl+Shift and Alt+Shift. And on a Latin American keyboard
+the cheatsheet key couldn't be pressed at all.
+
+**Broke.** The second one is how key bindings work: a punctuation key is
+named by what it types *without* Shift, in your layout (SDL's keycode).
+On LatAm `/` is Shift+7 and `=` is Shift+0, so `ctrl+shift+/` and
+`ctrl+=` match no key there. Reading the layout file in
+/usr/share/X11/xkb/symbols/latam showed it, and showed one more gap: the
++ key, which LatAm has on its own, couldn't be named, because + joins
+the parts of a key name.
+
+**Clicked.** Letters are the same on every layout, so the cheatsheet got
+Ctrl+Shift+H (help); `plus` names the + key, so zoom in works as "Ctrl
+and +" on both. The pane border got a look of its own (solid, dashed,
+double or none; thin or thick) and two theme colors, the same way the
+tab bar's colors work: unset, derived. Thick is box drawing's heavy
+line: twice the thin one, 2 pixels at 16 px on a normal screen.
+
 ### Later
 
 - Once, nvim-tree (NvChad) showed its folder rows without the arrow and

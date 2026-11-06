@@ -168,7 +168,8 @@ rest, and bash printed =¿Qué tal, señor?=.
 
 * The cheatsheet
 
-Ctrl+Shift+/ (think Ctrl+?) shows every key guiltty has, NvChad-style:
+Ctrl+Shift+H (H for help; Ctrl+Shift+/, think Ctrl+?, on a US keyboard)
+shows every key guiltty has, NvChad-style:
 one card per group, each line an action and its keys. The cards sit in a
 centered grid: rows balanced (6 cards with room for 5 per row make two
 rows of 3), every card in a row as tall as the tallest so their edges

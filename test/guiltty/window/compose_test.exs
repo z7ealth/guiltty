@@ -51,6 +51,26 @@ defmodule Guiltty.Window.ComposeTest do
     assert fg == Grid.indexed(4)
   end
 
+  test "the border's look: thick, double or none, in the theme's colors" do
+    layout = Layout.new(1) |> Layout.split(1, :right, 2)
+    {rects, seps} = Layout.rects(layout, {0, 0, 21, 4})
+    panes = %{rects: rects, separators: seps, focus: 1}
+
+    look = %{style: :solid, thickness: :thick, color: {1, 2, 3}, active_color: {200, 100, 50}}
+    [{0, row} | _] = Compose.new({21, 4}, panes, [1, 2], nil, look) |> Compose.all_rows()
+    <<_::binary-size(10 * 14), ?┃::32, _::16, fg::32, _::binary>> = row
+    # Pane 1 has the focus: its border is the active color.
+    assert fg == Grid.rgb(200, 100, 50)
+
+    double = %{look | style: :double}
+    [{0, row} | _] = Compose.new({21, 4}, panes, [1, 2], nil, double) |> Compose.all_rows()
+    assert text(row) =~ "║"
+
+    none = %{look | style: :none}
+    [{0, row} | _] = Compose.new({21, 4}, panes, [1, 2], nil, none) |> Compose.all_rows()
+    assert text(row) == String.duplicate(" ", 21)
+  end
+
   test "each pane's clusters get their own ids in the window" do
     c = two()
     {c, _, [{a, "👍🏽"}]} = Compose.update(c, 1, update("👍🏽", {10, 4}))

@@ -39,6 +39,10 @@ defmodule Guiltty.Config do
       `:rounded`, `:minimal` or `:separators`; their colors can be set in
       the theme (`tab_bar`, `tab_text`, `tab_active`, `tab_active_text`,
       `tab_accent`)
+    * `:pane_border` - the line between split panes: `style:` `:solid`
+      (the default), `:dashed`, `:double` or `:none`, and `thickness:`
+      `:thin` (the default) or `:thick`; its colors can be set in the theme
+      (`pane_border`, `pane_border_active`)
     * `:ligatures` - join `->`, `!=`, `|>` and the like into one symbol,
       when the font has ligatures (JetBrains Mono, Fira Code)
     * `:broadcast_programs` - what a tab must be running to join the
@@ -71,11 +75,14 @@ defmodule Guiltty.Config do
     clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
     copy: ["ctrl+shift+c"],
-    zoom_in: ["ctrl+=", "ctrl+shift+="],
+    # Ctrl and the + key on US layouts (= and Shift+=) and on those where
+    # + has a key of its own (Latin American, Spanish, German).
+    zoom_in: ["ctrl+=", "ctrl+shift+=", "ctrl+plus"],
     zoom_out: ["ctrl+-"],
     zoom_reset: ["ctrl+0"],
     open_config: ["ctrl+,"],
-    cheatsheet: ["ctrl+shift+/"],
+    # H for help, a letter on every layout; Ctrl+Shift+/ (Ctrl+?) on US.
+    cheatsheet: ["ctrl+shift+h", "ctrl+shift+/"],
     lock_tab: ["ctrl+shift+l"],
     broadcast: ["ctrl+shift+b"],
     split_right: ["ctrl+shift+o"],
@@ -115,6 +122,7 @@ defmodule Guiltty.Config do
       wheel_lines: 3,
       bold_is_bright: true,
       tab_bar: :bottom,
+      pane_border: %{style: :solid, thickness: :thin},
       tab_style: :flat,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
@@ -270,7 +278,8 @@ defmodule Guiltty.Config do
     %{
       nil => Map.keys(d),
       font: Map.keys(d.font),
-      theme: [:name, :fg, :bg, :cursor, :ansi] ++ Theme.tab_colors(),
+      theme: [:name, :fg, :bg, :cursor, :ansi] ++ Theme.tab_colors() ++ Theme.pane_colors(),
+      pane_border: Map.keys(d.pane_border),
       cursor: Map.keys(d.cursor),
       window: Map.keys(d.window),
       shell: Map.keys(d.shell),
@@ -343,6 +352,7 @@ defmodule Guiltty.Config do
          {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
          {:ok, tab_style} <- one_of(:tab_style, get.(:tab_style, d.tab_style), @tab_styles),
          {:ok, ligatures} <- one_of(:ligatures, get.(:ligatures, d.ligatures), [true, false]),
+         {:ok, pane_border} <- pane_border(get.(:pane_border, []), d.pane_border),
          {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
          {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]) do
       {:ok,
@@ -361,11 +371,29 @@ defmodule Guiltty.Config do
          tab_bar: tab_bar,
          tab_style: tab_style,
          ligatures: ligatures,
+         pane_border: pane_border,
          broadcast_programs: programs,
          renderer: renderer
        }}
     end
   end
+
+  @pane_styles [:solid, :dashed, :double, :none]
+
+  defp pane_border(opts, d) when is_list(opts) do
+    with {:ok, style} <-
+           one_of(:"pane_border style", Keyword.get(opts, :style, d.style), @pane_styles),
+         {:ok, thickness} <-
+           one_of(:"pane_border thickness", Keyword.get(opts, :thickness, d.thickness), [
+             :thin,
+             :thick
+           ]) do
+      {:ok, %{style: style, thickness: thickness}}
+    end
+  end
+
+  defp pane_border(_other, _d),
+    do: {:error, "pane_border: expected a keyword list, like [style: :solid, thickness: :thin]"}
 
   defp cursor(opts, d) when is_list(opts) do
     with {:ok, style} <-
@@ -481,7 +509,7 @@ defmodule Guiltty.Config do
   # Each one nil (derived by the renderer) unless set, here or in the
   # theme this one starts from.
   defp tab_colors(opts, default) do
-    Enum.reduce_while(Theme.tab_colors(), {:ok, []}, fn name, {:ok, acc} ->
+    Enum.reduce_while(Theme.tab_colors() ++ Theme.pane_colors(), {:ok, []}, fn name, {:ok, acc} ->
       case color(opts[name], Map.get(default, name)) do
         {:ok, rgb} -> {:cont, {:ok, [{name, rgb} | acc]}}
         {:error, why} -> {:halt, {:error, "theme #{name}: #{why}"}}

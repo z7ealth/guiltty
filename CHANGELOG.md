@@ -8,6 +8,26 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.19.1 — 2026-11-06 — Borders and layouts
+
+### Added
+- The border between split panes can be styled: `pane_border: [style:
+  :solid | :dashed | :double | :none, thickness: :thin | :thick]`, and
+  colored in the theme with `pane_border` and `pane_border_active` (the
+  border along the focused pane).
+- `plus` names the + key in `keys:` (`"ctrl+plus"`), for layouts where +
+  has a key of its own.
+
+### Changed
+- Default keys that work on US and Latin American layouts alike: the
+  cheatsheet is also on Ctrl+Shift+H (Ctrl+Shift+/ stays), and zoom in is
+  also on Ctrl and the + key (`ctrl+plus`). On a Latin American layout
+  neither default could be pressed before: a punctuation key is named by
+  what it types without Shift, and no key there types / or = unshifted.
+- Moving between panes is Ctrl+Shift+arrows, and resizing them
+  Alt+Shift+arrows: desktops (XFCE, GNOME) take Ctrl+Alt+arrows for
+  workspaces and Ctrl+Shift+Alt+arrows for moving windows.
+
 ## 0.19.0 — 2026-11-06 — Split panes
 
 ### Added

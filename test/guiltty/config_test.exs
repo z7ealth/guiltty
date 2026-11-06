@@ -131,6 +131,37 @@ defmodule Guiltty.ConfigTest do
     assert msg =~ "did you mean :tab_active"
   end
 
+  test "pane borders: style, thickness, and their colors in the theme", %{tmp_dir: dir} do
+    assert {:ok, %{pane_border: %{style: :solid, thickness: :thin}, theme: %{pane_border: nil}}} =
+             Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{pane_border: %{style: :double, thickness: :thick}, theme: theme}} =
+             Config.load(
+               write(dir, "b.exs", """
+               [pane_border: [style: :double, thickness: :thick],
+                theme: [name: "dracula", pane_border: "#44475a", pane_border_active: "#bd93f9"]]
+               """)
+             )
+
+    assert theme.pane_border == {0x44, 0x47, 0x5A}
+    assert theme.pane_border_active == {0xBD, 0x93, 0xF9}
+
+    assert {:error, msg} = Config.load(write(dir, "c.exs", "[pane_border: [style: :wavy]]"))
+    assert msg =~ "pane_border style"
+    assert {:error, msg} = Config.load(write(dir, "d.exs", "[pane_border: [width: 2]]"))
+    assert msg =~ "pane_border"
+    assert {:error, msg} = Config.load(write(dir, "e.exs", "[theme: [pane_border: \"grey\"]]"))
+    assert msg =~ "pane_border"
+  end
+
+  test "the default keys work on US and Latin American layouts alike" do
+    keys = Config.defaults().keys
+    # Ctrl+Shift+H on any layout; the + key, where it has a key of its own.
+    assert "ctrl+shift+h" in keys.cheatsheet
+    assert "ctrl+plus" in keys.zoom_in
+    assert Guiltty.Keymap.parse_key("ctrl+plus") == {:ok, {?+, MapSet.new([:ctrl])}}
+  end
+
   test "the example config is valid" do
     assert {:ok, _config} = Config.load(Path.expand("../../priv/config.example.exs", __DIR__))
   end

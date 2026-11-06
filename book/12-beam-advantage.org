@@ -209,7 +209,7 @@ guiltty work.
 | Ctrl+Shift+1 .. 9             | tab 1 .. 9                 |
 | click a tab                   | switch to it               |
 
-Every other key guiltty has is on its cheatsheet (Ctrl+Shift+/,
+Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
 [[file:07-input.org][chapter 7]]), which is built from your config.
 
 * Loot

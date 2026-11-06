@@ -16,12 +16,15 @@ defmodule Guiltty.Theme do
   The tab bar's colors (`tab_bar`, `tab_text`, `tab_active`,
   `tab_active_text`, `tab_accent`) are nil unless the config sets them:
   then the renderer derives each from the colors above, as fits the tab
-  style.
+  style. So are the split panes' borders (`pane_border`, and
+  `pane_border_active` along the focused pane): unset, they're the
+  palette's bright black and blue.
   """
 
   @tab_colors [:tab_bar, :tab_text, :tab_active, :tab_active_text, :tab_accent]
+  @pane_colors [:pane_border, :pane_border_active]
 
-  defstruct [:fg, :bg, :cursor, :ansi] ++ @tab_colors
+  defstruct [:fg, :bg, :cursor, :ansi] ++ @tab_colors ++ @pane_colors
 
   @type rgb :: {0..255, 0..255, 0..255}
   @type t :: %__MODULE__{
@@ -33,11 +36,16 @@ defmodule Guiltty.Theme do
           tab_text: rgb() | nil,
           tab_active: rgb() | nil,
           tab_active_text: rgb() | nil,
-          tab_accent: rgb() | nil
+          tab_accent: rgb() | nil,
+          pane_border: rgb() | nil,
+          pane_border_active: rgb() | nil
         }
 
   @doc "The tab bar's color names, in the order the renderer numbers them."
   def tab_colors, do: @tab_colors
+
+  @doc "The split panes' border colors."
+  def pane_colors, do: @pane_colors
 
   @doc "Tomorrow Night, a calm dark theme."
   @spec default() :: t()
