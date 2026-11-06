@@ -8,7 +8,7 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
-## Unreleased
+## 0.18.2 — 2026-11-06 — One-line install
 
 ### Added
 - A one-line install: `curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh`.
