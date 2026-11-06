@@ -76,7 +76,16 @@ To preview a 48 x 32 picture:
 #+end_example
 
 Show it now (=a=T=), under the text (=z=-1=), don't move the cursor
-(=C=1=), RGB pixels, keep quiet (=q=2=), in two chunks. And when you move
+(=C=1=), RGB pixels, keep quiet (=q=2=), in two chunks.
+
+=kitten icat= ([[file:../test/fixtures/images/icat.bytes][icat.bytes]], recorded with =script= inside guiltty)
+asks three questions instead of one: can you take an image in the
+escape sequence, in a temporary file (=t=t=), in shared memory (=t=s=)?
+guiltty says yes only to the first, so icat sends the pixels inline. And
+it repeats =a=T,q=2= on every chunk, where the protocol says only =m=
+(and =q=) should be there. Kitty takes that as the same image, so
+guiltty does too: a chunk goes on the transfer in progress unless it
+names another action or another image (=continues?/2=). And when you move
 to the next file:
 
 #+begin_example

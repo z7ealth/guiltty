@@ -44,6 +44,21 @@ defmodule Guiltty.GraphicsTest do
     end
   end
 
+  describe "kitten icat, recorded with script(1) inside guiltty" do
+    test "a picture in chunks that each repeat a=T: one image, shown" do
+      # A 300 x 200 JPEG: icat decodes it, then sends RGB in two chunks,
+      # the second with a=T,q=2 again (yazi sends only m=).
+      grid =
+        run(
+          File.read!(Path.join(@fixtures, "icat.bytes")),
+          Grid.new(80, 24, cell_pixels: {9, 18})
+        )
+
+      assert [%{source: {0, 0, 300, 200}, uid: uid}] = placements(grid)
+      assert %{^uid => %{format: :rgb, width: 300, height: 200}} = elem(view(grid), 1)
+    end
+  end
+
   describe "Kitty: sending and showing" do
     test "a=T shows the image at the cursor, at its own size in cells" do
       grid = run("\e[3;5H" <> kitty("a=T,f=24,s=25,v=30", rgb(25, 30)))
@@ -68,6 +83,18 @@ defmodule Guiltty.GraphicsTest do
 
       assert [%{source: {0, 0, 4, 4}}] = placements(grid)
       assert answers(grid) == ["\e_Gi=9;OK\e\\"]
+    end
+
+    test "a chunk that repeats the first one's action and id goes on the same image" do
+      <<a::binary-size(16), b::binary>> = Base.encode64(rgb(4, 4))
+      grid = run("\e_Ga=T,f=24,s=4,v=4,i=3,m=1;#{a}\e\\\e_Ga=T,i=3;#{b}\e\\")
+      assert [%{source: {0, 0, 4, 4}}] = placements(grid)
+      assert answers(grid) == ["\e_Gi=3;OK\e\\"]
+
+      # Another image's id, or another action, starts anew: the first is
+      # dropped, unfinished.
+      grid = run("\e_Ga=T,f=24,s=4,v=4,i=3,m=1;#{a}\e\\" <> kitty("a=d,d=a"))
+      assert placements(grid) == [] and grid.graphics.upload == nil
     end
 
     test "a=t keeps it, a=p shows it, again and again" do

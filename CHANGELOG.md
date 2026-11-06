@@ -8,6 +8,13 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.18.1 — 2026-11-05 — kitten icat
+
+### Fixed
+- `kitten icat` shows big pictures. It repeats `a=T` on every chunk of
+  an image, and guiltty took each chunk for a new image, so nothing
+  showed; now, as in Kitty, it's the same image.
+
 ## 0.18.0 — 2026-11-05 — Images
 
 ### Added

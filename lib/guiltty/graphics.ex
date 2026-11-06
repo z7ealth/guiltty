@@ -169,8 +169,11 @@ defmodule Guiltty.Graphics do
     g = grid.graphics
 
     cond do
-      # The next chunk of a transmission: only m (and q) are new.
-      g.upload != nil and not Map.has_key?(c, ?a) and not Map.has_key?(c, ?i) ->
+      # The next chunk of a transmission: only m (and q) are new. Some
+      # programs repeat the first chunk's action on every chunk (kitten
+      # icat sends a=T,q=2 each time); as in Kitty, that's still the
+      # same image. Another action, or another image's id, starts anew.
+      g.upload != nil and continues?(g.upload.control, c) ->
         continue_upload(grid, c, payload)
 
       c[?m] == 1 and action(c) in [?t, ?T, ?q] ->
@@ -180,6 +183,10 @@ defmodule Guiltty.Graphics do
       true ->
         run(%{grid | graphics: %{g | upload: nil}}, c, payload)
     end
+  end
+
+  defp continues?(first, c) do
+    Map.get(c, ?a, action(first)) == action(first) and Map.get(c, ?i, first[?i]) == first[?i]
   end
 
   defp continue_upload(grid, c, payload) do

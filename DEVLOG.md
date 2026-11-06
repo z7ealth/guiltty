@@ -1295,6 +1295,27 @@ picture moves and grows with the text. The first screenshot of yazi in
 guiltty, taken by recording the port messages of a headless run and
 replaying them, showed the preview right where yazi put it.
 
+## 2026-11-05 — v0.18.1: kitten icat, and reading the spec too strictly
+
+_Draft: agent, awaiting user_
+
+**Tried.** yazi showed pictures, `kitten icat` showed nothing, not even
+an error. Recording it with `script` inside a headless guiltty showed
+why it was quiet: it asks which way it may send an image (in the escape
+sequence, a temp file, shared memory), gets yes only for the first, and
+sends the pixels inline with `q=2`, "tell me nothing".
+
+**Broke.** It repeats `a=T,q=2` on every chunk. The spec says later
+chunks carry only `m=`, so guiltty read each chunk as a new image and
+threw the previous ones away; the last piece alone wasn't valid zlib,
+and `q=2` swallowed the error. Kitty, the reference, accepts it.
+
+**Clicked.** When the protocol's author's own client and own terminal
+agree on something the spec doesn't say, that's the protocol. Now a
+chunk goes on the transfer in progress unless it names another action
+or another image. A 240 KB recording of icat on a noisy JPEG is the
+test: the smallest picture icat splits into chunks.
+
 ### Later
 
 - Once, nvim-tree (NvChad) showed its folder rows without the arrow and
