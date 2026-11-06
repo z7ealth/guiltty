@@ -201,7 +201,7 @@ guiltty work.
 |-------------------------------+----------------------------|
 | Ctrl+Shift+N                  | new window (chapter 21)    |
 | Ctrl+Shift+T                  | new tab                    |
-| Ctrl+Shift+W                  | close tab (asks if busy, chapter 24) |
+| Ctrl+Shift+W                  | close the pane, or the tab (asks if busy, chapter 24) |
 | Ctrl+PgDn, Ctrl+Tab           | next tab                   |
 | Ctrl+PgUp, Ctrl+Shift+Tab     | previous tab               |
 | Ctrl+Shift+PgUp / PgDn        | move the tab left / right  |

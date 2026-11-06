@@ -86,10 +86,22 @@ arguments separated by NUL bytes. =ssh -p 2222 admin@web-02= gives
 take one) and keeps the part after the =@=. That's the =(web-02)= in the
 messages.
 
+* A split tab joins whole
+
+Since v0.19 a tab can be split into panes (chapter 27), each its own
+session. Ctrl+Shift+B joins (or leaves) *every pane of the tab* at once:
+split a tab in four, ssh to a server in each, press it once, and you type
+into four servers while watching all of them. Each pane is still checked
+on its own (its own ssh, its own foreground): if one connection drops,
+the group pauses and the tab shows ⚠. If one pane isn't running ssh, the
+first press says so and nothing joins; a second press adds the non-ssh
+panes as local ones. The group's members are panes; the markers and the
+status count tabs (and panes, when there are more).
+
 * Who does what
 
 [[file:../lib/guiltty/tabs.ex][Tabs]] owns the group, like it owns the tab list and the locks: which tabs,
-what each joined with, which are lost. Each window has its own Tabs
+what each pane joined with, which are lost. Each window has its own Tabs
 (chapter 21), so each window has its own group: broadcast never reaches
 across windows. It does the check and the writes,
 so they happen in one place, one keystroke at a time. The Window decides

@@ -1,0 +1,223 @@
+#+TITLE: Split panes: one tab, several shells
+#+STARTUP: overview
+
+* The idea
+
+A tab can hold several shells side by side: Ctrl+Shift+O splits the pane
+you're in to the right, Ctrl+Shift+E downwards. Each half is a whole
+terminal, with its own shell, scrollback, title and images; the separator
+between them is one cell of box drawing.
+
+#+begin_example
+  +-------------------------+------------------------+
+  | nvim lib/guiltty/       | git log                |
+  |   layout.ex             |                        |
+  |                         |                        |
+  |                         +------------------------+
+  |                         | yazi priv/icons   [img]|
+  +-------------------------+------------------------+
+       Ctrl+Shift+O               then Ctrl+Shift+E
+#+end_example
+
+| Keys                    | Does                                                  |
+|-------------------------+-------------------------------------------------------|
+| Ctrl+Shift+O / E        | split the focused pane right / down                   |
+| Ctrl+Shift+arrows, click  | move the focus to the pane that way, or the one clicked |
+| Alt+Shift+arrows   | move the nearest separator that way                   |
+| Ctrl+Shift+W, =exit=    | close the pane; its room goes back; the last one closes the tab |
+| Ctrl+Shift+B            | the whole tab joins the broadcast group (chapter 18)  |
+
+Ctrl+Alt+arrows would be the obvious keys for moving around, but desktops
+take them first: XFCE and GNOME switch workspaces with them, and XFCE
+moves windows with Ctrl+Shift+Alt+arrows. A key the desktop grabs never
+reaches the window, so guiltty uses Ctrl+Shift and Alt+Shift instead.
+Every one can be changed under =keys:= (chapter 16).
+
+* A pane is a session
+
+Nothing about sessions changed. A pane is exactly what a tab used to be:
+a =Pty=, a =Parser= and a =Screen= under their =rest_for_one= supervisor
+(chapter 8). So everything that's per session works per pane, for free:
+a crash restarts only that pane's process, each pane has its scrollback,
+search, selection and images, and the kernel gives each its own size
+(=TIOCSWINSZ=, chapter 9), so =vim= in a half-width pane wraps at its own
+edge.
+
+What changed is what a *tab* is: no longer a session, but a layout of
+them.
+
+* The layout: a tree
+
+[[file:../lib/guiltty/layout.ex][Guiltty.Layout]] is pure functions on a tree, as plain terms:
+
+#+begin_example
+  {:pane, id}                      one pane: a session's id
+  {:split, :right, ratio, a, b}    a on the left, b on the right
+  {:split, :down, ratio, a, b}     a on top, b below
+
+  split 1 right, then 2 down:
+
+  {:split, :right, 0.5,                       +---------+---------+
+     {:pane, 1},                              |         |    2    |
+     {:split, :down, 0.5,                     |    1    +---------+
+        {:pane, 2},                           |         |    3    |
+        {:pane, 3}}}                          +---------+---------+
+#+end_example
+
+=rects/2= lays it out in cells. In a 21 x 11 tab (from
+[[file:../test/guiltty/layout_test.exs][layout_test.exs]]):
+
+#+begin_example
+  pane 1  {0, 0, 10, 11}         x, y, width, height
+  pane 2  {11, 0, 10, 5}
+  pane 3  {11, 6, 10, 5}
+  separators  {:vertical, 10, 0, 11}  {:horizontal, 11, 5, 10}
+#+end_example
+
+The room left after the separator's cell is shared by =ratio=, each side
+at least one cell. A property test splits at random, in random sizes,
+and checks that panes and separators cover every cell of the tab and
+nothing outside it.
+
+Moving the focus asks the rects, not the tree: the neighbor to the right
+is the nearest pane whose left edge is past yours and that shares some of
+your height. Resizing moves the *nearest separator that runs across that
+direction*, as tmux does: Alt+Shift+Right moves the separator nearest
+the pane to the right, which grows the pane if the separator is on its
+right, and shrinks it if on its left.
+
+* Tabs keeps the layouts
+
+[[file:../lib/guiltty/tabs.ex][Guiltty.Tabs]] now keeps, per tab, a layout and the pane with the focus.
+A tab's id is the id of the session it was opened with: a tab of one
+pane is named like its session, which kept every existing caller (and
+test) working. On a resize, every pane of every tab gets its rect's size.
+
+If Tabs crashes, the new one takes back the running sessions as before,
+but each as a tab of its own: the layouts were only in the old process.
+They're terms; saving them somewhere that survives (another process, an
+ETS table owned by the desk) is a later step.
+
+* Stitching: one grid from several
+
+The renderer draws one grid, and stays that way: the Window stitches the
+panes together ([[file:../lib/guiltty/window/compose.ex][Guiltty.Window.Compose]]).
+
+#+begin_example
+  Screen 1 --rows of pane 1--+
+  Screen 2 --rows of pane 2--+--> Compose: window row r =
+  Screen 3 --rows of pane 3--+      base row r (blanks, separators)
+                                    with each pane's row r - y
+                                    spliced in at its columns
+                                          |
+                                          v
+                                   ROWS (one message) --> renderer
+#+end_example
+
+The Window views every pane's Screen. Each says ={:screen_dirty, id}=; the
+Window takes every dirty pane's update, splices the changed rows into
+window rows, and sends one ROWS, still at most one per frame (chapter 22).
+The cursor drawn is the focused pane's, moved by its pane's place; input
+modes (mouse reporting, bracketed paste, application keys) are the
+focused pane's too.
+
+The separators come from a *base* grid, built once per layout: a cell is
+=│= or =─=, or a junction (=├ ┤ ┬ ┴ ┼=) when its neighbors are separators
+too. The ones bordering the focused pane are drawn in the theme's blue,
+the rest dim.
+
+** Clusters
+
+A cell holds a codepoint, or the id of a cluster (a character made of
+several codepoints, like 👍🏽: chapter 13), and each pane's grid numbers
+its own from =0x110000=. Two panes can both have a cluster =0x110000=,
+meaning different text, and the renderer has one table. So with more
+than one pane, Compose gives every pane's clusters window-wide ids, tells
+the renderer those, and rewrites the cells that use them. Only rows of
+panes that have clusters at all are rewritten; a tab of one pane is
+passed through untouched.
+
+** Images
+
+A pane's images (chapter 26) are moved by its pane's place, and cut at
+its edges: the part of the picture outside the pane is cut off the
+source rectangle, so yazi's preview stays in yazi's pane.
+
+** What it costs
+
+A tab of one pane is the common case, and its rows go through as they
+came. =make bench= on v0.18.2 (built from the commit) and on this code,
+the same afternoon on the same machine:
+
+| =cat= in a real window | v0.18.2      | with panes   |
+|------------------------+--------------+--------------|
+| scrolling              | 2.8 MB/s     | 2.8 MB/s     |
+| log                    | 5.2-5.5 MB/s | 5.1-5.5 MB/s |
+| colors                 | 1.9-2.0 MB/s | 2.0-2.1 MB/s |
+
+(Lower than chapter 22's numbers: a slower afternoon for the desktop,
+for both builds. Compare columns, not chapters.)
+
+* The mouse
+
+A mouse event arrives in window cells. =Compose.at/3= says what's there:
+a pane, with the event's place in that pane's own cells, or a separator.
+
+- A *press* goes to the pane under it, and gives it the focus.
+- A *drag* stays in the pane it started in, even past its edge, so a
+  selection can't spill into the neighbor.
+- The *wheel* scrolls the pane under the pointer, focused or not.
+- A program that asked for the mouse (vim, htop) gets the event in its
+  own cells: a click at its column 3 is column 3, wherever its pane is.
+
+* Broadcast, a tab at a time
+
+Ctrl+Shift+B puts *every pane of the tab* in the broadcast group (chapter
+18). Split a tab in four, ssh to a server in each, press it once, and
+what you type goes to all four, which you watch side by side. The guard
+still checks each pane on its own: if one ssh ends, the group pauses and
+that tab gets the ⚠. If a pane isn't running ssh, the first press says so
+and nothing joins; a second press adds it as a local pane.
+
+* Loot
+
+- tmux(1): =split-window=, =select-pane=, =resize-pane= (the model the
+  keys follow), and Ghostty's =new_split=, =goto_split=, =resize_split=.
+- Binary space partitioning trees, the layout of tiling window
+  managers (i3, sway).
+- ioctl_tty(2) =TIOCSWINSZ=: each pane's own size, and its =SIGWINCH=.
+- Unicode box drawing, U+2500 to U+257F.
+
+* Questions
+
+1. Why is a pane a whole session, and not a part of one?
+2. The renderer draws one grid. Where do the panes become one picture,
+   and why there?
+3. Two panes both show an emoji with a skin tone. Why can't their cells be
+   sent to the renderer as they are?
+4. Alt+Shift+Right in the right-hand pane of a tab split in two: what
+   moves, and does the pane grow or shrink?
+5. You drag to select in the left pane and the pointer crosses into the
+   right one. Why doesn't the selection follow?
+6. Tabs crashes. What comes back, and what doesn't?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. So everything a session does (its own size, scrollback, crash
+   restarts, images) works per pane with no new code, and a crash in one
+   pane's parser touches no other pane.
+2. In the Window, in Elixir (=Compose=): the C stays one grid, small and
+   fuzzed, and the stitching is plain binaries, testable with no GPU. A
+   one-pane tab, the usual one, costs nothing.
+3. Each pane's grid numbers its clusters from =0x110000= on its own, so
+   the same id means different text in each; the renderer has one
+   table. Compose gives them window-wide ids.
+4. The separator nearest it that runs across: the one on its left. It
+   moves right, so the right pane shrinks, as tmux's =resize-pane -R=.
+5. A drag stays with the pane the button went down in (=mouse_pane=), and
+   past its edge the position is held at the edge.
+6. Every session, still running, each as a tab of its own: the layouts
+   (which pane was next to which) lived only in the old Tabs.

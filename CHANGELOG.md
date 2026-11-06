@@ -8,6 +8,24 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.19.0 — 2026-11-06 — Split panes
+
+### Added
+- Split panes: several shells in one tab, side by side. Ctrl+Shift+O
+  splits the focused pane right, Ctrl+Shift+E down; Ctrl+Shift+arrows (or a
+  click) moves the focus; Alt+Shift+arrows moves the separator
+  nearest the focused pane. Each pane is a whole terminal, with its own
+  scrollback, search, selection and images. New keys in `keys:`
+  (`split_right`, `split_down`, `focus_left`/`right`/`up`/`down`,
+  `resize_left`/`right`/`up`/`down`), and a Panes card on the cheatsheet.
+
+### Changed
+- Ctrl+Shift+W (`close_tab`) closes the focused pane; the tab closes with
+  its last pane. In a tab of one pane, nothing changes.
+- Ctrl+Shift+B puts every pane of the tab in the broadcast group (or
+  takes them out) at once: split, ssh in each pane, and type into all of
+  them.
+
 ## 0.18.2 — 2026-11-06 — One-line install
 
 ### Added

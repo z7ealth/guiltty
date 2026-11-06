@@ -5,7 +5,7 @@ defmodule Guiltty.GraphicsTest do
   """
   use ExUnit.Case, async: true
 
-  alias Guiltty.{Graphics, Grid, Parser, Terminal}
+  alias Guiltty.{Grid, Parser, Terminal}
 
   @fixtures Path.expand("../fixtures/images", __DIR__)
 

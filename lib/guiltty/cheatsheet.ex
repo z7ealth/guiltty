@@ -31,7 +31,7 @@ defmodule Guiltty.Cheatsheet do
        [
          {"New window", k.(:new_window)},
          {"New tab", k.(:new_tab)},
-         {"Close tab", k.(:close_tab)},
+         {"Close pane or tab", k.(:close_tab)},
          {"Next tab", k.(:next_tab)},
          {"Previous tab", k.(:prev_tab)},
          {"Move tab left / right", k.(:move_tab_left) <> " / " <> k.(:move_tab_right)},
@@ -64,6 +64,14 @@ defmodule Guiltty.Cheatsheet do
          {"Select word / line", "double / triple click"},
          {"Paste the selection", "middle click"},
          {"Select in vim, htop...", "hold Shift"}
+       ]},
+      {"Panes",
+       [
+         {"Split right", k.(:split_right)},
+         {"Split down", k.(:split_down)},
+         {"Move focus", arrows(config.keys, :focus)},
+         {"Resize", arrows(config.keys, :resize)},
+         {"Focus a pane", "click it"}
        ]},
       {"Broadcast",
        [
@@ -201,6 +209,27 @@ defmodule Guiltty.Cheatsheet do
   end
 
   ## Key names, as people write them
+
+  # The four keys of focus_* (or resize_*): "Ctrl+Shift+arrows" when they
+  # differ only by the arrow, as the defaults do; otherwise each one.
+  defp arrows(bindings, prefix) do
+    dirs = ~w(left right up down)
+    firsts = for d <- dirs, do: bindings |> Map.get(:"#{prefix}_#{d}", []) |> List.first()
+
+    prefixes =
+      Enum.zip_with(dirs, firsts, fn d, name ->
+        if is_binary(name) and String.ends_with?(name, "+" <> d),
+          do: String.trim_trailing(name, d)
+      end)
+
+    case Enum.uniq(prefixes) do
+      [common] when is_binary(common) ->
+        pretty(common <> "x") |> String.trim_trailing("X") |> Kernel.<>("arrows")
+
+      _ ->
+        Enum.map_join(dirs, " ", &keys(bindings, :"#{prefix}_#{&1}"))
+    end
+  end
 
   defp keys(bindings, action) do
     case Map.get(bindings, action, []) do

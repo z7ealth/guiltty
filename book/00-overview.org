@@ -77,8 +77,8 @@ Four pieces are C, the rest is Elixir, in about equal parts:
 The pipe above is still there, once per tab. Around it, MVP 4 and later
 added tabs that outlive windows, MVP 13 independent windows, MVP 15 the
 client, v0.16 smaller comforts for tabs (chapter 24), v0.16.1 tab
-styles (chapter 25), v0.17 the text NIF (chapter 22) and v0.18 images
-(chapter 26):
+styles (chapter 25), v0.17 the text NIF (chapter 22), v0.18 images
+(chapter 26) and v0.19 split panes (chapter 27):
 
 #+begin_example
   you: `guiltty`, or the menu
@@ -89,9 +89,9 @@ styles (chapter 25), v0.17 the text NIF (chapter 22) and v0.18 images
   BEAM: the guiltty node                Launcher (chapter 23)
     Lifeline: stops guiltty after the last window (chapter 21)
     Desk (one per window)
-      Tabs: that window's tabs, locks, broadcast group
+      Tabs: that window's tabs, each a layout of panes; locks, broadcast
       Window --- port ---> guiltty_vk (one per window)
-    Sessions (one per tab): Pty -> Parser -> Screen  (as above)
+    Sessions (one per pane): Pty -> Parser -> Screen  (as above)
                             |                  |
                             pty_nif.so         text_nif.so: the Screen's
                             (syscalls)         Grid calls it to turn text
@@ -121,6 +121,7 @@ styles (chapter 25), v0.17 the text NIF (chapter 22) and v0.18 images
 | v0.16.1  | Tab styles         | Powerline, rounded, minimal, separators; tab colors |
 | v0.17    | Faster text        | The text NIF: mixed text prints ~2x faster   |
 | v0.18    | Images             | Kitty graphics: yazi previews, =kitten icat= |
+| v0.19    | Split panes        | Several shells in one tab, side by side      |
 
 * Loot
 

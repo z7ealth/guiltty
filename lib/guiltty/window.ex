@@ -12,10 +12,11 @@ defmodule Guiltty.Window do
 
   ## Frames
 
-  The Window doesn't forward every screen change. It views the active tab's
-  Screen, which says `{:screen_dirty, id}` when something changed; the
-  Window takes one combined update (`Screen.take_update/1`), sends it, and
-  takes the next only after the renderer reports it drew a frame. So the
+  The Window doesn't forward every screen change. It views the Screen of
+  every pane of the active tab; each says `{:screen_dirty, id}` when
+  something changed. The Window takes the update of every pane that said
+  so (`Screen.take_update/1`), stitches them into one, sends it, and takes
+  the next only after the renderer reports it drew a frame. So the
   renderer gets at most one update per frame, however fast a program
   prints. Frame times are emitted as `[:guiltty, :renderer, :frame]`
   (`%{duration: microseconds}`).
@@ -42,6 +43,15 @@ defmodule Guiltty.Window do
   tab's new name, shown in the status, Enter sets it (empty gives the
   program's title back) and Escape leaves it as it was.
 
+  ## Split panes
+
+  A tab can be split into panes (`Guiltty.Tabs`, `Guiltty.Layout`). The
+  renderer still draws one grid: the Window views every pane's Screen and
+  stitches their rows together around one-cell separators
+  (`Guiltty.Window.Compose`). The focused pane gets what you type, and its
+  cursor is the one drawn. A click focuses the pane under it; a drag stays
+  in the pane it started in; the wheel scrolls the pane under the pointer.
+
   ## Closing a busy tab
 
   Closing a tab whose shell is running a program (`vim`, `ssh`, a build)
@@ -55,7 +65,7 @@ defmodule Guiltty.Window do
 
   alias Guiltty.{Cheatsheet, Config, Keymap, Lifeline, Session, Tabs}
   alias Guiltty.Session.{Pty, Screen}
-  alias Guiltty.Window.Protocol
+  alias Guiltty.Window.{Compose, Protocol}
 
   @hello_timeout 5_000
   @resubscribe_ms 50
@@ -111,9 +121,28 @@ defmodule Guiltty.Window do
       drawn: false,
       handler: handler,
       ready: false,
-      # the session being shown, and a monitor on its Screen
+      # the focused pane's session (what you type into), the tab it's in,
+      # and how that tab's panes are stitched into one grid
       active: nil,
-      screen_ref: nil,
+      active_tab: nil,
+      compose: nil,
+      # the active tab's panes as Tabs said (its info's :panes), and the
+      # layout the compose was made for
+      panes: nil,
+      layout_key: nil,
+      # each tab's panes
+      members: %{},
+      # monitor ref => pane, one per pane's Screen being viewed
+      screen_refs: %{},
+      # pane => what its last update said: input modes, title, cursor...
+      pane_state: %{},
+      # panes with something new to take, and whether the next update
+      # sends every row (a new layout or focus)
+      dirty: MapSet.new(),
+      full: false,
+      # the pane the mouse button went down in: a drag stays in it
+      mouse_pane: nil,
+      cell_pixels: nil,
       tabs: [],
       # one update in flight to the renderer at a time
       awaiting_frame: false,
@@ -208,8 +237,7 @@ defmodule Guiltty.Window do
     Logger.warning("window: the Vulkan renderer #{why}; drawing with OpenGL")
     Application.put_env(:guiltty, :vulkan_failed, true)
     if why == "didn't say hello", do: Port.close(state.port)
-    if state.active, do: catch_exit(fn -> Screen.unsubscribe(state.active, self()) end)
-    if state.screen_ref, do: Process.demonitor(state.screen_ref, [:flush])
+    state = unview_all(state)
     renderer = "guiltty_gl" <> build
 
     {:noreply,
@@ -220,7 +248,10 @@ defmodule Guiltty.Window do
          notice: "Vulkan couldn't start: drawing with OpenGL (see the log)",
          ready: false,
          active: nil,
-         screen_ref: nil,
+         active_tab: nil,
+         compose: nil,
+         panes: nil,
+         layout_key: nil,
          tabs: [],
          awaiting_frame: false,
          pending: false,
@@ -270,23 +301,30 @@ defmodule Guiltty.Window do
 
   ## Screen and tabs
 
-  def handle_info({:screen_dirty, id}, %{active: id} = state), do: {:noreply, pull(state)}
-  def handle_info({:screen_dirty, _other}, state), do: {:noreply, state}
+  def handle_info({:screen_dirty, id}, state) do
+    if shown?(state, id),
+      do: {:noreply, pull(%{state | dirty: MapSet.put(state.dirty, id)})},
+      else: {:noreply, state}
+  end
 
   def handle_info({:tabs, info}, state), do: {:noreply, show_tabs(state, info)}
 
   def handle_info(:flash_over, state),
     do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil, confirm_close: nil})}
 
-  # The active Screen restarted (it crashed, or its session did). The new
-  # one doesn't know about us, so view it again.
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{screen_ref: ref} = state) do
-    {:noreply, view(%{state | screen_ref: nil, awaiting_frame: false}, state.active)}
+  # A shown pane's Screen restarted (it crashed, or its session did). The
+  # new one doesn't know about us, so view it again.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{screen_refs: refs} = state)
+      when is_map_key(refs, ref) do
+    {id, refs} = Map.pop(refs, ref)
+    {:noreply, view(%{state | screen_refs: refs, awaiting_frame: false}, id)}
   end
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
-  def handle_info({:view, id}, %{active: id} = state), do: {:noreply, view(state, id)}
-  def handle_info({:view, _old}, state), do: {:noreply, state}
+
+  def handle_info({:view, id}, state) do
+    if shown?(state, id), do: {:noreply, view(state, id)}, else: {:noreply, state}
+  end
 
   def handle_info({:parser_restarted, _id}, state) do
     if state.ready, do: send_port(state, Protocol.halo(@halo_color, @halo_ms))
@@ -310,7 +348,7 @@ defmodule Guiltty.Window do
     if version == Protocol.version() do
       Logger.debug("window: renderer #{backend} speaks protocol #{version}")
       info = Tabs.attach_window(state.desk_tabs, self())
-      {cols, rows} = Session.size(info.active)
+      {cols, rows} = info.size
       setup = Protocol.setup(cols, rows, state.config.theme, font(state), options(state.config))
       send_port(state, setup)
       send_port(state, tab_style(state.config))
@@ -337,7 +375,7 @@ defmodule Guiltty.Window do
   # The user resized the window and the renderer worked out the new grid.
   defp handle_event({:resize, cols, rows, cell_pixels}, state) do
     Tabs.resize(state.desk_tabs, cols, rows, cell_pixels)
-    state = %{state | size: {cols, rows}}
+    state = %{state | size: {cols, rows}, cell_pixels: cell_pixels}
 
     {:noreply,
      if(state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state)}
@@ -380,10 +418,23 @@ defmodule Guiltty.Window do
     {:noreply, input(state, Keymap.paste(text, state.input))}
   end
 
-  defp handle_event({:mouse, _kind, _button, _col, _row, mods, _clicks} = event, state) do
-    if state.input.mouse != nil and not Keymap.shift?(mods),
-      do: {:noreply, write(state, Keymap.mouse(event, state.input))},
-      else: {:noreply, local_mouse(event, state)}
+  defp handle_event({:mouse, _, _, _, _, _, _}, %{compose: nil} = state), do: {:noreply, state}
+
+  # In the pane it's for, in that pane's own cells: to its program if it
+  # asked for the mouse (and Shift isn't held), otherwise guiltty's.
+  defp handle_event({:mouse, kind, button, col, row, mods, clicks}, state) do
+    case mouse_target(state, kind, col, row) do
+      nil ->
+        {:noreply, state}
+
+      {id, pane_col, pane_row, state} ->
+        event = {:mouse, kind, button, pane_col, pane_row, mods, clicks}
+        input = pane_input(state, id)
+
+        if input.mouse != nil and not Keymap.shift?(mods),
+          do: {:noreply, write_to(state, id, Keymap.mouse(event, input))},
+          else: {:noreply, local_mouse(event, id, state)}
+    end
   end
 
   defp handle_event({:key, _, _} = event, state) do
@@ -423,7 +474,6 @@ defmodule Guiltty.Window do
   end
 
   # Anything sent to the program brings the view back to the live screen.
-  defp write(state, nil), do: state
   defp write(%{active: nil} = state, _bytes), do: state
 
   defp write(state, bytes) do
@@ -432,20 +482,65 @@ defmodule Guiltty.Window do
     %{state | view_moved: false}
   end
 
-  ## The mouse, when the program doesn't want it
+  # To one pane's program (a mouse report): its view goes back to live.
+  defp write_to(state, _id, nil), do: state
+  defp write_to(%{active: id} = state, id, bytes), do: write(state, bytes)
 
-  defp local_mouse({:mouse, :press, 0, col, row, _mods, clicks}, state) do
-    on_screen(state, &Screen.select(&1, {:start, {row, col}, clicks}))
-    %{state | selecting: true}
-  end
-
-  defp local_mouse({:mouse, :motion, 0, col, row, _mods, _}, %{selecting: true} = state) do
-    on_screen(state, &Screen.select(&1, {:extend, {row, col}}))
+  defp write_to(state, id, bytes) do
+    if pane_value(state, id, :scroll, 0) > 0, do: on_pane(id, &Screen.scroll(&1, :bottom))
+    Pty.write(id, bytes)
     state
   end
 
-  defp local_mouse({:mouse, :release, 0, _col, _row, _mods, _}, %{selecting: true} = state) do
-    case {on_screen(state, &Screen.select(&1, :finish)), state.config.copy_on_select} do
+  # Which pane a mouse event is for, in its own cells. A press picks the
+  # pane under it, and focuses it; moving and letting go stay with that
+  # pane, even past its edge, as a drag that selects does. Anything else
+  # (the wheel, a move with no button down) is for the pane under the
+  # pointer. On a separator: nobody's.
+  defp mouse_target(%{mouse_pane: id} = state, kind, col, row)
+       when kind in [:motion, :release] and id != nil do
+    case Compose.rect(state.compose, id) do
+      {x, y, w, h} ->
+        state = if kind == :release, do: %{state | mouse_pane: nil}, else: state
+        {id, (col - x) |> max(0) |> min(w - 1), (row - y) |> max(0) |> min(h - 1), state}
+
+      nil ->
+        nil
+    end
+  end
+
+  defp mouse_target(state, kind, col, row) do
+    case Compose.at(state.compose, col, row) do
+      {:pane, id, pane_col, pane_row} ->
+        state = if kind == :press, do: focus_pane(%{state | mouse_pane: id}, id), else: state
+        {id, pane_col, pane_row, state}
+
+      :separator ->
+        nil
+    end
+  end
+
+  defp focus_pane(%{active: id} = state, id), do: state
+
+  defp focus_pane(state, id) do
+    catch_exit(fn -> Tabs.focus(state.desk_tabs, {:pane, id}) end)
+    state
+  end
+
+  ## The mouse, when the program doesn't want it
+
+  defp local_mouse({:mouse, :press, 0, col, row, _mods, clicks}, id, state) do
+    on_pane(id, &Screen.select(&1, {:start, {row, col}, clicks}))
+    %{state | selecting: true}
+  end
+
+  defp local_mouse({:mouse, :motion, 0, col, row, _mods, _}, id, %{selecting: true} = state) do
+    on_pane(id, &Screen.select(&1, {:extend, {row, col}}))
+    state
+  end
+
+  defp local_mouse({:mouse, :release, 0, _col, _row, _mods, _}, id, %{selecting: true} = state) do
+    case {on_pane(id, &Screen.select(&1, :finish)), state.config.copy_on_select} do
       {text, copy} when is_binary(text) and text != "" and copy != false ->
         send_port(state, Protocol.clipboard(:primary, text))
         if copy == :clipboard, do: send_port(state, Protocol.clipboard(:clipboard, text))
@@ -457,26 +552,26 @@ defmodule Guiltty.Window do
     %{state | selecting: false}
   end
 
-  defp local_mouse({:mouse, :press, 1, _col, _row, _mods, _}, state) do
+  defp local_mouse({:mouse, :press, 1, _col, _row, _mods, _}, _id, state) do
     send_port(state, Protocol.paste_primary())
     state
   end
 
   # On the alternate screen there's no scrollback: the wheel sends arrow
   # keys instead, so less, man and git log scroll (xterm's alternateScroll).
-  defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, %{alt_screen: true} = state) do
-    key = if dir == 0, do: Keymap.key(:up), else: Keymap.key(:down)
-    bytes = Keymap.to_bytes({:key, key, 0}, state.input)
-    write(state, :binary.copy(bytes, state.config.wheel_lines))
+  defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, id, state) do
+    if pane_value(state, id, :alt_screen, false) do
+      key = if dir == 0, do: Keymap.key(:up), else: Keymap.key(:down)
+      bytes = Keymap.to_bytes({:key, key, 0}, pane_input(state, id))
+      write_to(state, id, :binary.copy(bytes, state.config.wheel_lines))
+    else
+      lines = if dir == 0, do: state.config.wheel_lines, else: -state.config.wheel_lines
+      on_pane(id, &Screen.scroll(&1, {:lines, lines}))
+      if id == state.active, do: %{state | view_moved: true}, else: state
+    end
   end
 
-  defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, state) do
-    lines = if dir == 0, do: state.config.wheel_lines, else: -state.config.wheel_lines
-    on_screen(state, &Screen.scroll(&1, {:lines, lines}))
-    %{state | view_moved: true}
-  end
-
-  defp local_mouse(_event, state), do: state
+  defp local_mouse(_event, _id, state), do: state
 
   ## Search mode
 
@@ -519,7 +614,7 @@ defmodule Guiltty.Window do
 
       key == Keymap.key(:enter) ->
         name = String.trim(state.rename.text)
-        catch_exit(fn -> Tabs.rename(state.desk_tabs, state.active, name) end)
+        catch_exit(fn -> Tabs.rename(state.desk_tabs, state.active_tab, name) end)
         update_status(%{state | rename: nil})
 
       key == Keymap.key(:backspace) ->
@@ -537,6 +632,8 @@ defmodule Guiltty.Window do
   defp on_screen(%{active: nil}, _fun), do: nil
   defp on_screen(state, fun), do: catch_exit(fn -> fun.(state.active) end)
 
+  defp on_pane(id, fun), do: catch_exit(fn -> fun.(id) end)
+
   ## guiltty's own keys
 
   # A new window, fresh, on the same display as this one: the renderer
@@ -550,6 +647,24 @@ defmodule Guiltty.Window do
 
   defp run(:new_tab, state) do
     Tabs.new_tab(state.desk_tabs)
+    state
+  end
+
+  defp run(action, state) when action in [:split_right, :split_down] do
+    case catch_exit(fn -> Tabs.split(state.desk_tabs, direction(action)) end) do
+      {:error, :too_small} -> flash(state, "no room to split this pane")
+      _ -> state
+    end
+  end
+
+  defp run(action, state) when action in [:focus_left, :focus_right, :focus_up, :focus_down] do
+    catch_exit(fn -> Tabs.focus(state.desk_tabs, direction(action)) end)
+    state
+  end
+
+  defp run(action, state)
+       when action in [:resize_left, :resize_right, :resize_up, :resize_down] do
+    catch_exit(fn -> Tabs.resize_pane(state.desk_tabs, direction(action)) end)
     state
   end
 
@@ -576,7 +691,7 @@ defmodule Guiltty.Window do
 
   # Starts from the name it shows now, to edit it.
   defp run(:rename_tab, state) do
-    {_id, title} = Enum.find(state.tabs, {nil, ""}, fn {id, _} -> id == state.active end)
+    {_id, title} = Enum.find(state.tabs, {nil, ""}, fn {id, _} -> id == state.active_tab end)
     rename_to(%{state | search: nil}, title)
   end
 
@@ -654,13 +769,13 @@ defmodule Guiltty.Window do
   # can't slip in by accident.
   defp run(:broadcast, state) do
     programs = state.config.broadcast_programs
-    local? = state.confirm_local == state.active
+    local? = state.confirm_local == state.active_tab
 
     case catch_exit(fn ->
-           Tabs.toggle_broadcast(state.desk_tabs, state.active, programs, local: local?)
+           Tabs.toggle_broadcast(state.desk_tabs, state.active_tab, programs, local: local?)
          end) do
       {:error, {:not_allowed, program}} ->
-        state = %{state | confirm_local: state.active}
+        state = %{state | confirm_local: state.active_tab}
         flash(state, "this tab is local (#{program}): Ctrl+Shift+B again adds it as a local tab")
 
       _ ->
@@ -669,7 +784,9 @@ defmodule Guiltty.Window do
   end
 
   defp run(:lock_tab, state) do
-    if state.active, do: catch_exit(fn -> Tabs.toggle_lock(state.desk_tabs, state.active) end)
+    if state.active_tab,
+      do: catch_exit(fn -> Tabs.toggle_lock(state.desk_tabs, state.active_tab) end)
+
     state
   end
 
@@ -678,6 +795,11 @@ defmodule Guiltty.Window do
   defp run(:zoom_reset, state), do: zoom(state, 0)
 
   defp run(_unknown, state), do: state
+
+  # :split_right is :right, :focus_up is :up...
+  defp direction(action),
+    do:
+      action |> Atom.to_string() |> String.split("_") |> List.last() |> String.to_existing_atom()
 
   @doc false
   # The editor to open the config with: $VISUAL, else $EDITOR, split like
@@ -732,7 +854,7 @@ defmodule Guiltty.Window do
 
   defp close_cheatsheet(state) do
     state = %{state | cheatsheet: nil, pending: false}
-    if state.active, do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
+    resubscribe(state)
     state
   end
 
@@ -798,21 +920,21 @@ defmodule Guiltty.Window do
   # A locked tab shows a lock before its title; a tab with something new
   # since you looked shows a dot (output) or a bell, before that.
   defp show_tabs(state, %{list: tabs, active: active} = info) do
-    state = %{state | locked: info.locked, group: info.group, lost: MapSet.to_list(info.lost)}
+    state = %{
+      state
+      | locked: info.locked,
+        group: info.group,
+        lost: MapSet.to_list(info.lost),
+        members: Map.get(info, :members, %{})
+    }
+
     marks = Map.get(info, :marks, %{})
 
     titles =
       Enum.map(tabs, fn {id, title} ->
         title = if title == "", do: "shell", else: title
         title = if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
-
-        title =
-          cond do
-            id in state.lost -> "⚠ " <> title
-            state.group[id] == :local -> "🏠 " <> title
-            Map.has_key?(state.group, id) -> "📡 " <> title
-            true -> title
-          end
+        title = broadcast_marker(state, id) <> title
 
         case marks[id] do
           :bell -> "🔔 " <> title
@@ -823,42 +945,125 @@ defmodule Guiltty.Window do
 
     index = Enum.find_index(tabs, fn {id, _} -> id == active end) || 0
     send_port(state, Protocol.tabs(titles, index))
-    state = %{state | tabs: tabs}
-    state = if active != state.active, do: switch_view(state, active), else: state
-    update_status(state)
+
+    %{state | tabs: tabs}
+    |> show_panes(active, info)
+    |> update_status()
   end
 
-  defp switch_view(state, id) do
-    state = %{state | cheatsheet: nil}
-    if state.active, do: catch_exit(fn -> Screen.unsubscribe(state.active, self()) end)
-    if state.screen_ref, do: Process.demonitor(state.screen_ref, [:flush])
+  # A tab's panes in the broadcast group: ⚠ if one lost its connection,
+  # 🏠 if they're all local, 📡 otherwise.
+  defp broadcast_marker(state, tab) do
+    panes = Map.get(state.members, tab, [tab])
+    grouped = Enum.filter(panes, &Map.has_key?(state.group, &1))
+
+    cond do
+      Enum.any?(panes, &(&1 in state.lost)) -> "⚠ "
+      grouped == [] -> ""
+      Enum.all?(grouped, &(state.group[&1] == :local)) -> "🏠 "
+      true -> "📡 "
+    end
+  end
+
+  # A new tab, or new panes or sizes in it: a new compose, and every pane
+  # viewed again (each sends all its rows). Only the focus moved: the same
+  # rows, redrawn with the other pane's separators lit and its cursor.
+  defp show_panes(state, nil, _info), do: leave_tab(state)
+
+  defp show_panes(state, tab, info) do
+    panes = info.panes
+    order = Map.get(state.members, tab, Map.keys(panes.rects))
+    key = {tab, panes.rects, info.size, order}
+
+    cond do
+      key != state.layout_key -> new_layout(state, tab, panes, order, info.size, key)
+      panes.focus != state.active -> refocus(state, panes)
+      true -> state
+    end
+  end
+
+  defp new_layout(state, tab, panes, order, size, key) do
+    state = if tab != state.active_tab, do: leave_tab(state), else: state
+    compose = Compose.new(size, panes, order, state.cell_pixels)
+    gone = if state.compose, do: Compose.ids(state.compose) -- Compose.ids(compose), else: []
+    state = Enum.reduce(gone, state, &unview(&2, &1))
+
+    state = %{
+      state
+      | compose: compose,
+        panes: panes,
+        layout_key: key,
+        active_tab: tab,
+        dirty: MapSet.new(),
+        full: true
+    }
+
+    state = Enum.reduce(Compose.ids(compose), state, &view(&2, &1))
+    state |> focus_on(panes.focus) |> pull()
+  end
+
+  defp refocus(state, panes) do
+    if state.search, do: on_screen(state, &Screen.end_search/1)
+    compose = Compose.refocus(state.compose, panes.focus, panes.separators)
+
+    %{state | compose: compose, panes: panes, search: nil, selecting: false, full: true}
+    |> focus_on(panes.focus)
+    |> pull()
+  end
+
+  # Leaving a tab: what was going on in it (a search, a rename, the
+  # cheatsheet) ends, and its panes are no longer viewed.
+  defp leave_tab(state) do
     if state.search, do: on_screen(state, &Screen.end_search/1)
 
     %{
-      state
-      | active: id,
-        screen_ref: nil,
+      unview_all(state)
+      | cheatsheet: nil,
+        active: nil,
+        active_tab: nil,
+        compose: nil,
+        panes: nil,
+        layout_key: nil,
+        dirty: MapSet.new(),
         pending: false,
         title: nil,
         search: nil,
         rename: nil,
         confirm_close: nil,
-        selecting: false
+        selecting: false,
+        mouse_pane: nil
     }
-    |> view(id)
-    |> update_status()
   end
 
-  # View the session's Screen and monitor it. It answers with
+  # The focused pane is what the window shows as its own: its input
+  # modes, title, scroll position.
+  defp focus_on(state, id) do
+    p = Map.get(state.pane_state, id, %{})
+
+    %{
+      state
+      | active: id,
+        input: Map.get(p, :input, @default_input),
+        alt_screen: Map.get(p, :alt_screen, false),
+        scroll: Map.get(p, :scroll, 0),
+        scrollback: Map.get(p, :scrollback, 0),
+        confirm_close: nil
+    }
+  end
+
+  defp shown?(%{compose: nil}, _id), do: false
+  defp shown?(state, id), do: id in Compose.ids(state.compose)
+
+  # View a pane's Screen and monitor it. It answers with
   # {:screen_dirty, id}; if it isn't running right now (mid-restart), try
   # again shortly.
-  defp view(state, nil), do: state
-
   defp view(state, id) do
+    state = unmonitor(state, id)
+
     with pid when is_pid(pid) <- GenServer.whereis(Session.via(id, :screen)),
          ref = Process.monitor(pid),
          :ok <- catch_exit(fn -> Screen.subscribe(id, self()) end) do
-      %{state | screen_ref: ref}
+      %{state | screen_refs: Map.put(state.screen_refs, ref, id)}
     else
       _ ->
         Process.send_after(self(), {:view, id}, @resubscribe_ms)
@@ -866,38 +1071,121 @@ defmodule Guiltty.Window do
     end
   end
 
-  # Take the next update, unless the renderer is still drawing the last one.
+  defp unview(state, id) do
+    catch_exit(fn -> Screen.unsubscribe(id, self()) end)
+    %{unmonitor(state, id) | pane_state: Map.delete(state.pane_state, id)}
+  end
+
+  defp unview_all(state) do
+    ids = state.screen_refs |> Map.values() |> Enum.uniq()
+    Enum.reduce(ids, state, &unview(&2, &1))
+  end
+
+  defp unmonitor(state, id) do
+    {mine, others} = Enum.split_with(state.screen_refs, fn {_ref, pane} -> pane == id end)
+    for {ref, _} <- mine, do: Process.demonitor(ref, [:flush])
+    %{state | screen_refs: Map.new(others)}
+  end
+
+  # Every shown pane sends all its rows again (a new theme, the cheatsheet
+  # closing): subscribing again is how a Screen is asked for that.
+  defp resubscribe(%{compose: nil}), do: :ok
+
+  defp resubscribe(state),
+    do:
+      for(
+        id <- Compose.ids(state.compose),
+        do: catch_exit(fn -> Screen.subscribe(id, self()) end)
+      )
+
+  defp pane_input(state, id), do: pane_value(state, id, :input, @default_input)
+
+  defp pane_value(state, id, key, default),
+    do: state.pane_state |> Map.get(id, %{}) |> Map.get(key, default)
+
+  # Take what's new in every pane that said so, unless the renderer is
+  # still drawing the last update; stitch it into one update.
   defp pull(%{awaiting_frame: true} = state), do: %{state | pending: true}
   # The cheatsheet covers the screen; closing it brings every row back.
   defp pull(%{cheatsheet: %{}} = state), do: state
-  defp pull(%{active: nil} = state), do: state
+  defp pull(%{compose: nil} = state), do: state
 
   defp pull(state) do
-    case catch_exit(fn -> Screen.take_update(state.active) end) do
-      %{} = update ->
-        # The program's cursor shape if it set one, otherwise the user's.
-        default = {state.config.cursor.style, state.config.cursor.blink}
-        state = show_graphics(state, update)
-        send_port(state, Protocol.rows(%{update | cursor_style: update.cursor_style || default}))
+    {state, changed, clusters, took, graphics?} =
+      Enum.reduce(state.dirty, {state, %{}, [], false, false}, fn id,
+                                                                  {state, changed, cl, took, g} ->
+        case catch_exit(fn -> Screen.take_update(id) end) do
+          %{} = update ->
+            {compose, rows, defs} = Compose.update(state.compose, id, update)
+            pane_state = Map.put(state.pane_state, id, pane_info(update))
+            state = %{state | compose: compose, pane_state: pane_state}
+            {state, Enum.into(rows, changed), cl ++ defs, true, g or update.graphics != :same}
 
-        if update.title != state.title,
-          do: send_port(state, Protocol.title(window_title(update.title)))
+          _gone ->
+            {state, changed, cl, took, g}
+        end
+      end)
 
-        %{
-          state
-          | awaiting_frame: true,
-            pending: false,
-            input: update.input,
-            title: update.title,
-            alt_screen: update.alt_screen,
-            scroll: update.scroll,
-            scrollback: update.scrollback
-        }
-        |> update_status()
+    state = %{state | dirty: MapSet.new()}
 
-      _gone ->
-        state
+    if took or state.full do
+      send_update(state, changed, clusters, graphics?)
+    else
+      state
     end
+  end
+
+  defp send_update(state, changed, clusters, graphics?) do
+    c = state.compose
+    rows = if state.full, do: Compose.all_rows(c), else: changed |> Map.to_list() |> Enum.sort()
+
+    state =
+      if graphics? or state.full,
+        do: show_graphics(state, %{graphics: Compose.graphics(c), size: c.size}),
+        else: state
+
+    p = Map.get(state.pane_state, state.active, %{})
+    # The program's cursor shape if it set one, otherwise the user's.
+    default = {state.config.cursor.style, state.config.cursor.blink}
+
+    send_port(
+      state,
+      Protocol.rows(%{
+        size: c.size,
+        rows: rows,
+        clusters: clusters,
+        cursor: Compose.cursor(c, state.active, Map.get(p, :cursor, {0, 0})),
+        cursor_visible: Map.get(p, :cursor_visible, false),
+        cursor_style: Map.get(p, :cursor_style) || default
+      })
+    )
+
+    title = Map.get(p, :title)
+
+    if title != nil and title != state.title,
+      do: send_port(state, Protocol.title(window_title(title)))
+
+    %{
+      focus_on(state, state.active)
+      | awaiting_frame: true,
+        pending: false,
+        full: false,
+        title: title || state.title
+    }
+    |> update_status()
+  end
+
+  defp pane_info(update) do
+    Map.take(update, [
+      :input,
+      :title,
+      :alt_screen,
+      :scroll,
+      :scrollback,
+      :cursor,
+      :cursor_visible,
+      :cursor_style
+    ])
   end
 
   # Images: the renderer gets each one it doesn't have yet, forgets those
@@ -953,7 +1241,9 @@ defmodule Guiltty.Window do
   defp status_text(%{lost: [_ | _] = lost} = state) do
     names =
       Enum.map_join(lost, ", ", fn id ->
-        index = Enum.find_index(state.tabs, fn {tab, _} -> tab == id end)
+        index =
+          Enum.find_index(state.tabs, fn {tab, _} -> id in Map.get(state.members, tab, [tab]) end)
+
         host = state.group[id]
         "tab #{(index || 0) + 1}" <> if(host, do: " (#{host})", else: "")
       end)
@@ -965,10 +1255,16 @@ defmodule Guiltty.Window do
   defp status_text(%{config_error: error}) when is_binary(error),
     do: {:warning, "⚠ " <> error}
 
-  defp status_text(%{group: group, active: active}) when is_map_key(group, active) do
-    count = map_size(group)
+  # How many tabs the typing goes to, and how many panes when that's more.
+  defp status_text(%{group: group, active: active} = state) when is_map_key(group, active) do
+    count =
+      Enum.count(state.members, fn {_tab, panes} -> Enum.any?(panes, &is_map_key(group, &1)) end)
+
+    count = max(count, 1)
+    panes = map_size(group)
     local = Enum.count(group, fn {_id, host} -> host == :local end)
     tabs = "#{count} tab#{if count == 1, do: "", else: "s"}"
+    tabs = if panes > count, do: tabs <> ", #{panes} panes", else: tabs
     {:normal, "📡 broadcast: #{tabs}" <> if(local > 0, do: " (#{local} local)", else: "")}
   end
 
@@ -986,7 +1282,7 @@ defmodule Guiltty.Window do
     if config.theme != state.config.theme do
       send_port(state, Protocol.theme(config.theme))
       # The renderer resolved every cell with the old theme: send them all again.
-      if state.active, do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
+      resubscribe(state)
     end
 
     old_font = font(state)
@@ -999,9 +1295,8 @@ defmodule Guiltty.Window do
     # A new default cursor shows with the next update, and bold-is-bright
     # changes the colors of rows the renderer already has: ask for every
     # row again.
-    if (config.cursor != old.cursor or config.bold_is_bright != old.bold_is_bright) and
-         state.active,
-       do: catch_exit(fn -> Screen.subscribe(state.active, self()) end)
+    if config.cursor != old.cursor or config.bold_is_bright != old.bold_is_bright,
+      do: resubscribe(state)
 
     # The keys on the cheatsheet may have changed.
     if state.cheatsheet, do: open_cheatsheet(state, state.cheatsheet.top), else: state

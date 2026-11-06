@@ -154,7 +154,10 @@ guiltty stops after its last window.
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|
 | Ctrl+Shift+N                  | new window, with its own tabs            |
-| Ctrl+Shift+T, Ctrl+Shift+W    | new tab, close tab (asks first if a program is running) |
+| Ctrl+Shift+T, Ctrl+Shift+W    | new tab; close the pane (the tab, when it's the last; asks first if a program is running) |
+| Ctrl+Shift+O, Ctrl+Shift+E    | split the pane right, down                |
+| Ctrl+Shift+arrows, a click      | focus the pane that way, or the one clicked |
+| Alt+Shift+arrows         | move the separator nearest the focused pane |
 | Ctrl+PgUp, Ctrl+PgDn          | previous, next tab                       |
 | Ctrl+Shift+PgUp, Ctrl+Shift+PgDn | move the tab left, right              |
 | Ctrl+Shift+R                  | rename the tab (Enter sets, empty resets)|
@@ -167,7 +170,7 @@ guiltty stops after its last window.
 | Ctrl+,                        | open the config file in your editor      |
 | Ctrl+Shift+/                  | the cheatsheet: every key, on one page   |
 | Ctrl+Shift+L                  | lock the tab: it outlives the window     |
-| Ctrl+Shift+B                  | broadcast: type into all tabs in the group (ssh tabs) |
+| Ctrl+Shift+B                  | broadcast: type into all tabs in the group, every pane of each (ssh) |
 
 Hold Shift to select in programs that use the mouse (vim, htop).
 

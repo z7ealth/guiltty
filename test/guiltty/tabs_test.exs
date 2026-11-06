@@ -231,6 +231,79 @@ defmodule Guiltty.TabsTest do
     end
   end
 
+  describe "split panes" do
+    test "a split puts a new pane right of (or below) the focused one, with half its room" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      assert Tabs.active(@tabs) == right
+      # 81 columns: 40, a separator, 40.
+      assert Session.size(tab) == {40, 24}
+      assert Session.size(right) == {40, 24}
+
+      {:ok, below} = Tabs.split(@tabs, :down)
+      assert eventually(fn -> Session.size(right) == {40, 12} end)
+      assert Session.size(below) == {40, 11}
+      # Still one tab, named after its first pane.
+      assert ids() == [tab]
+      assert %{members: %{^tab => [^tab, ^right, ^below]}} = Tabs.attach_window(@tabs, self())
+    end
+
+    test "the focus moves to the pane in that direction" do
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      :ok = Tabs.focus(@tabs, :left)
+      assert Tabs.active(@tabs) == tab
+      :ok = Tabs.focus(@tabs, :left)
+      assert Tabs.active(@tabs) == tab
+      :ok = Tabs.focus(@tabs, {:pane, right})
+      assert Tabs.active(@tabs) == right
+    end
+
+    test "resizing moves the separator; the panes' terminals follow" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      :ok = Tabs.resize_pane(@tabs, :left, 10)
+      assert Session.size(tab) == {30, 24}
+      assert Session.size(right) == {50, 24}
+    end
+
+    test "a pane that ends gives its room and the focus back; the last one ends the tab" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      Session.write(right, "exit\r")
+      assert eventually(fn -> Tabs.active(@tabs) == tab end)
+      assert eventually(fn -> Session.size(tab) == {81, 24} end)
+      assert ids() == [tab]
+    end
+
+    test "too small to split: nothing happens" do
+      :ok = Tabs.resize(@tabs, 2, 24)
+      assert {:error, :too_small} = Tabs.split(@tabs, :right)
+    end
+
+    test "a split tab broadcasts as a whole: every pane joins and leaves together" do
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      run_cat(tab)
+      # One pane isn't running an allowed program: nothing joins.
+      assert {:error, {:not_allowed, "bash"}} = Tabs.toggle_broadcast(@tabs, tab, ["cat"])
+      run_cat(right)
+      assert {:ok, :joined} = Tabs.toggle_broadcast(@tabs, tab, ["cat"])
+      assert Map.keys(:sys.get_state(@tabs).group) |> Enum.sort() == Enum.sort([tab, right])
+
+      assert :sent = Tabs.send_input(@tabs, right, "in-both\r")
+      assert eventually(fn -> Session.dump(tab) =~ ~r/^in-both$/m end)
+      assert eventually(fn -> Session.dump(right) =~ ~r/^in-both$/m end)
+
+      # Any pane of it names the tab.
+      assert {:ok, :left} = Tabs.toggle_broadcast(@tabs, right, ["cat"])
+      assert :sys.get_state(@tabs).group == %{}
+    end
+  end
+
   test "resize applies to every tab and to new ones" do
     [first] = ids()
     {:ok, second} = Tabs.new_tab(@tabs)

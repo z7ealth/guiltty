@@ -77,7 +77,17 @@ defmodule Guiltty.Config do
     open_config: ["ctrl+,"],
     cheatsheet: ["ctrl+shift+/"],
     lock_tab: ["ctrl+shift+l"],
-    broadcast: ["ctrl+shift+b"]
+    broadcast: ["ctrl+shift+b"],
+    split_right: ["ctrl+shift+o"],
+    split_down: ["ctrl+shift+e"],
+    focus_left: ["ctrl+shift+left"],
+    focus_right: ["ctrl+shift+right"],
+    focus_up: ["ctrl+shift+up"],
+    focus_down: ["ctrl+shift+down"],
+    resize_left: ["alt+shift+left"],
+    resize_right: ["alt+shift+right"],
+    resize_up: ["alt+shift+up"],
+    resize_down: ["alt+shift+down"]
   }
 
   @max_scrollback 1_000_000

@@ -6,6 +6,7 @@ defmodule Guiltty.WindowTest do
 
   alias Guiltty.{Config, Grid, Session, Tabs, Window}
   alias Guiltty.Session.Screen
+  alias Guiltty.Window.Compose
 
   # Leak checking is off here only: Mesa's offscreen EGL driver leaks a few
   # bytes from a library it unloads before exit. Run the renderer on X11 or
@@ -490,6 +491,57 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> length(elem(Tabs.list(@tabs), 0)) == 2 end)
     editor_tab = Tabs.active(@tabs)
     assert eventually(fn -> Session.dump(editor_tab) =~ "# opened in the editor" end)
+  end
+
+  describe "split panes" do
+    # The window's grid as text, row by row, as the Window stitched it.
+    defp window_text(window) do
+      window
+      |> :sys.get_state()
+      |> Map.fetch!(:compose)
+      |> Compose.all_rows()
+      |> Enum.map(fn {_i, row} ->
+        for <<g::32, _::binary-size(10) <- row>>, into: "", do: <<g::utf8>>
+      end)
+    end
+
+    test "Ctrl+Shift+O splits: two shells side by side, typing goes to the new one", %{
+      id: id,
+      window: window
+    } do
+      renderer(window, <<6, 81::16, 24::16, 9::16, 18::16>>)
+      assert eventually(fn -> Session.size(id) == {81, 24} end)
+      key(window, ?o, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).active != id end)
+      right = :sys.get_state(window).active
+      assert Session.size(id) == {40, 24}
+      assert eventually(fn -> Session.dump(right) =~ ~r/^\$/m end)
+
+      renderer(window, <<4, "echo in-the-right-one">>)
+      key(window, 0x0D, 0)
+      assert eventually(fn -> Session.dump(right) =~ ~r/^in-the-right-one$/m end)
+      refute Session.dump(id) =~ "in-the-right-one"
+
+      # Both prompts, with the separator between them.
+      assert eventually(fn -> hd(window_text(window)) =~ ~r/^\$ +│\$ echo in-the-right-one/ end)
+    end
+
+    test "a click focuses the pane under it; Ctrl+Shift+arrows too", %{id: id, window: window} do
+      renderer(window, <<6, 81::16, 24::16, 9::16, 18::16>>)
+      assert eventually(fn -> Session.size(id) == {81, 24} end)
+      key(window, ?o, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).active != id end)
+      right = :sys.get_state(window).active
+
+      # Column 5 is the left pane (columns 0-39; 40 is the separator).
+      mouse(window, 0, 0, 5, 3)
+      mouse(window, 1, 0, 5, 3)
+      assert eventually(fn -> :sys.get_state(window).active == id end)
+
+      key(window, 0x4000004F, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).active == right end)
+      assert Port.info(port(window))
+    end
   end
 
   test "a config error shows as a warning until a config loads", %{window: window} do

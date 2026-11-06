@@ -111,7 +111,8 @@
     # A new window, with its own tabs (closing it never touches the others).
     new_window: ["ctrl+shift+n"],
     new_tab: ["ctrl+shift+t"],
-    # Asks first when the tab is running a program (vim, ssh, a build).
+    # Closes the focused pane (the tab, when it's the last one). Asks first
+    # when it's running a program (vim, ssh, a build).
     close_tab: ["ctrl+shift+w"],
     next_tab: ["ctrl+page_down", "ctrl+tab"],
     prev_tab: ["ctrl+page_up", "ctrl+shift+tab"],
@@ -138,7 +139,21 @@
     # which keep running; the next `guiltty` brings that window back with
     # them, where you left them.
     lock_tab: ["ctrl+shift+l"],
-    # Puts the tab in the broadcast group, or takes it out.
-    broadcast: ["ctrl+shift+b"]
+    # Puts the tab in the broadcast group, or takes it out: all its panes.
+    broadcast: ["ctrl+shift+b"],
+    # Split panes: a new pane right of the focused one, or below it, with
+    # half its room.
+    split_right: ["ctrl+shift+o"],
+    split_down: ["ctrl+shift+e"],
+    # The focus to the pane in that direction (a click works too).
+    focus_left: ["ctrl+shift+left"],
+    focus_right: ["ctrl+shift+right"],
+    focus_up: ["ctrl+shift+up"],
+    focus_down: ["ctrl+shift+down"],
+    # Moves the separator nearest the focused pane, that way.
+    resize_left: ["alt+shift+left"],
+    resize_right: ["alt+shift+right"],
+    resize_up: ["alt+shift+up"],
+    resize_down: ["alt+shift+down"]
   ]
 ]

@@ -1316,6 +1316,34 @@ chunk goes on the transfer in progress unless it names another action
 or another image. A 240 KB recording of icat on a noisy JPEG is the
 test: the smallest picture icat splits into chunks.
 
+## 2026-11-06 — v0.19: split panes, and a tab that's no longer a session
+
+_Draft: agent, awaiting user_
+
+**Tried.** Several shells in one tab. The plan was decided up front: a
+pane is a whole session, unchanged; a tab becomes a layout of them (a
+tree, `Guiltty.Layout`, pure functions with a property test that every
+cell is a pane's or a separator's); and the renderer keeps drawing one
+grid, because the Window stitches the panes together in Elixir
+(`Guiltty.Window.Compose`). Keys from Ghostty and Terminator:
+Ctrl+Shift+O and E to split, Ctrl+Shift+arrows to move around. Broadcast
+joins a whole tab, so four ssh panes take the same typing side by side.
+
+**Broke.** The first draft of the stitching read a pane's rows before
+its first update had come, and crashed every window on startup. And a
+bench run said everything got 30% slower. It hadn't: the commit before
+the change, built in a copy and run right after, gave the same numbers.
+The machine was slower that afternoon. Comparing against the book's old
+figures, not against the old code, would have sent us chasing nothing.
+
+**Clicked.** Making a tab's id the id of its first session meant a tab
+of one pane looks exactly like a tab used to, so every old caller and
+test kept working while everything under it changed. And clusters: each
+pane numbers its multi-codepoint characters from the same first id, so
+two panes' emoji would collide in the renderer's one table. Renumbering
+them window-wide, and only in panes that have any, kept the one-pane
+case free.
+
 ### Later
 
 - Once, nvim-tree (NvChad) showed its folder rows without the arrow and

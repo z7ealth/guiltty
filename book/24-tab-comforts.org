@@ -71,6 +71,10 @@ remembers which tab it asked about:
 The same pattern as Ctrl+Shift+B on a local tab (chapter 18): a second
 press is the confirmation, so there's no dialog to draw.
 
+Since v0.19 a tab can be split (chapter 27): Ctrl+Shift+W closes the
+*focused pane*, asking the same way if it's busy, and the tab only when
+that pane was its last.
+
 What it doesn't cover: closing the *window*. The window manager closes
 it, the renderer exits, and there's nobody to ask. A locked tab
 (Ctrl+Shift+L) is the way to keep a program through that.

@@ -109,7 +109,7 @@ the answer from their input, as if you had typed it:
 |---------------+----------------+------------------+-------------------------------|
 | what are you? | =CSI c= (DA1)  | =CSI ? 62 ; 22 c=  | a VT220 with ANSI color       |
 | which version | =CSI > c= (DA2)| =CSI > 1 ; 10 ; 0 c= | VT220, version 10           |
-| who are you?  | =CSI > q= (XTVERSION) | =DCS > \vert guiltty 0.18.2 ST= | the name and version (chapter 26) |
+| who are you?  | =CSI > q= (XTVERSION) | =DCS > \vert guiltty 0.19.0 ST= | the name and version (chapter 26) |
 | are you OK?   | =CSI 5 n=      | =CSI 0 n=          | yes                           |
 | where's the cursor? | =CSI 6 n= | =CSI row ; col R=  | 1-based                       |
 | how big, in pixels? | =CSI 14 t=, =CSI 16 t= | =CSI 4 ; h ; w t=, =CSI 6 ; h ; w t= | text area, one cell (chapter 9) |
