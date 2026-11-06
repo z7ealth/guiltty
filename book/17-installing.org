@@ -66,6 +66,50 @@ that lets a program connect to it) comes from =~/.erlang.cookie=, never
 from the command line: =install.sh= stops if that file can be read by
 anyone but you. Chapter 20 explains why.
 
+* The one-line install
+
+[[file:../get.sh][get.sh]] does the whole of this chapter for someone who has nothing yet:
+
+#+begin_src sh
+curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh
+#+end_src
+
+#+begin_example
+  /etc/os-release      ID=opensuse-tumbleweed, ID_LIKE="opensuse suse"
+       |                -> family: suse, fedora, debian or arch
+       v
+  missing packages     asked of the package manager one by one
+       |               (rpm -q --whatprovides, dpkg-query, pacman -Q)
+       |               -> shows "sudo zypper install ...", asks [y/N]
+       v
+  Elixir 1.18+ on      if not: says how to get one with asdf, and stops
+  OTP 26+?             (one already on the PATH, asdf's say, is used,
+       |                and the distribution's isn't added)
+       v
+  C23 compiler?        a two-line test program with constexpr
+       v
+  latest tag           api.github.com/repos/z7ealth/guiltty/tags, sorted
+       |               by version; GUILTTY_VERSION=v0.18.1 picks one
+       v
+  source tarball       github.com/.../archive/refs/tags/<tag>.tar.gz
+       |               -> ~/.local/src/guiltty-<version> (no git needed)
+       v
+  install.sh           the rest of this chapter
+#+end_example
+
+Two details are about pipes. Run as =curl ... | sh=, the script's stdin is
+the script itself, so a question can't be read from it: =ask= reads the
+answer from =/dev/tty=, the terminal, directly. And =/dev/tty= can exist
+and still fail to open (a container, cron: no controlling terminal), so
+=has_tty= tries to open it, and without one only =--yes= goes ahead.
+
+It's POSIX =sh=, not bash: =sh= is what every distribution has where the
+pipe lands. =install.sh= stays bash.
+
+Tried: the whole run on a fresh openSUSE Tumbleweed container (packages,
+Tumbleweed's own Elixir, the build, the install), and =--dry-run= on
+Fedora, Ubuntu 26.04 and Arch, which found every package name.
+
 * What building needs
 
 Building is where Elixir comes in: =install.sh= compiles guiltty, its C
@@ -77,10 +121,10 @@ are there.
 | Elixir 1.18+ on Erlang/OTP 26+ | compiling guiltty and making the release |
 | GCC 15 or newer, make, pkg-config | the C: C23 and =#embed= need GCC 15    |
 | glslc (shaderc)                 | the Vulkan shaders, GLSL -> SPIR-V       |
-| SDL3, FreeType, fontconfig, HarfBuzz, Vulkan (dev files) | the renderers |
+| SDL3, FreeType, fontconfig, HarfBuzz, libpng, Vulkan (dev files) | the renderers |
 
 Running the installed copy needs none of the build tools, only the shared
-libraries (SDL3, FreeType, fontconfig, HarfBuzz) and a GPU driver with
+libraries (SDL3, FreeType, fontconfig, HarfBuzz, libpng) and a GPU driver with
 OpenGL 3.3. Vulkan is optional: with the loader and a Vulkan 1.3 driver,
 guiltty draws with Vulkan; without them, =guiltty_vk= can't start and the
 Window falls back to OpenGL by itself (chapter 19). The README has the
@@ -170,6 +214,8 @@ headless Chromium otherwise.
 - =credentials(7)= and =termios(3)=: a terminal's hangup sends =SIGHUP= to
   its foreground job; =signal(7)=: an ignored signal stays ignored across
   =fork= and =exec=; =proc_pid_stat(5)=: the parent pid.
+- =os-release(5)=: =ID= and =ID_LIKE=; =tty(4)=: =/dev/tty=, the
+  controlling terminal; =sh(1p)= (POSIX shell) for what =get.sh= may use.
 
 * Questions
 
@@ -179,6 +225,8 @@ headless Chromium otherwise.
 4. Why does guiltty need a BMP copy of its logo?
 5. Why did updating from inside guiltty stop halfway, and how does the
    script tell it's running inside guiltty?
+6. Piped into =sh=, how does =get.sh= ask you anything, and why isn't
+   checking that =/dev/tty= is readable enough?
 
 ** Answers
 :PROPERTIES:
@@ -198,3 +246,7 @@ headless Chromium otherwise.
    it =SIGHUP=, which kills a script by default. It now walks its parent
    pids (=/proc/<pid>/stat=) looking for guiltty's VM; if it's there, it
    ignores =SIGHUP= and writes to a log instead of the closed terminal.
+6. Its stdin is the script, coming down the pipe; it reads answers from
+   =/dev/tty=, the controlling terminal, instead. In a container or cron
+   there is none: the file exists but opening it fails, so it tries to
+   open it.

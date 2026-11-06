@@ -8,6 +8,14 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## Unreleased
+
+### Added
+- A one-line install: `curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh`.
+  It finds your distribution (openSUSE, Fedora, Ubuntu/Debian, Arch),
+  installs the missing build packages after asking, checks Elixir, and
+  builds the latest release into `~/.local`. Run it again to update.
+
 ## 0.18.1 — 2026-11-05 — kitten icat
 
 ### Fixed

@@ -10,6 +10,10 @@ path and the pixels: two NIFs (the PTY, and printed text into screen
 cells), a renderer (Vulkan, or OpenGL) that runs as its own process, and
 the small `guiltty` command.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="guiltty with three tabs; the active one runs yazi, previewing the guiltty logo as an image" width="800">
+</p>
+
 Linux only. Tried on openSUSE Tumbleweed, X11 and an AMD GPU; Wayland,
 Intel, NVIDIA and other distributions should work but haven't been
 tried.
@@ -19,6 +23,24 @@ plain ASCII at the low end, text with accents, CJK or emoji at the high
 end (book chapter 22).
 
 ## Install
+
+One line, on openSUSE, Fedora, Ubuntu/Debian, Arch and the distributions
+based on them:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh
+```
+
+[get.sh](get.sh) finds out your distribution, shows the packages that are
+missing and the `sudo` command that installs them, and asks before
+running it. Then it downloads the latest release's source into
+`~/.local/src`, builds it and installs it into `~/.local` (no root). Run
+it again to update. It only warns about Elixir: if yours is older than
+1.18 (on OTP 26), it stops and says how to get a newer one with asdf.
+Add `sh -s -- --dry-run` to see what it would do, or `--yes` not to be
+asked. It's a short script: read it first, if you like.
+
+The rest of this section is the same thing by hand.
 
 guiltty is built from source on your machine, so installing it needs
 Elixir and a C toolchain. The installed copy carries its own Erlang
@@ -32,6 +54,7 @@ runtime: once it's installed, it runs without Elixir.
 | GCC 15 or newer, make, pkg-config          | the C is C23 and uses `#embed` (GCC 15+) |
 | SDL3 (development files)                   | the window, keyboard and mouse           |
 | FreeType, fontconfig, HarfBuzz (dev files) | finding fonts, drawing and shaping text  |
+| libpng (development files)                 | pictures programs show (Kitty graphics)  |
 | Vulkan loader and headers (dev files)      | the Vulkan renderer                      |
 | glslc (from shaderc)                       | compiles the Vulkan shaders to SPIR-V    |
 
@@ -40,9 +63,10 @@ and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
 you exact versions. `elixir --version` should say Elixir 1.18 or newer, compiled with
 Erlang/OTP 26 or newer.
 
-On these distributions, one command installs it all. Only openSUSE has
-been tried; the other package names come from each distribution's
-package listings.
+On these distributions, one command installs it all (it's what get.sh
+runs). openSUSE Tumbleweed has been tried all the way to a running
+guiltty; on the others, get.sh found these package names in fresh
+containers of each, but the build itself hasn't been tried.
 
 **openSUSE Tumbleweed**
 
