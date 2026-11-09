@@ -106,6 +106,20 @@ defmodule Guiltty.ConfigTest do
     end
   end
 
+  test "the AI tool: its command and where it opens", %{tmp_dir: dir} do
+    assert {:ok, %{ai: %{command: nil, position: :right}}} =
+             Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{ai: %{command: "my-ai-tool", position: :tab}}} =
+             Config.load(write(dir, "b.exs", ~s([ai: [command: "my-ai-tool", position: :tab]])))
+
+    assert {:error, "ai position" <> _} =
+             Config.load(write(dir, "c.exs", "[ai: [position: :left]]"))
+
+    assert {:error, "ai:" <> _} = Config.load(write(dir, "d.exs", "[ai: [command: 5]]"))
+    assert {:error, "ai:" <> _} = Config.load(write(dir, "e.exs", ~s([ai: [command: "  "]])))
+  end
+
   test "tab styles, and tab colors in the theme, also from a named one", %{tmp_dir: dir} do
     assert {:ok, %{tab_style: :flat, theme: %{tab_accent: nil}}} =
              Config.load(write(dir, "a.exs", "[]"))

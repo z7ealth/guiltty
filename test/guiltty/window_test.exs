@@ -84,6 +84,122 @@ defmodule Guiltty.WindowTest do
     end)
   end
 
+  describe "the AI key" do
+    defp set_ai(window, command, position \\ :right) do
+      :sys.replace_state(window, fn state ->
+        %{state | config: %{state.config | ai: %{command: command, position: position}}}
+      end)
+    end
+
+    defp ai_key(window), do: key(window, ?a, @ctrl ||| @shift)
+
+    defp members(window), do: :sys.get_state(window).members
+
+    defp panes_of_tab(window, id),
+      do: Map.get(members(window), :sys.get_state(window).active_tab, [id]) -- [id]
+
+    test "it can be rebound, like any key", %{id: id, window: window} do
+      set_ai(window, "cat -v")
+
+      :sys.replace_state(window, fn state ->
+        keys = Map.put(state.config.keys, :ai, ["ctrl+shift+y"])
+        %{state | config: %{state.config | keys: keys}, bindings: rebound(keys)}
+      end)
+
+      key(window, ?a, @ctrl ||| @shift)
+      Process.sleep(200)
+      assert panes_of_tab(window, id) == []
+      key(window, ?y, @ctrl ||| @shift)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+    end
+
+    defp rebound(keys) do
+      for {action, names} <- keys,
+          name <- names,
+          {:ok, binding} <- [Guiltty.Keymap.parse_key(name)],
+          do: {action, binding}
+    end
+
+    test "without a command it only says so", %{id: id, window: window} do
+      ai_key(window)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "no AI tool set" end)
+      assert panes_of_tab(window, id) == []
+    end
+
+    test "says so when the program isn't there", %{window: window} do
+      set_ai(window, "no-such-program-here")
+      ai_key(window)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "not found" end)
+    end
+
+    test "opens beside you, goes back and forth, and stays one pane", %{id: id, window: window} do
+      set_ai(window, "cat -v")
+      ai_key(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      assert eventually(fn -> :sys.get_state(window).active == pane end)
+
+      ai_key(window)
+      assert eventually(fn -> :sys.get_state(window).active == id end)
+      ai_key(window)
+      assert eventually(fn -> :sys.get_state(window).active == pane end)
+      assert panes_of_tab(window, id) == [pane]
+    end
+
+    test "position: :tab opens a tab of its own", %{id: id, window: window} do
+      set_ai(window, "cat -v", :tab)
+      ai_key(window)
+      assert eventually(fn -> Tabs.active(@tabs) != id end)
+      assert eventually(fn -> members(window)[id] == [id] end)
+    end
+
+    test "a tool that takes bracketed paste gets what's selected, whole", %{
+      id: id,
+      window: window
+    } do
+      set_ai(window, ~S(sh -c "printf '\033[?2004h'; sleep 0.3; exec cat -v"))
+      Session.write(id, "printf 'ONE\\nTWO\\n'\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^TWO$/m end)
+      row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 == "ONE"))
+      Screen.select(id, {:start, {row, 0}, 3})
+      Screen.select(id, {:extend, {row + 1, 2}})
+      Screen.select(id, :finish)
+
+      ai_key(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      assert eventually(fn -> Session.dump(pane) =~ "^[[200~ONE" end), Session.dump(pane)
+      assert Session.dump(pane) =~ "^[[201~"
+      # The screen around it stayed here, and so did a selection nobody needs now.
+      refute Session.dump(pane) =~ "printf"
+      assert Screen.selection_text(id) == nil
+    end
+
+    test "nothing is sent unless it's selected", %{id: id, window: window} do
+      set_ai(window, "cat -v")
+      Session.write(id, "echo SECRET\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^SECRET$/m end)
+      ai_key(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      Process.sleep(300)
+      refute Session.dump(pane) =~ "SECRET"
+    end
+
+    test "a tool without bracketed paste gets one line, so nothing is sent",
+         %{window: window} = context do
+      id = context.id
+      set_ai(window, "cat -v")
+      ai_key(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      assert eventually(fn -> :sys.get_state(window).active == pane end)
+      :sys.replace_state(window, &%{&1 | ai_paste: %{pane: pane, text: "ONE\nTWO\n  THREE"}})
+      send(window, {:ai_paste_late, pane})
+      assert eventually(fn -> Session.dump(pane) =~ "ONE TWO THREE" end), Session.dump(pane)
+    end
+  end
+
   describe "right click" do
     defp right_click(window, col, row, mods \\ 0),
       do: renderer(window, <<9, 0, 2, col::16, row::16, mods::16, 1>>)
@@ -376,7 +492,9 @@ defmodule Guiltty.WindowTest do
 
   test "the program's queries are answered through the PTY", %{id: id} do
     Session.write(id, "printf '\\e[6n'; IFS= read -rsd R pos; echo got${pos#*[}\r")
-    assert eventually(fn -> Session.dump(id) =~ ~r/^got\d+;\d+$/m end)
+    # Not anchored at the start: an answer that beats `read` turning echo off
+    # shows on the screen first, on the same line.
+    assert eventually(fn -> Session.dump(id) =~ ~r/got\d+;\d+$/m end)
   end
 
   test "paste and mouse events reach the shell as bytes", %{id: id, window: window} do

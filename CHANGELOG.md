@@ -8,6 +8,15 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.21.0 — 2026-11-09 — The AI key
+
+### Added
+- An AI key: set `ai: [command: "your-ai-tool"]`, and Ctrl+Shift+A (`ai` in `keys:`)
+  opens that tool in a pane beside you, and goes back and forth. `position: :down`
+  or `:tab` puts it elsewhere. What's selected goes to its prompt, without Enter, and
+  nothing else on your screen does. Guiltty only starts the program: no API keys
+  or accounts here, and any command-line tool works.
+
 ## 0.20.1 — 2026-11-09 — Right click
 
 ### Added

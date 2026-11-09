@@ -1483,3 +1483,22 @@ htop and mc too.
 - A fairer xterm baseline: this openSUSE build's checksums match none of esctest's
   settings, so its numbers aren't a score.
 - Styling a window's padding with a program's default background (OSC 11).
+
+## 2026-11-09 — The AI key
+
+_Draft: agent, awaiting user_
+
+**Tried.** A key that opens an AI tool. The first idea was a prompt built into
+guiltty, which would have meant an HTTP client, a chat screen, and API keys to look
+after. Then it was clear a pane already runs any program, so the feature is a key and
+a setting, and it works with whatever tool you like.
+
+**Broke.** A tool that's starting up can't take a paste yet, and doesn't say whether
+it understands bracketed paste. Pasting too soon would put a line break where Enter
+goes, and that would send a half-finished question. So the text waits for the mode, and
+loses its line breaks if the mode never comes.
+
+**Clicked.** The rule that decides the design is what it doesn't do: nothing on your
+screen goes to an AI unless you select it. The key started as a joke, Ctrl+Shift+A+I,
+built as a sequence, A then I. It worked, and made every Ctrl+Shift+A wait 1.5 seconds
+to find out if an I was coming. So it's Ctrl+Shift+A now, and the sequences went with it.

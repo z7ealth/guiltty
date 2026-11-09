@@ -203,6 +203,32 @@ still checks each pane on its own: if one ssh ends, the group pauses and
 that tab gets the ⚠. If a pane isn't running ssh, the first press says so
 and nothing joins; a second press adds it as a local pane.
 
+* The AI key
+
+A pane runs any program, so an AI tool is just one more. Press Ctrl+Shift+A (=ai= in
+=keys:=, like any other key), and the command in the =ai= setting opens beside you, in
+the directory you were in. Press it again and you go back to where you were; again, and you return to
+it. That's all guiltty knows about AI: it starts a program and talks to no one, so
+it holds no API keys, and works with any tool that runs in a terminal.
+
+#+begin_src elixir
+ai: [command: "your-ai-tool", position: :right]    # or :down, or :tab
+#+end_src
+
+No command is set by default: guiltty doesn't pick a company for you, or run
+something you didn't ask for.
+
+*Only what you select goes to it.* A terminal shows passwords, tokens and =.env= files,
+and sending your screen to a company's servers has to be something you chose. So with
+text selected, the key pastes that, and nothing else leaves. It's a paste with no
+Enter: nothing is sent until you press it. Answers stay in the tool's pane, and
+guiltty never runs what they suggest.
+
+A tool that's just starting isn't ready to read yet, and hasn't said whether it takes
+bracketed paste. So the text waits until the tool turns that mode on, and goes then.
+After 5 seconds it goes anyway, with its line breaks turned into spaces, because to a
+program without bracketed paste a line break is the same as pressing Enter.
+
 * Loot
 
 - tmux(1): =split-window=, =select-pane=, =resize-pane= (the model the

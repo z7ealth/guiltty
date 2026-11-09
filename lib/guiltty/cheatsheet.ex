@@ -73,7 +73,8 @@ defmodule Guiltty.Cheatsheet do
          {"Split down", k.(:split_down)},
          {"Move focus", arrows(config.keys, :focus)},
          {"Resize", arrows(config.keys, :resize)},
-         {"Focus a pane", "click it"}
+         {"Focus a pane", "click it"},
+         {"AI, and back", k.(:ai)}
        ]},
       {"Broadcast",
        [

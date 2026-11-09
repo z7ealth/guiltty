@@ -49,6 +49,9 @@ defmodule Guiltty.Config do
       broadcast group (Ctrl+Shift+B): `["ssh", "mosh-client"]`
     * `:renderer` - `:vulkan` or `:gl`, for windows opened after a change;
       Vulkan falls back to OpenGL by itself when it can't start
+    * `:ai` - `%{command: binary | nil, position: :right | :down | :tab}`: the
+      AI tool the `ai` key opens, beside you or in a tab of its own. nil opens
+      nothing: guiltty doesn't pick one for you
     * `:clipboard_write` - programs can put text on the clipboard (OSC 52),
       from the focused pane; they can never read it
     * `:screen_reports` - answer DECRQCRA and the title reports, for test
@@ -92,6 +95,7 @@ defmodule Guiltty.Config do
     cheatsheet: ["ctrl+shift+h", "ctrl+shift+/"],
     lock_tab: ["ctrl+shift+l"],
     broadcast: ["ctrl+shift+b"],
+    ai: ["ctrl+shift+a"],
     split_right: ["ctrl+shift+o"],
     split_down: ["ctrl+shift+e"],
     focus_left: ["ctrl+shift+left"],
@@ -134,6 +138,7 @@ defmodule Guiltty.Config do
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan,
+      ai: %{command: nil, position: :right},
       clipboard_write: true,
       screen_reports: false
     }
@@ -364,6 +369,7 @@ defmodule Guiltty.Config do
          {:ok, pane_border} <- pane_border(get.(:pane_border, []), d.pane_border),
          {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
          {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]),
+         {:ok, ai} <- ai(get.(:ai, []), d.ai),
          {:ok, clipboard_write} <-
            one_of(:clipboard_write, get.(:clipboard_write, d.clipboard_write), [true, false]),
          {:ok, screen_reports} <-
@@ -387,6 +393,7 @@ defmodule Guiltty.Config do
          pane_border: pane_border,
          broadcast_programs: programs,
          renderer: renderer,
+         ai: ai,
          clipboard_write: clipboard_write,
          screen_reports: screen_reports
        }}
@@ -450,6 +457,22 @@ defmodule Guiltty.Config do
   end
 
   defp shell(_, _), do: {:error, "shell: expected a keyword list"}
+
+  defp ai(opts, d) when is_list(opts) do
+    command = Keyword.get(opts, :command, d.command)
+
+    with true <- Keyword.keyword?(opts),
+         true <- command == nil or (is_binary(command) and String.trim(command) != ""),
+         {:ok, position} <-
+           one_of(:"ai position", Keyword.get(opts, :position, d.position), [:right, :down, :tab]) do
+      {:ok, %{command: command, position: position}}
+    else
+      {:error, _} = error -> error
+      false -> {:error, "ai: expected command: \"a program\" and position: :right, :down or :tab"}
+    end
+  end
+
+  defp ai(_, _), do: {:error, "ai: expected a keyword list"}
 
   defp working_directory(dir) when dir in [:inherit, :home], do: {:ok, dir}
   defp working_directory("/" <> _ = dir), do: {:ok, dir}

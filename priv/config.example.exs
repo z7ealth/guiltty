@@ -157,6 +157,8 @@
     lock_tab: ["ctrl+shift+l"],
     # Puts the tab in the broadcast group, or takes it out: all its panes.
     broadcast: ["ctrl+shift+b"],
+    # Opens the AI tool set below, and goes back.
+    ai: ["ctrl+shift+a"],
     # Split panes: a new pane right of the focused one, or below it, with
     # half its room.
     split_right: ["ctrl+shift+o"],
@@ -176,6 +178,11 @@
     resize_up: ["alt+shift+up"],
     resize_down: ["alt+shift+down"]
   ],
+
+  # The AI tool the `ai` key opens, beside you (:right, :down) or in a tab of its
+  # own (:tab). It's a program in a pane: what's selected goes to its prompt, and
+  # nothing else on your screen does. Without a command, the key only says so.
+  # ai: [command: "", position: :right],
 
   # Programs can put text on the clipboard (OSC 52), from the focused pane.
   # They can never read it.

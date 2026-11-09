@@ -53,6 +53,15 @@ defmodule Guiltty.Window do
   cursor is the one drawn. A click focuses the pane under it; a drag stays
   in the pane it started in; the wheel scrolls the pane under the pointer.
 
+  ## The AI key
+
+  Opens the command in the `ai` setting, in a pane beside you or a tab of its
+  own, and goes back and forth between it and where you were. It's a program in a
+  pane, nothing more: guiltty talks to no AI itself. What's selected goes to its
+  prompt, and nothing else on your screen ever does: terminals show passwords
+  and tokens, and sending them somewhere must be something you chose. It's a paste
+  with no Enter, so nothing is sent until you say so.
+
   ## What programs can ask of the window
 
   A program can set a pane's colors, and the clipboard (OSC 52, unless
@@ -89,6 +98,9 @@ defmodule Guiltty.Window do
   # SDL_KMOD_CTRL
   @kmod_ctrl 0x00C0
   @link_schemes ~w(http https mailto file)
+  # How long a new AI tool has to ask for bracketed paste, before what's selected
+  # goes to it anyway, on one line.
+  @ai_paste_ms 5_000
 
   @doc """
   Options: `:tabs` (its desk's `Guiltty.Tabs`, required), `:renderer` (a
@@ -195,6 +207,12 @@ defmodule Guiltty.Window do
       cheatsheet: nil,
       # the images the renderer has, by uid (see show_graphics/2)
       sent_images: MapSet.new(),
+      # the AI tool's session, per tab (or :tab when it has a tab of its own)
+      ai_panes: %{},
+      # where the AI key came from, to go back
+      ai_return: nil,
+      # what's selected, waiting for a new AI tool to be ready: %{pane:, text:}
+      ai_paste: nil,
       # the window has the keyboard (for focus events)
       focused: true,
       # what the last key event said beyond the key (see Guiltty.Keymap)
@@ -372,6 +390,11 @@ defmodule Guiltty.Window do
   end
 
   def handle_info({:clipboard, _id, _request}, state), do: {:noreply, state}
+
+  def handle_info({:ai_paste_late, pane}, %{ai_paste: %{pane: pane}} = state),
+    do: {:noreply, deliver_ai_paste(state)}
+
+  def handle_info({:ai_paste_late, _pane}, state), do: {:noreply, state}
 
   ## Renderer events
 
@@ -922,6 +945,26 @@ defmodule Guiltty.Window do
 
   defp run(:cheatsheet, state), do: open_cheatsheet(state, 0)
 
+  defp run(:ai, %{active: nil} = state), do: state
+
+  defp run(:ai, %{config: %{ai: %{command: nil}}} = state) do
+    flash(state, ~s(no AI tool set: add ai: [command: "..."] to your config), 6_000)
+  end
+
+  defp run(:ai, state) do
+    selected = selected_text(state, state.active)
+    if selected, do: on_pane(elem(selected, 0), &Screen.clear_selection/1)
+    text = if selected, do: elem(selected, 1)
+    key = ai_key(state)
+    pane = Map.get(state.ai_panes, key)
+
+    cond do
+      not ai_alive?(pane) -> open_ai(state, key, text)
+      pane == state.active and text == nil -> leave_ai(state)
+      true -> state |> enter_ai(pane) |> send_to_ai(pane, text)
+    end
+  end
+
   defp run(:broadcast, %{active: nil} = state), do: state
 
   # A tab running ssh joins at once. A local one only on a second press:
@@ -955,6 +998,118 @@ defmodule Guiltty.Window do
   defp run(:zoom_reset, state), do: zoom(state, 0)
 
   defp run(_unknown, state), do: state
+
+  ## The AI key
+
+  # Beside you, it's one per tab; in a tab of its own, one per window.
+  defp ai_key(%{config: %{ai: %{position: :tab}}}), do: :tab
+  defp ai_key(state), do: state.active_tab
+
+  defp ai_alive?(nil), do: false
+  defp ai_alive?(pane), do: GenServer.whereis(Session.via(pane, :pty)) != nil
+
+  defp open_ai(state, key, text) do
+    with [program | args] <- OptionParser.split(state.config.ai.command),
+         path when is_binary(path) <- System.find_executable(program) do
+      came_from = {state.active_tab, state.active}
+
+      case open_ai_session(state, path, args) do
+        {:ok, pane} ->
+          state = %{
+            state
+            | ai_panes: Map.put(state.ai_panes, key, pane),
+              ai_return: came_from
+          }
+
+          wait_to_send(state, pane, text)
+
+        _ ->
+          flash(state, "couldn't open #{program}")
+      end
+    else
+      [] ->
+        flash(state, "the ai setting has no command")
+
+      nil ->
+        flash(
+          state,
+          "#{state.config.ai.command}: not found. Try its full path in the ai setting",
+          6_000
+        )
+    end
+  end
+
+  defp open_ai_session(state, path, args) do
+    opts = [shell: path, args: args]
+
+    case state.config.ai.position do
+      :tab ->
+        catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
+
+      direction ->
+        case catch_exit(fn -> Tabs.split(state.desk_tabs, direction, opts) end) do
+          # No room for a pane: a tab is better than nothing.
+          {:error, :too_small} -> catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
+          result -> result
+        end
+    end
+  end
+
+  defp enter_ai(state, pane) do
+    state = %{state | ai_return: {state.active_tab, state.active}}
+    go_to(state, pane)
+  end
+
+  defp leave_ai(%{ai_return: {_tab, pane}} = state) when pane != nil do
+    if ai_alive?(pane), do: go_to(state, pane), else: state
+  end
+
+  defp leave_ai(state), do: state
+
+  # A pane of this tab, or the tab it's in.
+  defp go_to(state, pane) do
+    case Enum.find_index(state.tabs, fn {tab, _} -> pane in Map.get(state.members, tab, [tab]) end) do
+      nil ->
+        state
+
+      index ->
+        {tab, _} = Enum.at(state.tabs, index)
+        if tab != state.active_tab, do: switch(state, index)
+        catch_exit(fn -> Tabs.focus(state.desk_tabs, {:pane, pane}) end)
+        state
+    end
+  end
+
+  # A tool that's just starting hasn't said yet whether it takes bracketed paste.
+  defp wait_to_send(state, _pane, nil), do: state
+
+  defp wait_to_send(state, pane, text) do
+    Process.send_after(self(), {:ai_paste_late, pane}, @ai_paste_ms)
+    %{state | ai_paste: %{pane: pane, text: text}}
+  end
+
+  defp send_to_ai(state, _pane, nil), do: state
+
+  defp send_to_ai(state, pane, text),
+    do: deliver_ai_paste(%{state | ai_paste: %{pane: pane, text: text}})
+
+  # As soon as the tool asks for bracketed paste, which most do as they're ready.
+  defp ready_ai_paste(%{ai_paste: %{pane: pane}} = state) do
+    if pane_value(state, pane, :input, @default_input).bracketed_paste,
+      do: deliver_ai_paste(state),
+      else: state
+  end
+
+  defp ready_ai_paste(state), do: state
+
+  # Never to the broadcast group, and never with an Enter. A program that doesn't
+  # take bracketed paste would read a line break as Enter, so it gets one line.
+  defp deliver_ai_paste(%{ai_paste: %{pane: pane, text: text}} = state) do
+    input = pane_value(state, pane, :input, @default_input)
+    text = if input.bracketed_paste, do: text, else: String.replace(text, ~r/\s*\R\s*/, " ")
+    catch_exit(fn -> Pty.write(pane, Keymap.paste(text, input)) end)
+    %{state | ai_paste: nil}
+  end
 
   # :split_right is :right, :focus_up is :up...
   defp direction(action),
@@ -1337,7 +1492,7 @@ defmodule Guiltty.Window do
     if title != nil and title != state.title,
       do: send_port(state, Protocol.title(window_title(title)))
 
-    state = report_pending_focus(state, p)
+    state = state |> report_pending_focus(p) |> ready_ai_paste()
 
     %{
       focus_on(state, state.active)
