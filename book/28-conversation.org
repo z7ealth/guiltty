@@ -1,0 +1,189 @@
+#+TITLE: The conversation: what programs say to a terminal, and what it answers
+#+STARTUP: overview
+
+* A terminal is a protocol
+
+Chapter 3 turned bytes into commands, and chapter 4 drew them. But a program
+doesn't just draw, it talks: it asks what the terminal can do, sets colors, puts
+text on the clipboard. Where does the list of what to support come from?
+
+From a promise. Every program in a guiltty tab sees =TERM=xterm-256color=, and
+looks that up in terminfo, the database that says what to send:
+
+#+begin_example
+  $ infocmp -1x xterm-256color | grep -E '^\s(hts|cbt|Ms|fe)='
+          cbt=\E[Z,
+          hts=\EH,
+          Ms=\E]52;%p1%s;%p2%s\E\\,
+          fe=\E[?1004h,
+#+end_example
+
+Each line says "this terminal does this". If it doesn't, nothing crashes: =tabs -4=
+quietly does nothing, or =vim= never hears you came back. There's no certificate,
+just xterm's documentation (ctlseqs) and programs that assume it. Chapter 10 is how
+guiltty measures that.
+
+* Four kinds of escape sequence
+
+#+begin_example
+  ESC [ ... final      CSI   commands with numbers    ESC [ 2 ; 3 H
+  ESC ] ... ST         OSC   commands with text       ESC ] 2 ; title ST
+  ESC P ... ST         DCS   a string for the device  ESC P $ q m ST
+  ESC _ ... ST         APC   a string for an app      ESC _ G a=T ... ST
+
+  ST is ESC \ ("string terminator"); xterm also takes BEL at the end of an OSC.
+#+end_example
+
+** C1 controls
+
+Each of those introducers has a single-character form too: in eight-bit days,
+=ESC [= could be the one byte =0x9B=. In UTF-8 that's the character U+009B, two
+bytes, =C2 9B=, and xterm still treats it as CSI. guiltty does too. They look like
+text and aren't, so the C function that finds where a run of text ends
+([[file:../c_src/text_nif.c::text_run][text_run]]) stops at them, and the parser turns one into the =ESC x= it stands for:
+=ESC= plus the code minus 0x40.
+
+* Asking questions
+
+A program can't look at the screen. It asks, and the answer comes back through the
+same pipe as your typing:
+
+#+begin_example
+  program                           guiltty
+     |   ESC [ ? 2004 $ p              |     is bracketed paste on?   (DECRQM)
+     |--------------------------------->|
+     |   ESC [ ? 2004 ; 2 $ y          |     2: no
+     |<---------------------------------|
+     |   ESC P $ q m ESC \             |     what's the pen?          (DECRQSS)
+     |--------------------------------->|
+     |   ESC P 1 $ r 0 ; 1 m ESC \     |     bold
+     |<---------------------------------|
+     |   ESC ] 11 ; ? ESC \            |     what's the background?
+     |--------------------------------->|
+     |   ESC ] 11 ; rgb:1d1d/1f1f/2121 ESC \
+     |<---------------------------------|
+#+end_example
+
+That last one is how =vim= decides between its dark and light colors. Answers are
+the dangerous part of a terminal, because a program reads them as if you typed
+them: chapter 20 says what guiltty refuses to answer, and why.
+
+* Tab stops and margins
+
+A terminal starts with a tab stop every 8 columns, and programs can move them:
+=ESC H= sets one at the cursor, =CSI 3 g= clears them all, which is what =tabs -4=
+does. The grid keeps =nil= until a program touches them, then a sorted list.
+
+Margins are the scroll region's sideways cousin. =CSI ? 69 h= turns them on,
+=CSI 2 ; 40 s= sets them, and then text wraps at column 40 back to column 2, and
+scrolling moves only the cells between them:
+
+#+begin_example
+  +----------------------------+
+  | x|aaaaaaaaaaaaaaaaaa|xxxxxx|   only what's inside moves
+  | x|bbbbbbbbbbbbbbbbbb|xxxxxx|
+  +----------------------------+
+#+end_example
+
+They touch almost everything: printing, =ICH=, =DCH=, =IL=, =DL=, scrolling, =CR=, tabs,
+and the cursor's limits. Few programs use them, so they mustn't cost the rest
+anything. Text only takes the slow road when the grid's =margins?= says so, and
+a wrap that's pending inside the margins needs its own note, =pending_at=, because
+"the column past the last" is an ordinary cell when the margin isn't the screen's edge.
+
+Rectangles work on any part of the screen: fill it (=DECFRA=), erase it (=DECERA=), copy
+it (=DECCRA=), or restyle it (=DECCARA=, =DECRARA=). =DECSCA= protects what's printed from
+=DECSED=, =DECSEL= and =DECSERA=, the selective erases.
+
+* Colors a program sets
+
+A program can change the palette (=OSC 4=) and the default colors (=OSC 10=, =11=),
+and ask for them. But panes share one window, and the renderer has one palette
+for it. So the renderer never hears about these: [[file:../lib/guiltty/view.ex::recolor][View.recolor]] rewrites each row as
+it leaves the Screen, putting real RGB values in place of the palette entries and
+default colors the program changed. Pane by pane, and at no cost until a program
+does it.
+
+Two limits come with that. The cursor is drawn once, so the focused pane's color
+(=OSC 12=) goes to the renderer as a new theme. And the window's padding keeps the
+theme's background, since no cell covers it.
+
+The whole screen in reverse video (=CSI ? 5 h=, the visible bell) works the same way:
+=View= flips the =inverse= bit on the rows it sends.
+
+* The other OSCs
+
+| Code | What it says                          | What guiltty does                    |
+|------+---------------------------------------+--------------------------------------|
+| 7    | "I'm in this folder": a =file://= URI | a new tab starts there, if it's on this machine |
+| 8    | "this text links to..."               | Ctrl+click opens it                  |
+| 52   | "put this on the clipboard"           | yes, from the focused pane; never read |
+| 133  | "a prompt starts here"                | Ctrl+Shift+Z and X jump between them |
+
+A cell has no room for a link: its 16 attribute bits are all taken now. So a cell
+only has one bit saying it's part of a link, and the grid keeps a list of where
+each one goes: ={row number, first col, last col, uri}=. Row numbers don't change as
+text scrolls (chapter 15), and reflow maps them to their new rows. A list means a
+region scrolling sideways can leave one behind, but a click also checks the cell's
+bit, so stale entries find nothing.
+
+#+begin_example
+  attrs, 16 bits
+  0x0001 bold        0x0100 wide          0x1000 overline
+  0x0002 dim         0x0200 spacer        0x2000 protected (DECSCA)
+  0x0004 italic      0x0400 match         0x4000 wrapped (reflow)
+  0x0008 underline   0x0800 current match 0x8000 link
+  0x0010 blink
+  0x0020 inverse
+  0x0040 hidden
+  0x0080 strikethrough
+#+end_example
+
+The top three are bookkeeping, and the renderer uses those same bits for its own
+purposes in a drawn cell, so it masks them off as a row arrives, drawing a link as
+an underline.
+
+* Not drawing half a frame
+
+A program that redraws a lot sends many writes, and a frame can land between them:
+you see half a screen for a moment. With =CSI ? 2026 h=, it says "I'm drawing"; with
+=CSI ? 2026 l=, "done". Between them the Screen goes on applying everything and
+just doesn't tell the viewer. This fits the pull design of chapter 12: the Window
+draws when it's told there's something to take, and here it isn't told. A program
+can die halfway, so after 150 ms the Screen lets go by itself.
+
+* Loot
+
+- XTerm's "Control Sequences" (ctlseqs): the closest thing to a standard.
+- =terminfo(5)=, =infocmp(1)=, =tabs(1)=.
+- The Kitty keyboard protocol, on its site, and "Synchronized Output" in the
+  terminal-wg's specifications.
+- VT510 Programmer Information, for =DECRQM=, =DECRQSS= and the rectangle operations.
+- OSC 8: "Hyperlinks in Terminal Emulators" (Egmont Koblinger's gist).
+
+* Questions
+
+1. A program asks a terminal something. How does it get the answer?
+2. Why does the text scanner in C need to know about C1 controls?
+3. Why can't the renderer's palette hold a color one pane set?
+4. A cell has no room for a link's address. Where does it live?
+5. What does a program lose if guiltty doesn't answer =CSI 21 t=? What does an
+   attacker lose?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. On the same pipe as your typing: the terminal writes it to the PTY, and the
+   program reads it from standard input. That's why answers can be dangerous.
+2. Because U+009B is a control that looks like text: two bytes in valid UTF-8. A run
+   of "text" that went through it would print the sequence on screen.
+3. Panes share one window, and the renderer has one palette for it. Colors one pane
+   set would change every pane, so each row gets real RGB values before it leaves
+   its Screen.
+4. In the grid's =links= list, by row number and columns; the cell only has a bit
+   saying it's part of one.
+5. A program loses a way to save and restore the title itself, which the title
+   stack gives it anyway. An attacker loses a way to choose words and have the
+   terminal type them at the shell.

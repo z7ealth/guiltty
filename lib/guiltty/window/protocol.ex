@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 12
+  @version 13
 
   @hello 1
   @setup 2
@@ -38,6 +38,7 @@ defmodule Guiltty.Window.Protocol do
   @image 23
   @image_drop 24
   @placements 25
+  @focus 26
 
   @image_formats %{rgb: 0, rgba: 1, png: 2}
 
@@ -47,7 +48,9 @@ defmodule Guiltty.Window.Protocol do
   @type event ::
           {:hello, version :: non_neg_integer(), backend :: binary()}
           | {:text, binary()}
-          | {:key, keycode :: non_neg_integer(), mods :: non_neg_integer()}
+          | {:key, keycode :: non_neg_integer(), mods :: non_neg_integer(),
+             %{kind: :press | :repeat | :release, shifted: non_neg_integer()}}
+          | {:focus, boolean()}
           | {:resize, cols :: pos_integer(), rows :: pos_integer(),
              cell_pixels :: {pos_integer(), pos_integer()} | nil}
           | {:paste, binary()}
@@ -225,13 +228,19 @@ defmodule Guiltty.Window.Protocol do
   def raise_window, do: <<@raise>>
 
   @mouse_kinds %{0 => :press, 1 => :release, 2 => :motion, 3 => :wheel}
+  @key_kinds %{1 => :press, 2 => :repeat, 3 => :release}
 
   @spec decode(binary()) :: {:ok, event()} | {:error, {:bad_message, binary()}}
   def decode(<<@hello, version::16, len, name::binary-size(len)>>),
     do: {:ok, {:hello, version, name}}
 
   def decode(<<@text, text::binary>>), do: {:ok, {:text, text}}
-  def decode(<<@key, keycode::32, mods::16>>), do: {:ok, {:key, keycode, mods}}
+
+  def decode(<<@key, keycode::32, mods::16, shifted::32, kind>>)
+      when is_map_key(@key_kinds, kind),
+      do: {:ok, {:key, keycode, mods, %{kind: @key_kinds[kind], shifted: shifted}}}
+
+  def decode(<<@focus, focused>>), do: {:ok, {:focus, focused != 0}}
 
   # The renderer's own limit (max_grid in main.c): a grid bigger than that
   # is a broken message, not a window.

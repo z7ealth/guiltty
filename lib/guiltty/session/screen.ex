@@ -31,6 +31,12 @@ defmodule Guiltty.Session.Screen do
   Title changes also go to `opts[:owner]` (the tab manager) as
   `{:title, id, title}`.
 
+  ## Synchronized output
+
+  A program that redraws in pieces can say so (mode 2026). Until it's done,
+  or until `@sync_limit_ms` passes (a program may die halfway), the viewer
+  isn't told about changes, so it never draws half a frame.
+
   ## Marks
 
   While nobody views the screen (its tab isn't the active one), the owner
@@ -46,6 +52,7 @@ defmodule Guiltty.Session.Screen do
   alias Guiltty.Session.Pty
 
   @resize_quiet_ms 1_000
+  @sync_limit_ms 150
 
   def start_link(opts) do
     Session.start_named(opts[:id], :screen, &GenServer.start_link(__MODULE__, opts, name: &1))
@@ -66,9 +73,13 @@ defmodule Guiltty.Session.Screen do
   @doc "Everything that changed since the last update, as a map (see the moduledoc)."
   def take_update(id), do: GenServer.call(Session.via(id, :screen), :take_update)
 
-  @doc "Resizes the grid (no reflow); `cell_pixels` is `{width, height}` or nil."
-  def resize(id, cols, rows, cell_pixels \\ nil),
-    do: GenServer.call(Session.via(id, :screen), {:resize, cols, rows, cell_pixels})
+  @doc """
+  Resizes the grid, rewrapping its text; `cell_pixels` is `{width, height}` or
+  nil. With `at_prompt: true`, the shell is at its prompt and will redraw it:
+  see `Guiltty.Grid.resize/4`.
+  """
+  def resize(id, cols, rows, cell_pixels \\ nil, opts \\ []),
+    do: GenServer.call(Session.via(id, :screen), {:resize, cols, rows, cell_pixels, opts})
 
   @doc "The current title."
   def title(id), do: GenServer.call(Session.via(id, :screen), :title)
@@ -95,6 +106,16 @@ defmodule Guiltty.Session.Screen do
 
   def clear_selection(id), do: GenServer.call(Session.via(id, :screen), :clear_selection)
 
+  @doc "Where the link at a visible `{row, col}` goes, or nil (OSC 8)."
+  def link_at(id, pos), do: GenServer.call(Session.via(id, :screen), {:link_at, pos})
+
+  @doc "Scrolls to the prompt before (`:older`) or after (`:newer`) the view's top (OSC 133)."
+  def jump_prompt(id, direction),
+    do: GenServer.call(Session.via(id, :screen), {:jump_prompt, direction})
+
+  @doc "The working directory the program last reported (OSC 7), as a URI, or nil."
+  def cwd_uri(id), do: GenServer.call(Session.via(id, :screen), :cwd_uri)
+
   @doc """
   Searches for `query`: `:start` from the newest output, then `:older` or
   `:newer` from the current match. Scrolls the view to the match and marks
@@ -110,19 +131,28 @@ defmodule Guiltty.Session.Screen do
 
   @impl true
   def init(opts) do
-    scrollback = Keyword.get_lazy(opts, :scrollback, fn -> Config.get().scrollback end)
+    Session.limit_memory(opts[:max_heap_words])
+    config = Config.get()
+    scrollback = Keyword.get(opts, :scrollback, config.scrollback)
 
     grid =
       Grid.new(Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24),
         scrollback: scrollback,
-        cell_pixels: opts[:cell_pixels]
+        cell_pixels: opts[:cell_pixels],
+        theme: config.theme,
+        screen_reports: Keyword.get(opts, :screen_reports, config.screen_reports)
       )
+
+    # Programs can ask what color the theme is: the answer follows the config.
+    if Process.whereis(Config), do: Config.subscribe(self())
 
     {:ok,
      %{
        id: opts[:id],
        owner: opts[:owner],
        grid: grid,
+       # the timer that ends a synchronized update nobody finished
+       sync_timer: nil,
        viewer: nil,
        viewer_ref: nil,
        # whether the viewer was told about changes it hasn't taken yet
@@ -188,7 +218,8 @@ defmodule Guiltty.Session.Screen do
   def handle_call({:unsubscribe, _pid}, _from, state), do: {:reply, :ok, state}
 
   def handle_call(:take_update, _from, state) do
-    decorated = View.decorated?(state.scroll, state.selection, state.search)
+    decorated =
+      View.decorated?(state.scroll, state.selection, state.search) or state.grid.reverse_video
 
     grid =
       if state.decorated and not decorated, do: Grid.mark_all_dirty(state.grid), else: state.grid
@@ -197,6 +228,11 @@ defmodule Guiltty.Session.Screen do
 
     rows =
       if decorated, do: View.rows(grid, state.scroll, state.selection, state.search), else: rows
+
+    rows =
+      if View.recolored?(grid),
+        do: Enum.map(rows, fn {i, row} -> {i, View.recolor(row, grid)} end),
+        else: rows
 
     clusters = Grid.clusters_since(grid, state.sent_clusters)
 
@@ -216,14 +252,39 @@ defmodule Guiltty.Session.Screen do
     {:reply, update, state}
   end
 
-  def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
+  def handle_call({:resize, cols, rows, cell_pixels, opts}, _from, state) do
+    # A new width rewraps the text, and renumbers its rows: what points at
+    # rows (a search match, how far back the view is) can't stay.
+    rewrapped? = cols != state.grid.cols
+
     state =
       %{state | selection: nil}
-      |> update_grid(&(&1 |> Grid.resize(cols, rows) |> Grid.set_cell_pixels(cell_pixels)))
+      |> update_grid(&(&1 |> Grid.resize(cols, rows, opts) |> Grid.set_cell_pixels(cell_pixels)))
+      |> then(&if(rewrapped?, do: %{&1 | search: nil, scroll: 0}, else: &1))
 
     quiet_until = System.monotonic_time(:millisecond) + @resize_quiet_ms
     state = %{state | quiet_until: quiet_until}
     {:reply, :ok, state |> keep_view(state.grid.history) |> after_change()}
+  end
+
+  def handle_call({:link_at, {row, col}}, _from, state) do
+    n = View.top(state.grid, state.scroll) + row
+    {:reply, Grid.link_at(state.grid, n, col), state}
+  end
+
+  def handle_call(:cwd_uri, _from, state), do: {:reply, state.grid.cwd_uri, state}
+
+  def handle_call({:jump_prompt, direction}, _from, state) do
+    top = View.top(state.grid, state.scroll)
+
+    case Grid.prompt_near(state.grid, top, direction) do
+      nil ->
+        {:reply, :none, state}
+
+      n ->
+        scroll = View.clamp_scroll(state.grid, state.grid.history - n)
+        {:reply, :ok, notify(%{state | scroll: scroll})}
+    end
   end
 
   def handle_call({:scroll, how}, _from, state) do
@@ -317,6 +378,16 @@ defmodule Guiltty.Session.Screen do
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 
+  def handle_info({:config, config}, state),
+    do: {:noreply, update_grid(state, &Grid.set_theme(&1, config.theme))}
+
+  def handle_info(:sync_limit, state) do
+    state = %{state | sync_timer: nil}
+    {:noreply, state |> update_grid(&Grid.set_synchronized(&1, false)) |> notify()}
+  end
+
+  def handle_info(_other, state), do: {:noreply, state}
+
   defp update_grid(state, fun), do: %{state | grid: fun.(state.grid)}
 
   # Tell the owner once per kind, and only the more important news: a bell
@@ -373,8 +444,34 @@ defmodule Guiltty.Session.Screen do
   end
 
   defp after_change(state) do
-    state |> answer_queries() |> report_title() |> drop_stale_selection() |> notify()
+    state
+    |> answer_queries()
+    |> report_title()
+    |> send_clipboard()
+    |> drop_stale_selection()
+    |> watch_sync()
+    |> notify()
   end
+
+  # OSC 52: only the viewer can act on it; the Window decides whether to.
+  defp send_clipboard(%{grid: %{clipboard: nil}} = state), do: state
+
+  defp send_clipboard(state) do
+    {request, grid} = Grid.take_clipboard(state.grid)
+    if state.viewer, do: send(state.viewer, {:clipboard, state.id, request})
+    %{state | grid: grid}
+  end
+
+  defp watch_sync(%{grid: %{synchronized: true}, sync_timer: nil} = state),
+    do: %{state | sync_timer: Process.send_after(self(), :sync_limit, @sync_limit_ms)}
+
+  defp watch_sync(%{grid: %{synchronized: false}, sync_timer: timer} = state)
+       when timer != nil do
+    Process.cancel_timer(timer)
+    %{state | sync_timer: nil}
+  end
+
+  defp watch_sync(state), do: state
 
   # A selection points at rows by number, so it follows its text as output
   # scrolls. But when the text itself changes under it (`clear`, a program
@@ -406,6 +503,7 @@ defmodule Guiltty.Session.Screen do
   # Tell the viewer once that there's something new to take.
   defp notify(%{viewer: nil} = state), do: state
   defp notify(%{notified: true} = state), do: state
+  defp notify(%{grid: %{synchronized: true}} = state), do: state
 
   defp notify(state) do
     if Grid.dirty?(state.grid) or viewer_state(state, state.grid) != state.sent_state do
@@ -419,7 +517,7 @@ defmodule Guiltty.Session.Screen do
   defp viewer_state(state, grid) do
     {Grid.cursor(grid), grid.cursor_visible, grid.cursor_style, grid.title, grid.input, grid.alt?,
      state.scroll, state.selection, state.search, Grid.scrollback_size(grid),
-     Grid.graphics_version(grid)}
+     Grid.graphics_version(grid), grid.cursor_blink, grid.cursor_color}
   end
 
   # The images to show ({placements, images}, see Guiltty.Graphics.view/4),
@@ -442,6 +540,8 @@ defmodule Guiltty.Session.Screen do
       cursor: cursor || {0, 0},
       cursor_visible: grid.cursor_visible and cursor != nil,
       cursor_style: grid.cursor_style,
+      cursor_blink: grid.cursor_blink,
+      cursor_color: grid.cursor_color,
       title: grid.title,
       input: grid.input,
       alt_screen: grid.alt?,

@@ -234,6 +234,9 @@ Every new setting in `config.exs` needs all of these, in the same change:
   a snapshot.
 - **Property tests** (StreamData, from MVP 2): random bytes never crash the
   parser, and any chunking of the same bytes gives the same grid.
+- **Conformance:** `test/guiltty/conformance_test.exs` holds what each sequence
+  should do; a case in `@known_gaps` must fail, so the list can't go stale. Update
+  the baselines in `test/conformance/baselines/` with any change to a sequence.
 - **Renderer replay:** save port messages to a file and replay them into the
   renderer on its own, under ASan, UBSan and Valgrind.
 - **Fuzzing** (from MVP 12): `c_src/fuzz/` targets take replay files.
@@ -263,6 +266,8 @@ make analyze                # GCC and Clang static analyzers over all C; any fin
 make fuzz-run               # libFuzzer on the renderer's input (FUZZ_TIME=600 s per target)
 make valgrind               # both release renderers replay the recordings under Valgrind
 make bench                  # throughput: parser + grid alone, then a real window (book chapter 22)
+mix run --no-start bench/soak.exs 600   # a long flood with resizes: memory should level off
+mix run --no-start test/conformance/run.exs esctest   # outside suites, baselines (book chapter 10)
 mix run --no-start test/fixtures/fuzz/make_seeds.exs   # regenerate fuzz seeds (protocol change)
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
 make text-table             # regenerate the text NIF's codepoint table (after width-table)
@@ -283,14 +288,15 @@ picks lavapipe (Mesa's software Vulkan).
 
 The user's machine is openSUSE (packages via `zypper`), with:
 
-- GCC 16, Elixir 1.20 on OTP 29 (via asdf)
+- GCC 16, Elixir 1.20 on OTP 28 (system packages; no asdf right now, which the
+  run on Elixir 1.18.4 / OTP 26 before a tag needs: book chapter 10)
 - FreeType, fontconfig, HarfBuzz, OpenGL and EGL development files present
-- Fonts: Source Code Pro (monospace), JetBrainsMono Nerd Font, Noto Color
-  Emoji. No CJK font yet (`noto-sans-cjk-fonts`), so kanji draw as tofu.
-- Keyboard: US-International (dead keys), X11 input method `@im=local`
-- Xvfb and Xephyr are installed: use a private display (`Xvfb :77`) for
-  tests that need real X key or mouse events, never the user's display
-- SDL3 3.4, an X11 session (`DISPLAY=:0`)
+- Fonts: Source Code Pro (monospace), JetBrains Mono, Noto Color Emoji, Noto
+  Sans CJK.
+- Keyboard: US (`xkb us`), input method `@im=ibus`
+- Xvfb is installed: use a private display (`Xvfb :77`) for tests that need
+  real X key or mouse events, never the user's display
+- SDL3 3.4, GNOME on Wayland (`WAYLAND_DISPLAY=wayland-0`; `DISPLAY=:0` is Xwayland)
 - AMD RX 6600 (RADV), Vulkan loader 1.4, glslc (shaderc), the Khronos
   validation layers, vulkan-tools. RADV can't present on Xvfb (no DRI3):
   Vulkan tests on Xvfb or offscreen run on lavapipe or a headless surface

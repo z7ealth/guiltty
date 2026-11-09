@@ -30,7 +30,7 @@ The renderer is the only one that sees the window, so it starts the chain.
      v
   Window ----> Tabs.resize(98, 17, {11, 23}) -> Session.resize(id, ...) for every tab
                  |
-                 |-- 1. Screen.resize: Grid.resize (no reflow), every row dirty,
+                 |-- 1. Screen.resize: Grid.resize (reflow), every row dirty,
                  |      sends a full update tagged 98x17 -----------------> renderer draws
                  |
                  `-- 2. Pty.resize: ioctl(master, TIOCSWINSZ, {17, 98, 1078, 391})
@@ -58,13 +58,91 @@ That's why every ROWS message carries the grid size it describes. Dropping
 a stale update is safe because the resize always produces a full update at
 the new size right after.
 
-* No reflow
+* Reflow
 
-=Grid.resize= doesn't re-wrap text. Rows are cut or padded on the right,
-and added or removed at the bottom. One exception: if shrinking would push
-the cursor off the screen, rows are removed from the top instead, so the
-line you're typing on stays. Reflow (re-wrapping long lines) is an NG+
-quest, and only really matters once there's scrollback.
+A row of text isn't always a line of text. When =cat= prints 100 characters
+into 80 columns, the terminal splits them over two rows. Make the window 120
+wide, and they should be one row again: that's what you meant, and it's why
+every modern terminal does it. The trick is knowing which rows belong together.
+
+Every row knows. When text runs off the right edge, the row's last cell gets
+a bit, =wrapped=. Writing over that cell takes the bit away, as it should: the
+text changed. So a line that exactly fills the screen and then ends stays
+ended, and only text that really ran on joins up again.
+
+#+begin_example
+  80 columns                        120 columns
+  +----------------------+          +---------------------------------+
+  |aaaaaaaaaaaaaaaaaaaaaa|> wrapped |aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   |
+  |aaaaaaaaa             |          |bb                               |
+  |bb                    |          |                                 |
+  +----------------------+          +---------------------------------+
+
+  rows -> logical lines -> new rows; the last ones are the screen
+#+end_example
+
+=Grid.resize/3= takes the scrollback and the screen, joins them into logical
+lines, and cuts those at the new width. The last rows of the result are the new
+screen, and the rest is the new scrollback, numbered from 0 again. Text can move
+in both directions: narrow the window and rows go up into the scrollback; widen
+it and they come back down.
+
+What needs care:
+
+- *The cursor stays on its character.* Its row and column become an offset into
+  its logical line, and back again.
+- *Blank rows below the text aren't text.* Only the screen down to the last row
+  with something on it, or the cursor's, takes part. Otherwise they would push
+  your text into the scrollback.
+- *A wide character never splits.* If the cut lands on one, it moves to the next
+  row, whole, and leaves a blank in the last column. That blank has the =wrapped=
+  bit, and joining drops it: it was never text.
+- *Things that point at rows move too.* Prompt marks and links are mapped to their
+  new rows; a link that now wraps becomes one span per row. A selection or a search
+  match just ends, since it's about to mean something else. So does the view being
+  scrolled back.
+- *A million rows of scrollback.* Only the newest 100,000 are rewrapped; older
+  ones keep their shape, and are cut or padded when shown.
+
+*The prompt isn't rewrapped.* A shell waiting at its prompt redraws it on SIGWINCH.
+It moves up as many rows as it knows the prompt took, erases down, and prints it
+again, and it knows nothing about reflow. Split a full-width prompt in two, and it
+lands a row short and leaves a copy behind, at every step of a drag:
+
+#+begin_example
+  80 columns                 reflow to 40                 zsh redraws, moving up 1
+  TOP.............END        TOP...............           TOP...............      <- left behind
+  > _                        ...............END           TOP.............END
+                             > _                          > _
+#+end_example
+
+So when the shell is what's in the foreground (=Pty.busy= says nothing else is), the
+prompt's rows stay the rows the shell thinks they are, cut or padded, and it
+redraws them a moment later. Where the prompt starts is an OSC 133 mark if the shell
+sends one. Otherwise it's a guess: going up from the cursor, a row belongs if it
+wrapped or reaches the right edge. A line of output just above the prompt that
+happens to reach the edge gets cut too. Marks don't have that problem, so a shell
+set up to send them is the better setup.
+
+A drag makes this harder. A window's edge produces dozens of sizes a second, and a
+shell told mid-drag prints its prompt at a width that's already gone. That text then
+wraps where the shell doesn't expect, and the next redraw leaves a copy again. So
+two more things happen while the shell is at its prompt: the =Pty= holds the new size
+back until it has been still for 100 ms (typing says it at once), so the shell redraws
+just once, at the final width; and the grid remembers how many rows the prompt took
+until the program prints something, because cut and padded rows soon stop looking
+like one. A program in the foreground, like =vim=, hears every size at once.
+
+The alternate screen isn't rewrapped: the program there (=vim=, =htop=) redraws
+itself on SIGWINCH, and its rows are just cut or padded. The main screen waiting
+behind it does rewrap, so the shell's text fits when the program exits.
+
+A change of height alone wraps nothing. When it would push the cursor off the
+screen, rows leave at the top, and go to the scrollback. (Until v0.20.0 they were
+simply lost: a property test for reflow caught it.)
+
+The test to read is the property in [[file:../test/guiltty/reflow_test.exs][reflow_test.exs]]: any text, any width,
+and back again, keeps every character.
 
 * The kernel side
 
@@ -145,6 +223,10 @@ python3 -c 'import fcntl,struct,termios; print(struct.unpack("4H", fcntl.ioctl(0
 - =tput(1)=, =stty(1)=.
 
 * Questions
+
+- How does guiltty know that two rows are one line of text?
+- Why don't blank rows below the text take part in a reflow?
+- Why isn't the prompt rewrapped, and how does guiltty know it's at one?
 
 1. Why does the renderer decide the new size, and not Elixir?
 2. Who receives SIGWINCH?

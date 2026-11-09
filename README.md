@@ -14,8 +14,8 @@ the small `guiltty` command.
   <img src="docs/screenshot.png" alt="guiltty with three tabs; the active one runs yazi, previewing the guiltty logo as an image" width="800">
 </p>
 
-Linux only. Tried on openSUSE Tumbleweed, X11 and an AMD GPU; Wayland,
-Intel, NVIDIA and other distributions should work but haven't been
+Linux only. Tried on openSUSE Tumbleweed, on X11 and on Wayland (GNOME), with
+an AMD GPU; Intel, NVIDIA and other distributions should work but haven't been
 tried.
 
 It isn't fast at heavy output: a big `cat` goes by at about 3 to 8 MB/s,

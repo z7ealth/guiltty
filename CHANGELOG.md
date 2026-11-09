@@ -8,6 +8,55 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.20.0 — 2026-11-09 — A terminal you can rely on
+
+### Added
+- Long lines rewrap when the window or a pane changes width, in the scrollback
+  too, and the cursor stays on the same character (reflow).
+- Left Alt works as Meta: Alt+B is `ESC b`, so readline, Emacs and the like move
+  by words. Right Alt stays AltGr. Ctrl+Space, Ctrl+[, Ctrl+\\, Ctrl+], Ctrl+^,
+  Ctrl+_ and the Ctrl+digit row send what they do in xterm.
+- The Kitty keyboard protocol: programs like Neovim and Helix can tell Ctrl+I
+  from Tab and Shift+Enter from Enter, and see key releases. Flags 1, 2 and 8;
+  not 4 and 16.
+- Copying in a program over ssh reaches your clipboard (OSC 52), from the
+  focused pane. Programs can never read it. `clipboard_write: false` turns it off.
+- Hyperlinks (OSC 8): `ls --hyperlink` and the like. Ctrl+click opens http, https,
+  mailto and file links, and the status says where it went.
+- Prompts (OSC 133): Ctrl+Shift+Z and Ctrl+Shift+X jump to the previous and next
+  prompt, for shells set up to mark them (`prev_prompt`, `next_prompt`).
+- A new tab starts where a program says it is (OSC 7), when that's on this machine.
+- Programs can set and ask for colors (OSC 4, 10, 11, 12 and their resets), per
+  pane, so `vim` and others can tell a dark background from a light one.
+- Focus events (mode 1004), for `vim` and `tmux`. Synchronized output (mode 2026):
+  no half-drawn frames in programs that use it. Overline (SGR 53).
+- Custom tab stops, back tab, reverse video (the visible bell), the title stack,
+  left and right margins, rectangle fill, copy, erase and restyle, selective
+  erase, G2 and G3 character sets, ISO Latin-1 as a character set, more mouse encodings (9, 1005, 1015, 1016),
+  LNM and reverse wrap (45, 1045).
+- Programs can ask what guiltty supports: DECRQM, DECRQSS, DECREQTPARM, XTGETTCAP,
+  DA3 and the rest of the status reports.
+- `screen_reports: true` answers DECRQCRA and the title reports, for test suites.
+  It stays off: it lets a program read your screen, even over ssh.
+- A tab that runs out of memory (2 GB) is restarted alone, instead of taking
+  every tab with the VM.
+
+### Changed
+- guiltty now reports itself as a VT520, not a VT220 (DA1 and DA2), since it
+  does what those are expected to do.
+- The wheel on the alternate screen sends arrow keys unless a program turns that
+  off (mode 1007).
+- The renderer protocol is now version 13. Build guiltty and its renderers
+  together, as `mix compile` and `install.sh` do.
+
+### Fixed
+- C1 controls in UTF-8 (U+0080 to U+009F) printed as text. They now act as what
+  they stand for, as in xterm.
+- An underline color (`58;5;1`) also turned on blink and bold.
+- Making a window shorter threw away the rows it pushed off the top. They now go
+  to the scrollback.
+- REP and NEL did the wrong thing at the left and right margins.
+
 ## 0.19.1 — 2026-11-06 — Borders and layouts
 
 ### Added

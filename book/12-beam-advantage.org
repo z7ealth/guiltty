@@ -43,6 +43,12 @@ so a crash in either stops the whole VM, and so does the VM itself
 running out of memory. Then every tab goes (chapter 20 is how the NIFs
 are kept from crashing).
 
+The second one has a guard. Each session's processes run with a heap limit
+(=max_heap_size=, 2 GB): a tab that goes past it is killed by the BEAM and
+restarted, and the other tabs never hear about it. From OTP 27 the limit counts
+large binaries too, which is what a tab's rows and images are; on OTP 26 only the
+heap, so those have limits of their own.
+
 | What crashes            | What restarts                          | What you see                       |
 |-------------------------+----------------------------------------+------------------------------------|
 | a Parser                | that Parser                            | the halo; the screen stays         |

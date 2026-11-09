@@ -130,8 +130,8 @@ defmodule Guiltty.TerminalTest do
 
   describe "answers to queries" do
     test "device attributes" do
-      assert responses("\e[c") == "\e[?62;22c"
-      assert responses("\e[>c") == "\e[>1;10;0c"
+      assert responses("\e[c") == "\e[?65;6;21;22;28c"
+      assert responses("\e[>c") == "\e[>64;10;0c"
     end
 
     test "status and cursor position" do
@@ -160,13 +160,13 @@ defmodule Guiltty.TerminalTest do
     test "input modes" do
       grid = run("\e[?1h\e=\e[?2004h\e[?1002h\e[?1006h")
 
-      assert grid.input == %{
+      assert %{
                cursor_keys: :application,
                keypad: :application,
                bracketed_paste: true,
                mouse: 1002,
                mouse_sgr: true
-             }
+             } = grid.input
 
       assert run("\e[?1h\e[?1l\e>").input.cursor_keys == :normal
     end
@@ -189,5 +189,11 @@ defmodule Guiltty.TerminalTest do
   test "resize in the alternate screen keeps the main one" do
     grid = run("main\e[?1049happ") |> Grid.resize(6, 3)
     assert run("\e[?1049l", 6, 3, grid) |> Grid.dump() == "main\n\n"
+  end
+
+  test "resizing wider in the alternate screen rewraps the main one, not the program's" do
+    grid = run("0123456789abcde\e[?1049h\e[Happ") |> Grid.resize(20, 5)
+    assert Grid.dump(grid) == "app\n\n\n\n"
+    assert run("\e[?1049l", 20, 5, grid) |> Grid.dump() == "0123456789abcde\n\n\n\n"
   end
 end

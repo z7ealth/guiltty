@@ -17,10 +17,15 @@ defmodule Guiltty.Parser do
     * `{:osc, data}` - an operating system command, e.g. `"0;title"`
     * `{:apc, data}` - an application program command, e.g. a Kitty
       graphics command: `ESC _ G a=T;AAAA ESC \\` is `{:apc, "Ga=T;AAAA"}`
+    * `{:dcs, data}` - a device control string, e.g. a settings query:
+      `ESC P $ q m ESC \\` is `{:dcs, "$qm"}`
 
-  DCS, SOS and PM strings are consumed and dropped. APC strings carry
-  images (Kitty graphics), so they're kept up to 64 MB; a longer one is
-  dropped whole.
+  SOS and PM strings are consumed and dropped. A string too long to keep
+  is dropped whole, never cut: DCS at 4 KB, OSC at 1 MB (OSC 52 carries the
+  clipboard), APC at 64 MB (it carries images, Kitty graphics).
+
+  C1 controls are eight-bit versions of `ESC x`, and in UTF-8 they arrive
+  as U+0080 to U+009F: `U+009B` is `ESC [`, as in xterm. They're never text.
 
   Text is UTF-8. A byte sequence that isn't valid UTF-8 prints as U+FFFD
   (the replacement character, �), the way xterm does.
@@ -39,6 +44,8 @@ defmodule Guiltty.Parser do
   @max_params 32
   @max_param 65_535
   @max_string 4096
+  # OSC 52 carries the clipboard, base64.
+  @max_osc 1024 * 1024
   # APC strings carry images (Kitty graphics).
   @max_big_string 64 * 1024 * 1024
 
@@ -50,10 +57,10 @@ defmodule Guiltty.Parser do
             group: [],
             groups: [],
             seen_param: false,
-            # OSC or APC data being collected, as reversed iodata
+            # OSC, DCS or APC data being collected, as reversed iodata
             string: [],
             string_size: 0,
-            # an APC string grew past @max_big_string: it's dropped
+            # a string grew past its limit: it's dropped
             overflow: false,
             # the start of a UTF-8 character that the last read cut off
             pending: ""
@@ -72,6 +79,7 @@ defmodule Guiltty.Parser do
           | {:esc, binary(), byte()}
           | {:osc, binary()}
           | {:apc, binary()}
+          | {:dcs, binary()}
 
   @esc 0x1B
   @can 0x18
@@ -102,6 +110,10 @@ defmodule Guiltty.Parser do
   defp step(:ground, <<byte, rest::binary>>, p, acc) when byte < 0x20 or byte == 0x7F,
     do: ground_byte(byte, rest, p, acc)
 
+  # A C1 control is the ESC sequence it stands for. text_run stops before one.
+  defp step(:ground, <<0xC2, c1, rest::binary>>, p, acc) when c1 in 0x80..0x9F,
+    do: step(:escape, <<c1 - 0x40, rest::binary>>, clear(p), acc)
+
   defp step(:ground, bytes, p, acc) do
     n = TextNif.text_run(bytes)
     <<run::binary-size(^n), rest::binary>> = bytes
@@ -117,7 +129,8 @@ defmodule Guiltty.Parser do
       byte == ?[ -> step(:csi_entry, rest, p, acc)
       byte == ?] -> step(:osc_string, rest, p, acc)
       byte == ?_ -> step(:apc_string, rest, p, acc)
-      byte in [?P, ?X, ?^] -> step(:ignored_string, rest, p, acc)
+      byte == ?P -> step(:dcs_string, rest, p, acc)
+      byte in [?X, ?^] -> step(:ignored_string, rest, p, acc)
       byte in 0x30..0x7E -> esc_dispatch(byte, rest, p, acc)
       true -> step(:escape, rest, p, acc)
     end
@@ -186,34 +199,33 @@ defmodule Guiltty.Parser do
 
   defp step(:apc_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
 
-  ## Strings: OSC is kept, DCS/SOS/PM are dropped
+  ## Strings: OSC and DCS are kept, SOS and PM are dropped
 
-  defp step(:osc_string, bytes, p, acc) do
-    case string_run(bytes, 0) do
-      0 ->
-        <<byte, rest::binary>> = bytes
+  defp step(:osc_string, bytes, p, acc),
+    do: kept_string(bytes, :osc_string, :osc_esc, @max_osc, &osc_command/2, p, acc)
 
-        case byte do
-          # xterm accepts BEL as well as ST to end an OSC
-          @bel -> step(:ground, rest, clear(p), [osc(p) | acc])
-          @esc -> step(:osc_esc, rest, p, acc)
-          b when b in [@can, @sub] -> step(:ground, rest, clear(p), acc)
-          # other C0 controls are ignored inside a string
-          _ -> step(:osc_string, rest, p, acc)
-        end
-
-      n ->
-        <<run::binary-size(^n), rest::binary>> = bytes
-        step(:osc_string, rest, put_string(p, run), acc)
-    end
-  end
-
-  # ESC inside an OSC: ESC \ (ST) ends it. Anything else also ends it, and
+  # ESC inside an OSC: ESC \\ (ST) ends it. Anything else also ends it, and
   # starts a new escape sequence.
   defp step(:osc_esc, <<?\\, rest::binary>>, p, acc),
-    do: step(:ground, rest, clear(p), [osc(p) | acc])
+    do: step(:ground, rest, clear(p), osc_command(p, acc))
 
-  defp step(:osc_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), [osc(p) | acc])
+  defp step(:osc_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), osc_command(p, acc))
+
+  defp step(:dcs_string, bytes, p, acc),
+    do: kept_string(bytes, :dcs_string, :dcs_esc, @max_string, &dcs_command/2, p, acc)
+
+  # ESC inside a DCS: ESC \\ (ST) ends it. Anything else drops it.
+  defp step(:dcs_esc, <<?\\, rest::binary>>, p, acc),
+    do: step(:ground, rest, clear(p), dcs_command(p, acc))
+
+  defp step(:dcs_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
+
+  # ST as a C1 control, U+009C. Its first byte may end this read.
+  defp step(:ignored_string, <<0xC2, 0x9C, rest::binary>>, p, acc),
+    do: step(:ground, rest, clear(p), acc)
+
+  defp step(:ignored_string, <<0xC2>>, p, acc),
+    do: {%{p | state: :ignored_string, pending: <<0xC2>>}, acc}
 
   defp step(:ignored_string, <<byte, rest::binary>>, p, acc) do
     case byte do
@@ -226,14 +238,49 @@ defmodule Guiltty.Parser do
   defp step(:ignored_esc, <<?\\, rest::binary>>, p, acc), do: step(:ground, rest, clear(p), acc)
   defp step(:ignored_esc, bytes, p, acc), do: step(:escape, bytes, clear(p), acc)
 
+  # The body of an OSC or DCS. BEL ends an OSC, as in xterm; other C0 controls
+  # inside a string are ignored.
+  defp kept_string(<<0xC2, 0x9C, rest::binary>>, _state, _esc, _max, finish, p, acc),
+    do: step(:ground, rest, clear(p), finish.(p, acc))
+
+  defp kept_string(<<0xC2>>, state, _esc, _max, _finish, p, acc),
+    do: {%{p | state: state, pending: <<0xC2>>}, acc}
+
+  defp kept_string(<<0xC2, rest::binary>>, state, _esc, max, _finish, p, acc),
+    do: step(state, rest, put_string(p, <<0xC2>>, max), acc)
+
+  defp kept_string(bytes, state, esc, max, finish, p, acc) do
+    case string_run(bytes, 0) do
+      0 ->
+        <<byte, rest::binary>> = bytes
+
+        case byte do
+          @bel when state == :osc_string -> step(:ground, rest, clear(p), finish.(p, acc))
+          @esc -> step(esc, rest, p, acc)
+          b when b in [@can, @sub] -> step(:ground, rest, clear(p), acc)
+          _ -> step(state, rest, p, acc)
+        end
+
+      n ->
+        <<run::binary-size(^n), rest::binary>> = bytes
+        step(state, rest, put_string(p, run, max), acc)
+    end
+  end
+
   # An APC body: everything up to ESC (or CAN/SUB, which cancel it), found
   # with one :binary.match instead of a step per byte. An image is
   # megabytes of base64.
   defp apc_string(bytes, p, acc) do
-    case :binary.match(bytes, [<<@esc>>, <<@can>>, <<@sub>>]) do
+    case :binary.match(bytes, [<<@esc>>, <<@can>>, <<@sub>>, <<0xC2, 0x9C>>]) do
       :nomatch ->
-        # the rest comes in the next read
-        {%{put_big_string(p, bytes) | state: :apc_string}, acc}
+        # the rest comes in the next read (with ST's first byte, if it's cut)
+        {run, pending} = split_trailing_c2(bytes)
+        {%{put_big_string(p, run) | state: :apc_string, pending: pending}, acc}
+
+      {at, 2} ->
+        <<run::binary-size(^at), _st::binary-size(2), rest::binary>> = bytes
+        p = put_big_string(p, run)
+        step(:ground, rest, clear(p), apc_command(p, acc))
 
       {at, 1} ->
         <<run::binary-size(^at), byte, rest::binary>> = bytes
@@ -242,6 +289,15 @@ defmodule Guiltty.Parser do
         if byte == @esc,
           do: step(:apc_esc, rest, p, acc),
           else: step(:ground, rest, clear(p), acc)
+    end
+  end
+
+  defp split_trailing_c2(bytes) do
+    n = byte_size(bytes) - 1
+
+    case bytes do
+      <<run::binary-size(^n), 0xC2>> -> {run, <<0xC2>>}
+      _ -> {bytes, ""}
     end
   end
 
@@ -267,6 +323,7 @@ defmodule Guiltty.Parser do
   # prints as U+FFFD and decoding goes on after it. An incomplete character
   # at the very end of the input waits for the next read; anywhere else
   # (a control byte cut it short) it's invalid too.
+  #
   defp text(run, rest, p, acc) do
     case :unicode.characters_to_binary(run) do
       valid when is_binary(valid) ->
@@ -332,7 +389,13 @@ defmodule Guiltty.Parser do
     step(:ground, rest, clear(p), [command | acc])
   end
 
-  defp osc(p), do: {:osc, p.string |> Enum.reverse() |> IO.iodata_to_binary()}
+  defp osc_command(%{overflow: true}, acc), do: acc
+  defp osc_command(p, acc), do: [{:osc, string(p)} | acc]
+
+  defp dcs_command(%{overflow: true}, acc), do: acc
+  defp dcs_command(p, acc), do: [{:dcs, string(p)} | acc]
+
+  defp string(p), do: p.string |> Enum.reverse() |> IO.iodata_to_binary()
 
   defp clear(p) do
     %{
@@ -383,16 +446,21 @@ defmodule Guiltty.Parser do
   defp close_group([single]), do: single
   defp close_group(reversed), do: Enum.reverse(reversed)
 
-  defp put_string(%{string_size: size} = p, _run) when size >= @max_string, do: p
+  defp put_string(%{overflow: true} = p, _run, _max), do: p
 
-  defp put_string(p, run) do
-    run = binary_part(run, 0, min(byte_size(run), @max_string - p.string_size))
-    %{p | string: [run | p.string], string_size: p.string_size + byte_size(run)}
+  defp put_string(p, run, max) do
+    size = p.string_size + byte_size(run)
+
+    if size > max,
+      do: %{p | overflow: true, string: [], string_size: 0},
+      else: %{p | string: [run | p.string], string_size: size}
   end
 
   ## Runs
 
-  # Bytes that are simply part of an OSC string.
-  defp string_run(<<byte, rest::binary>>, n) when byte >= 0x20, do: string_run(rest, n + 1)
+  # Bytes that are simply part of a string; 0xC2 may start ST (U+009C).
+  defp string_run(<<byte, rest::binary>>, n) when byte >= 0x20 and byte != 0xC2,
+    do: string_run(rest, n + 1)
+
   defp string_run(_, n), do: n
 end

@@ -20,6 +20,7 @@ defmodule Guiltty.Session.Parser do
 
   @impl true
   def init(opts) do
+    Session.limit_memory(opts[:max_heap_words])
     id = opts[:id]
     :ok = Pty.attach_parser(id, self())
     {:ok, %{id: id, parser: Parser.new()}}

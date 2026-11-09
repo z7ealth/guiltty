@@ -89,8 +89,8 @@ defmodule Guiltty.ParserTest do
       assert parse("\e]0;t\e[1m") == [{:osc, "0;t"}, {:csi, nil, [1], "", ?m}]
     end
 
-    test "APC is kept; DCS, SOS and PM are dropped" do
-      assert parse("\eP9;1q#0;2;0;0;0\e\\a") == [{:print, "a"}]
+    test "APC and DCS are kept; SOS and PM are dropped" do
+      assert parse("\eP$qm\e\\a") == [{:dcs, "$qm"}, {:print, "a"}]
 
       assert parse("\e_Ga=q;AAAA\e\\b\eXsos\e\\c") ==
                [{:apc, "Ga=q;AAAA"}, {:print, "b"}, {:print, "c"}]
@@ -109,9 +109,39 @@ defmodule Guiltty.ParserTest do
       assert byte_size(data) == 300_001
     end
 
-    test "OSC data is capped" do
-      [{:osc, data}] = parse("\e]0;" <> String.duplicate("x", 10_000) <> "\a")
-      assert byte_size(data) == 4096
+    test "a string past its limit is dropped whole, never cut" do
+      assert parse("\e]0;" <> String.duplicate("x", 2 * 1024 * 1024) <> "\aok") == [
+               {:print, "ok"}
+             ]
+
+      assert parse("\eP" <> String.duplicate("x", 5000) <> "\e\\ok") == [{:print, "ok"}]
+    end
+
+    test "OSC can carry a clipboard's worth of text" do
+      [{:osc, data}] = parse("\e]52;c;" <> String.duplicate("x", 500_000) <> "\a")
+      assert byte_size(data) == 500_005
+    end
+  end
+
+  describe "C1 controls in UTF-8" do
+    test "are the ESC sequences they stand for, never text" do
+      assert parse("a\u009b1mb") == [{:print, "a"}, {:csi, nil, [1], "", ?m}, {:print, "b"}]
+      assert parse("\u009d0;t\u009cok") == [{:osc, "0;t"}, {:print, "ok"}]
+      assert parse("\u0090$qm\u009cok") == [{:dcs, "$qm"}, {:print, "ok"}]
+      assert parse("\u009fGa=q\u009cok") == [{:apc, "Ga=q"}, {:print, "ok"}]
+      assert parse("\u0098x\u009cok") == [{:print, "ok"}]
+      assert parse("\u0085") == [{:esc, "", ?E}]
+    end
+
+    test "nearby characters are still text" do
+      assert parse("\u00a0é\u00c2") == [{:print, "\u00a0é\u00c2"}]
+    end
+
+    test "split across reads" do
+      {p, []} = Parser.feed(Parser.new(), <<0xC2>>)
+      {p, [{:csi, nil, [1], "", ?m}]} = Parser.feed(p, <<0x9B, "1m">>)
+      {p, []} = Parser.feed(p, <<"\e]0;t", 0xC2>>)
+      assert {_p, [{:osc, "0;t"}, {:print, "ok"}]} = Parser.feed(p, <<0x9C, "ok">>)
     end
   end
 

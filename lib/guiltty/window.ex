@@ -52,6 +52,15 @@ defmodule Guiltty.Window do
   cursor is the one drawn. A click focuses the pane under it; a drag stays
   in the pane it started in; the wheel scrolls the pane under the pointer.
 
+  ## What programs can ask of the window
+
+  A program can set a pane's colors, and the clipboard (OSC 52, unless
+  `clipboard_write` is off): only the focused pane's request counts, so a
+  background job can't replace what you copied. It can ask to hear about
+  focus (mode 1004): `CSI I` when its pane gets the keyboard, `CSI O` when it
+  leaves. And text can be a link (OSC 8): Ctrl+click opens it, for http,
+  https, mailto and file URIs.
+
   ## Closing a busy tab
 
   Closing a tab whose shell is running a program (`vim`, `ssh`, a build)
@@ -60,6 +69,8 @@ defmodule Guiltty.Window do
   """
 
   use GenServer, restart: :transient
+
+  import Bitwise
 
   require Logger
 
@@ -73,13 +84,10 @@ defmodule Guiltty.Window do
   @halo_ms 400
   @min_font 6
   @max_font 96
-  @default_input %{
-    cursor_keys: :normal,
-    keypad: :numeric,
-    bracketed_paste: false,
-    mouse: nil,
-    mouse_sgr: false
-  }
+  @default_input Guiltty.Grid.default_input()
+  # SDL_KMOD_CTRL
+  @kmod_ctrl 0x00C0
+  @link_schemes ~w(http https mailto file)
 
   @doc """
   Options: `:tabs` (its desk's `Guiltty.Tabs`, required), `:renderer` (a
@@ -185,7 +193,20 @@ defmodule Guiltty.Window do
       # the cheatsheet, while it's open: %{lines: [row], top: first row shown}
       cheatsheet: nil,
       # the images the renderer has, by uid (see show_graphics/2)
-      sent_images: MapSet.new()
+      sent_images: MapSet.new(),
+      # the window has the keyboard (for focus events)
+      focused: true,
+      # what the last key event said beyond the key (see Guiltty.Keymap)
+      key_extra: nil,
+      # keys guiltty kept for itself: a program shouldn't see them released
+      bound_keys: MapSet.new(),
+      # a key already sent as an escape code also arrives as this text
+      swallow_text: nil,
+      # the cursor color a program set, and the one the renderer has
+      sent_cursor_color: nil,
+      # a tab was switched to: its pane hears about focus once its first
+      # update says whether it asked to
+      focus_pending: false
     }
 
     {:ok, state, @hello_timeout}
@@ -342,6 +363,15 @@ defmodule Guiltty.Window do
     {:noreply, state}
   end
 
+  # OSC 52 from a pane's program. Only the pane with the keyboard, so nothing
+  # running in the background can replace what you copied.
+  def handle_info({:clipboard, id, {target, text}}, %{active: id} = state) do
+    if state.config.clipboard_write, do: send_port(state, Protocol.clipboard(target, text))
+    {:noreply, state}
+  end
+
+  def handle_info({:clipboard, _id, _request}, state), do: {:noreply, state}
+
   ## Renderer events
 
   defp handle_event({:hello, version, backend}, state) do
@@ -383,6 +413,27 @@ defmodule Guiltty.Window do
 
   # While the cheatsheet is open, keys, text and the mouse are its own: the
   # shell gets nothing.
+  defp handle_event({:focus, focused}, state) do
+    report_focus(state, state.active, focused)
+    {:noreply, %{state | focused: focused}}
+  end
+
+  defp handle_event({:key, key, _mods, %{kind: :release}} = event, state) do
+    cond do
+      MapSet.member?(state.bound_keys, key) ->
+        {:noreply, %{state | bound_keys: MapSet.delete(state.bound_keys, key)}}
+
+      state.cheatsheet != nil or state.rename != nil or state.search != nil ->
+        {:noreply, state}
+
+      true ->
+        {:noreply, write_key(state, event)}
+    end
+  end
+
+  defp handle_event({:key, key, mods, extra}, state),
+    do: handle_event({:key, key, mods}, %{state | key_extra: extra})
+
   defp handle_event({:key, _, _} = event, %{cheatsheet: %{}} = state),
     do: {:noreply, cheatsheet_key(event, state)}
 
@@ -432,17 +483,25 @@ defmodule Guiltty.Window do
         input = pane_input(state, id)
 
         if input.mouse != nil and not Keymap.shift?(mods),
-          do: {:noreply, write_to(state, id, Keymap.mouse(event, input))},
+          do: {:noreply, write_to(state, id, Keymap.mouse(event, input, state.cell_pixels))},
           else: {:noreply, local_mouse(event, id, state)}
     end
   end
 
   defp handle_event({:key, _, _} = event, state) do
     case Enum.find(state.bindings, fn {_action, binding} -> Keymap.matches?(event, binding) end) do
-      {action, _binding} -> {:noreply, run(action, state)}
-      nil when state.rename != nil -> {:noreply, rename_key(event, state)}
-      nil when state.search != nil -> {:noreply, search_key(event, state)}
-      nil -> type(event, state)
+      {action, _binding} ->
+        {:key, key, _mods} = event
+        {:noreply, run(action, %{state | bound_keys: MapSet.put(state.bound_keys, key)})}
+
+      nil when state.rename != nil ->
+        {:noreply, rename_key(event, state)}
+
+      nil when state.search != nil ->
+        {:noreply, search_key(event, state)}
+
+      nil ->
+        type(event, state)
     end
   end
 
@@ -452,9 +511,42 @@ defmodule Guiltty.Window do
   defp handle_event({:text, text}, %{search: %{}} = state),
     do: {:noreply, search_for(state, state.search.query <> text, :start)}
 
-  defp handle_event({:text, _} = event, state), do: type(event, state)
+  # A key already sent as an escape code (Kitty's "every key" flag) also types
+  # its text: that copy stays here. Composed text, like é, isn't that key.
+  defp handle_event({:text, text}, %{swallow_text: text} = state),
+    do: {:noreply, %{state | swallow_text: nil}}
+
+  defp handle_event({:text, _} = event, state), do: type(event, %{state | swallow_text: nil})
+
+  defp type({:key, key, mods}, %{key_extra: %{} = extra} = state) do
+    bytes = Keymap.to_bytes({:key, key, mods, extra}, state.input)
+    every_key? = (Map.get(state.input, :kitty, 0) &&& 8) != 0
+
+    swallow =
+      if every_key? and bytes != nil and extra.shifted in 0x20..0x10FFFF, do: extra.shifted
+
+    text = if swallow, do: <<swallow::utf8>>
+    {:noreply, input(%{state | swallow_text: text, key_extra: nil}, bytes)}
+  end
 
   defp type(event, state), do: {:noreply, input(state, Keymap.to_bytes(event, state.input))}
+
+  defp write_key(state, event) do
+    case Keymap.to_bytes(event, state.input) do
+      nil -> state
+      bytes -> input(state, bytes)
+    end
+  end
+
+  # Mode 1004: CSI I when a pane gets the keyboard, CSI O when it leaves.
+  defp report_focus(_state, nil, _focused), do: :ok
+
+  defp report_focus(state, id, focused) do
+    if pane_value(state, id, :input, @default_input).focus_events,
+      do: catch_exit(fn -> Pty.write(id, if(focused, do: "\e[I", else: "\e[O")) end)
+
+    :ok
+  end
 
   # What you type or paste: in a broadcast group it goes to every tab in
   # the group, through Tabs, which checks first that none lost its
@@ -529,9 +621,15 @@ defmodule Guiltty.Window do
 
   ## The mouse, when the program doesn't want it
 
-  defp local_mouse({:mouse, :press, 0, col, row, _mods, clicks}, id, state) do
-    on_pane(id, &Screen.select(&1, {:start, {row, col}, clicks}))
-    %{state | selecting: true}
+  defp local_mouse({:mouse, :press, 0, col, row, mods, clicks}, id, state) do
+    link = if (mods &&& @kmod_ctrl) != 0, do: on_pane(id, &Screen.link_at(&1, {row, col}))
+
+    if is_binary(link) do
+      open_link(state, link)
+    else
+      on_pane(id, &Screen.select(&1, {:start, {row, col}, clicks}))
+      %{state | selecting: true}
+    end
   end
 
   defp local_mouse({:mouse, :motion, 0, col, row, _mods, _}, id, %{selecting: true} = state) do
@@ -560,6 +658,32 @@ defmodule Guiltty.Window do
   # On the alternate screen there's no scrollback: the wheel sends arrow
   # keys instead, so less, man and git log scroll (xterm's alternateScroll).
   defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, id, state) do
+    input = pane_input(state, id)
+
+    if pane_value(state, id, :alt_screen, false) and not input.alternate_scroll do
+      state
+    else
+      wheel(dir, id, state)
+    end
+  end
+
+  defp local_mouse(_event, _id, state), do: state
+
+  # A link comes from whatever printed it, so it only opens if it's the kind
+  # of thing a browser or mail app should open. The status shows where it
+  # went: text can claim to be one address and link to another.
+  defp open_link(state, uri) do
+    scheme = uri |> String.split(":", parts: 2) |> hd() |> String.downcase()
+
+    if scheme in @link_schemes do
+      send_port(state, Protocol.open_url(uri))
+      flash(state, "opening " <> uri)
+    else
+      flash(state, "not opening a #{scheme} link")
+    end
+  end
+
+  defp wheel(dir, id, state) do
     if pane_value(state, id, :alt_screen, false) do
       key = if dir == 0, do: Keymap.key(:up), else: Keymap.key(:down)
       bytes = Keymap.to_bytes({:key, key, 0}, pane_input(state, id))
@@ -570,8 +694,6 @@ defmodule Guiltty.Window do
       if id == state.active, do: %{state | view_moved: true}, else: state
     end
   end
-
-  defp local_mouse(_event, _id, state), do: state
 
   ## Search mode
 
@@ -716,6 +838,12 @@ defmodule Guiltty.Window do
       }[action]
 
     on_screen(state, &Screen.scroll(&1, how))
+    %{state | view_moved: true}
+  end
+
+  defp run(action, state) when action in [:prev_prompt, :next_prompt] do
+    direction = if action == :prev_prompt, do: :older, else: :newer
+    on_screen(state, &Screen.jump_prompt(&1, direction))
     %{state | view_moved: true}
   end
 
@@ -983,7 +1111,10 @@ defmodule Guiltty.Window do
   end
 
   defp new_layout(state, tab, panes, order, size, key) do
-    state = if tab != state.active_tab, do: leave_tab(state), else: state
+    switched? = tab != state.active_tab
+    if switched? and state.focused, do: report_focus(state, state.active, false)
+    state = if switched?, do: leave_tab(state), else: state
+    state = if switched? and state.focused, do: %{state | focus_pending: true}, else: state
     compose = Compose.new(size, panes, order, state.cell_pixels, pane_look(state.config))
     gone = if state.compose, do: Compose.ids(state.compose) -- Compose.ids(compose), else: []
     state = Enum.reduce(gone, state, &unview(&2, &1))
@@ -1005,6 +1136,11 @@ defmodule Guiltty.Window do
   defp refocus(state, panes) do
     if state.search, do: on_screen(state, &Screen.end_search/1)
     compose = Compose.refocus(state.compose, panes.focus, panes.separators)
+
+    if state.focused do
+      report_focus(state, state.active, false)
+      report_focus(state, panes.focus, true)
+    end
 
     %{state | compose: compose, panes: panes, search: nil, selecting: false, full: true}
     |> focus_on(panes.focus)
@@ -1147,6 +1283,10 @@ defmodule Guiltty.Window do
     p = Map.get(state.pane_state, state.active, %{})
     # The program's cursor shape if it set one, otherwise the user's.
     default = {state.config.cursor.style, state.config.cursor.blink}
+    {shape, blink} = Map.get(p, :cursor_style) || default
+    # Mode 12 has the last word on blinking.
+    blink = if Map.get(p, :cursor_blink) == nil, do: blink, else: p.cursor_blink
+    state = show_cursor_color(state, Map.get(p, :cursor_color))
 
     send_port(
       state,
@@ -1156,7 +1296,7 @@ defmodule Guiltty.Window do
         clusters: clusters,
         cursor: Compose.cursor(c, state.active, Map.get(p, :cursor, {0, 0})),
         cursor_visible: Map.get(p, :cursor_visible, false),
-        cursor_style: Map.get(p, :cursor_style) || default
+        cursor_style: {shape, blink}
       })
     )
 
@@ -1164,6 +1304,8 @@ defmodule Guiltty.Window do
 
     if title != nil and title != state.title,
       do: send_port(state, Protocol.title(window_title(title)))
+
+    state = report_pending_focus(state, p)
 
     %{
       focus_on(state, state.active)
@@ -1175,6 +1317,13 @@ defmodule Guiltty.Window do
     |> update_status()
   end
 
+  defp report_pending_focus(%{focus_pending: true} = state, %{input: _}) do
+    report_focus(state, state.active, true)
+    %{state | focus_pending: false}
+  end
+
+  defp report_pending_focus(state, _pane), do: state
+
   defp pane_info(update) do
     Map.take(update, [
       :input,
@@ -1184,8 +1333,21 @@ defmodule Guiltty.Window do
       :scrollback,
       :cursor,
       :cursor_visible,
-      :cursor_style
+      :cursor_style,
+      :cursor_blink,
+      :cursor_color
     ])
+  end
+
+  # OSC 12. There's one cursor drawn, the focused pane's, so its color goes
+  # to the renderer with the theme: the rows come again, as with any new theme.
+  defp show_cursor_color(%{sent_cursor_color: color} = state, color), do: state
+
+  defp show_cursor_color(state, color) do
+    theme = if color, do: %{state.config.theme | cursor: color}, else: state.config.theme
+    send_port(state, Protocol.theme(theme))
+    resubscribe(state)
+    %{state | sent_cursor_color: color}
   end
 
   # Images: the renderer gets each one it doesn't have yet, forgets those
@@ -1280,7 +1442,8 @@ defmodule Guiltty.Window do
 
   defp apply_config(state, config) do
     if config.theme != state.config.theme do
-      send_port(state, Protocol.theme(config.theme))
+      cursor = state.sent_cursor_color || config.theme.cursor
+      send_port(state, Protocol.theme(%{config.theme | cursor: cursor}))
       # The renderer resolved every cell with the old theme: send them all again.
       resubscribe(state)
     end

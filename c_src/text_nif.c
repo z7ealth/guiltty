@@ -243,8 +243,10 @@ invalid:
 
 // text_run(bytes) -> n: how many bytes at the start may be text, for the
 // parser's ground state: printable ASCII and any byte >= 0x80 (UTF-8 is
-// checked after). It stops at a C0 control or DEL. Like the two below, a
-// plain scan: 64 KB is a few microseconds, too little to report.
+// checked after). It stops at a C0 control, DEL, or a C1 control in UTF-8
+// (U+0080 to U+009F: 0xC2 then 0x80 to 0x9F), which is an escape sequence and
+// not text. Like the two below, a plain scan: 64 KB is a few microseconds,
+// too little to report.
 static ERL_NIF_TERM text_run(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
     (void)argc;
@@ -253,8 +255,11 @@ static ERL_NIF_TERM text_run(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         return enif_make_badarg(env);
 
     size_t n = 0;
-    while (n < bin.size && bin.data[n] >= 0x20 && bin.data[n] != 0x7F)
+    while (n < bin.size && bin.data[n] >= 0x20 && bin.data[n] != 0x7F) {
+        if (bin.data[n] == 0xC2 && n + 1 < bin.size && bin.data[n + 1] >= 0x80 && bin.data[n + 1] <= 0x9F)
+            break;
         n++;
+    }
     return enif_make_uint64(env, n);
 }
 

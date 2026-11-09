@@ -68,7 +68,7 @@ defmodule Guiltty.Tabs do
   require Logger
 
   alias Guiltty.{Config, Layout, Session}
-  alias Guiltty.Session.Pty
+  alias Guiltty.Session.{Pty, Screen}
 
   @sessions Guiltty.Sessions
 
@@ -503,11 +503,37 @@ defmodule Guiltty.Tabs do
   # itself was started.
   defp start_dir(:inherit, %{active: nil} = state), do: state.first_cwd
 
-  defp start_dir(:inherit, state),
-    do: try(do: Pty.cwd(focused(state)), catch: (:exit, _ -> nil))
+  defp start_dir(:inherit, state) do
+    id = focused(state)
+    reported = try(do: Screen.cwd_uri(id), catch: (:exit, _ -> nil))
+    local_dir(reported) || try(do: Pty.cwd(id), catch: (:exit, _ -> nil))
+  end
 
   defp start_dir(:home, _state), do: System.user_home()
   defp start_dir(dir, _state), do: dir
+
+  # OSC 7: the program says where it is, more truthfully than the shell's own
+  # directory when it's a program inside the shell. Only if it's on this
+  # machine: a shell over ssh reports the server's folders.
+  defp local_dir(nil), do: nil
+
+  defp local_dir(uri) do
+    case URI.parse(uri) do
+      %URI{scheme: "file", host: host, path: path} when is_binary(path) ->
+        dir = URI.decode(path)
+        if local_host?(host) and File.dir?(dir), do: dir
+
+      _ ->
+        nil
+    end
+  end
+
+  defp local_host?(host) when host in [nil, "", "localhost"], do: true
+
+  defp local_host?(host) do
+    {:ok, name} = :inet.gethostname()
+    host == to_string(name)
+  end
 
   defp open_tab(state, extra \\ []) do
     # Unique across every desk, and increasing: the Registry names sessions

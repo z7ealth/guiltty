@@ -137,7 +137,7 @@ defmodule Guiltty.DeskTest do
     assert eventually(fn -> :sys.get_state(pid).ready end)
 
     # SDL's keycode for n, with Ctrl and Shift held.
-    send(pid, {:sys.get_state(pid).port, {:data, <<5, ?n::32, 0x0041::16>>}})
+    send(pid, {:sys.get_state(pid).port, {:data, <<5, ?n::32, 0x0041::16, ?n::32, 1>>}})
 
     assert eventually(fn -> length(Desk.all()) == 2 end)
     [^a, b] = Enum.sort(Desk.all())

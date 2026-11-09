@@ -47,6 +47,7 @@ defmodule Guiltty.Cheatsheet do
          {"To the top", k.(:scroll_top)},
          {"Back to the bottom", k.(:scroll_bottom)},
          {"Clear it", k.(:clear_scrollback)},
+         {"Previous / next prompt", k.(:prev_prompt) <> " / " <> k.(:next_prompt)},
          {"Scroll", "mouse wheel"}
        ]},
       {"Search",

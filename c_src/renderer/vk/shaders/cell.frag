@@ -21,6 +21,7 @@ layout(location = 0) out vec4 out_color;
 const uint BOLD = 0x01u;
 const uint UNDERLINE = 0x08u;
 const uint STRIKE = 0x80u;
+const uint OVERLINE = 0x1000u;
 const uint COLOR_GLYPH = 0x8000u;
 const uint DEFAULT_BG = 0x4000u;
 const uint ACCENT = 0x2000u;
@@ -72,7 +73,8 @@ void main() {
 
     int y = int(v_local.y);
     bool line = ((v_attrs & UNDERLINE) != 0u && on_line(y, u.underline_y)) ||
-                ((v_attrs & STRIKE) != 0u && on_line(y, u.strike_y));
+                ((v_attrs & STRIKE) != 0u && on_line(y, u.strike_y)) ||
+                ((v_attrs & OVERLINE) != 0u && on_line(y, 0));
 
     if ((v_attrs & COLOR_GLYPH) != 0u && !line) {
         if (glyph.a <= 0.0)

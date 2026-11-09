@@ -1378,3 +1378,96 @@ line: twice the thin one, 2 pixels at 16 px on a normal screen.
   draw the same Nerd Font icons fine. Suspect: a redraw nvim made after a
   resize or zoom. If it comes back: `GUILTTY_RECORD=/tmp/nvim.msgs
   guiltty`, reproduce, replay the file.
+
+## 2026-11-08 — v0.20.0, step 1: measuring before fixing
+
+_Draft: agent, awaiting user_
+
+**Tried.** The plan for v0.20.0 is to make guiltty a terminal you can rely
+on every day, so the first step was finding out how far it is from one.
+There's no certificate for "OSC compliant", so "done" became: keep every
+promise `TERM=xterm-256color` makes, behave like xterm where it matters, and
+write the results down with the failures explained. A test now holds one
+case per sequence, and accounts for every capability in the terminfo entry.
+esctest2 and ucs-detect run inside a real session with no window: the suite
+is the session's "shell", and the real Parser and Screen answer it.
+
+**Broke.** `OSC` turned out to mean only the title: 0 and 2 work, and
+everything else is dropped. Custom tab stops never worked, and neither did
+back tab, both of which the terminfo entry promises. C1 controls sent as
+UTF-8 print as text. Twice the bug was in the harness: the summary took the
+first failed test for the totals, and `mgc` passed "by accident", because
+clearing margins nobody can set does nothing. Xvfb turned out not to be
+installed, so xterm's own numbers are still missing.
+
+**Clicked.** esctest said 412 failures, which looks terrible, but 361 of them
+are timeouts: it reads the screen through a checksum guiltty doesn't answer,
+so it never finds out whether the rest was right. Implementing that one
+report will tell us more than anything else could. The test that fails when a
+known gap starts working is a nice trick too: the list can't go stale.
+
+### Later
+
+- ucs-detect scores wide characters at 31.5%, and VS-15 at 0%: worth
+  finding out how much is guiltty and how much is glibc's width table.
+  (Found out, below: it's glibc's table, on purpose.)
+
+## 2026-11-08 — v0.20.0: everything else in one go
+
+_Draft: agent, awaiting user_
+
+**Tried.** Every slice at once, since you'd rather test it all together: C1
+controls, DCS, reports, tab stops, margins, rectangles, selective erase, character
+sets, colors, the clipboard, links, prompts, focus, synchronized output, Alt and
+Ctrl, the Kitty keyboard protocol, a memory limit per tab, and reflow. esctest went
+from 112 to 449 passing. Every one of the 79 left has a reason, listed in chapter 10.
+
+**Broke.** Quite a lot, usefully. The reflow property test found that making a
+window shorter had always thrown away rows, which no one had noticed. Reading SGR
+closely found that an underline color turned on blink and bold. Reading the keymap
+found that Alt never worked as Meta, so Alt+B typed a b. The safety property made
+me look again at XTGETTCAP, which echoed back whatever it was asked: an answer
+arrives as if you typed it, so that had to go. The first C1 check made the parser
+10 to 19% slower, by compiling a search pattern per run of text. Moving the check
+into the C scanner, which already looks at every byte, made it free. And the grid's
+16 attribute bits ran out, with the renderer using the top three for itself, so it
+now masks them as a row arrives.
+
+**Clicked.** One bit paid three times: "this row wrapped" is what reflow needs,
+what xterm's reverse wrap needs, and it costs one rewrite per wrap. Pure functions
+paid off again: all of this was tested without a window, and esctest ran against a
+real session with no window at all. ucs-detect's low scores turned out to be
+guiltty agreeing with glibc rather than with ucs-detect's newer table, which is what
+programs use to lay out text, so chasing the score would have made things worse.
+
+**Later the same day.** First real test, in a real window: dragging it wider and
+narrower stacked up copies of the prompt. Reflow split the full-width prompt row in
+two, and zsh, redrawing on SIGWINCH, moved up the one row it knew about. The tests
+had only ever resized bash with a short prompt. Reproduced with a real zsh and a
+prompt filled to the edge; now the prompt's rows aren't rewrapped while the shell is
+at its prompt, which `Pty.busy` already knew.
+
+**And again.** Still broken when dragging the edge sideways, because the test waited
+600 ms between sizes and a drag doesn't. zsh printed at a width already gone. The
+shell now hears the size once it has settled, and the grid remembers the prompt's
+rows through a drag. It only reproduced with a prompt that takes time to build, as
+powerlevel10k's does, so the test's prompt now does too. The same round found that a
+new test was opening real links in the real browser: it now sends them down a drain.
+
+**vttest, the next day.** Its first screens looked broken, with the bottom row shifted
+and running off the frame. That turned out to be my advice: I'd said "at least 80
+columns", and vttest needs exactly 80. Driving it from a script and reading the
+screens found one real gap (DECREQTPARM) and one small one (ISO Latin-1 as a
+character set). The rest was right, which after esctest is what you'd hope, but it's
+good to see it the way a person would.
+
+### Later
+
+- Kitty keyboard flags 4 (alternate keys) and 16 (text as codepoints).
+- Styled and colored underlines (`4:3`, `58`): styles draw as one line, and the
+  color is read and dropped; a cell has no room for it.
+- Colors for bold and the like (OSC 5), ISO protected areas (ESC V).
+- Copy a command's output with OSC 133's C and D marks.
+- A fairer xterm baseline: this openSUSE build's checksums match none of esctest's
+  settings, so its numbers aren't a score.
+- Styling a window's padding with a program's default background (OSC 11).

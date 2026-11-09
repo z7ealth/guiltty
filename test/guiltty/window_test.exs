@@ -63,7 +63,129 @@ defmodule Guiltty.WindowTest do
 
   defp port(window), do: :sys.get_state(window).port
   defp renderer(window, msg), do: send(window, {port(window), {:data, msg}})
-  defp key(window, code, mods), do: renderer(window, <<5, code::32, mods::16>>)
+  defp key(window, code, mods), do: renderer(window, <<5, code::32, mods::16, code::32, 1>>)
+
+  # What the Window sends the renderer, from now on, in a file to read back.
+  defp record_port(window) do
+    path = Path.join(System.tmp_dir!(), "guiltty-port-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm(path) end)
+    {:ok, file} = File.open(path, [:write, :binary])
+    :sys.replace_state(window, &%{&1 | recording: file})
+    path
+  end
+
+  describe "what programs can ask of the window" do
+    test "focus events: CSI I and CSI O, once asked for", %{id: id, window: window} do
+      renderer(window, <<26, 0>>)
+      Session.write(id, "printf '\\033[?1004h'; cat -v\r")
+
+      assert eventually(fn ->
+               :sys.get_state(window).pane_state[id][:input][:focus_events] == true
+             end)
+
+      renderer(window, <<26, 1>>)
+      assert eventually(fn -> Session.dump(id) =~ "^[[I" end)
+      renderer(window, <<26, 0>>)
+      assert eventually(fn -> Session.dump(id) =~ "^[[O" end)
+    end
+
+    test "focus events follow you between tabs", %{id: id, window: window} do
+      Session.write(id, "printf '\\033[?1004h'; cat -v\r")
+
+      assert eventually(fn ->
+               :sys.get_state(window).pane_state[id][:input][:focus_events] == true
+             end)
+
+      key(window, ?t, @ctrl ||| @shift)
+      assert eventually(fn -> Tabs.active(@tabs) != id end)
+      assert eventually(fn -> Session.dump(id) =~ "^[[O" end)
+
+      Tabs.switch(@tabs, 0)
+      assert eventually(fn -> Tabs.active(@tabs) == id end)
+      assert eventually(fn -> Session.dump(id) =~ "^[[I" end)
+    end
+
+    test "OSC 52 from the focused pane reaches the clipboard", %{id: id, window: window} do
+      path = record_port(window)
+      Session.write(id, "printf '\\033]52;c;aGVsbG8=\\a'\r")
+      assert eventually(fn -> File.read!(path) =~ <<18, 0, "hello">> end)
+    end
+
+    test "OSC 52 from a pane without the keyboard goes nowhere", %{id: id, window: window} do
+      path = record_port(window)
+      send(window, {:clipboard, :another_pane, {:clipboard, "stolen"}})
+      send(window, {:clipboard, id, {:clipboard, "mine"}})
+      assert eventually(fn -> File.read!(path) =~ <<18, 0, "mine">> end)
+      refute File.read!(path) =~ "stolen"
+    end
+
+    test "Ctrl+click opens a link, and only of a kind that should open", %{id: id, window: window} do
+      path = record_port(window)
+      # The real renderer really opens links, in your real browser. This test
+      # only needs to see the message, so it goes down a drain instead.
+      drain = Port.open({:spawn, "sh -c 'cat >/dev/null'"}, [:binary, packet: 4])
+      :sys.replace_state(window, &%{&1 | port: drain})
+
+      Session.write(
+        id,
+        "clear; printf '\\033]8;;https://x.y\\aGO\\033]8;;\\a\\033]8;;javascript:x\\aNO\\033]8;;\\a\\n'\r"
+      )
+
+      assert eventually(fn -> Session.dump(id) =~ ~r/^GONO$/m end)
+      row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 == "GONO"))
+      {top_x, top_y} = {0, row}
+
+      click = fn col ->
+        renderer(window, <<9, 0, 0, top_x + col::16, top_y::16, @ctrl::16, 1>>)
+      end
+
+      click.(0)
+      assert eventually(fn -> File.read!(path) =~ <<21, "https://x.y">> end)
+      click.(2)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "not opening a javascript link" end)
+      refute File.read!(path) =~ <<21, "javascript">>
+    end
+
+    test "the Kitty keyboard protocol, once a program asks", %{id: id, window: window} do
+      Session.write(id, "printf '\\033[>1u'; cat -v\r")
+      assert eventually(fn -> :sys.get_state(window).pane_state[id][:input][:kitty] == 1 end)
+      renderer(window, <<5, ?i::32, @ctrl::16, ?i::32, 1>>)
+      assert eventually(fn -> Session.dump(id) =~ "^[[105;5u" end)
+    end
+
+    test "a guiltty key's release doesn't reach a program", %{id: id, window: window} do
+      Session.write(id, "printf '\\033[>3u'; cat -v\r")
+      assert eventually(fn -> :sys.get_state(window).pane_state[id][:input][:kitty] == 3 end)
+      renderer(window, <<5, ?f::32, @ctrl + @shift::16, ?F::32, 1>>)
+      assert eventually(fn -> :sys.get_state(window).search != nil end)
+      renderer(window, <<5, ?f::32, @ctrl + @shift::16, ?F::32, 3>>)
+      renderer(window, <<5, 0x1B::32, 0::16, 0x1B::32, 1>>)
+      assert eventually(fn -> :sys.get_state(window).search == nil end)
+      refute Session.dump(id) =~ "102;"
+    end
+
+    test "Ctrl+Shift+Z jumps to the previous prompt", %{id: id, window: window} do
+      Session.write(id, "printf '\\033]133;A\\a'; seq 1 100; printf 'LAST\\n'\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^LAST$/m end)
+      key(window, ?z, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).scroll > 0 end)
+    end
+
+    test "synchronized output: nothing shows until the program is done", %{id: id, window: window} do
+      Session.write(id, "clear; printf '\\033[?2026h'; sleep 30\r")
+
+      assert eventually(fn ->
+               :sys.get_state(Guiltty.Session.via(id, :screen)).grid.synchronized
+             end)
+
+      # A program that never finishes doesn't hold the screen for long.
+      assert eventually(fn ->
+               not :sys.get_state(Guiltty.Session.via(id, :screen)).grid.synchronized
+             end)
+
+      _ = window
+    end
+  end
 
   test "handshakes, and the renderer reports every frame", %{id: id, window: window} do
     Session.write(id, "seq 1 40\r")

@@ -38,6 +38,9 @@ defmodule Guiltty.Session.Pty do
   # to read them. A program that asks millions of times and never reads
   # would otherwise grow this without end, and take the BEAM with it.
   @max_answer_backlog 64 * 1024
+  # A shell at its prompt redraws it on SIGWINCH. While a window's edge is being
+  # dragged, the size stays unsaid until it has held still this long.
+  @resize_settle_ms 100
   @sighup 1
   @sigkill 9
 
@@ -98,6 +101,7 @@ defmodule Guiltty.Session.Pty do
   def init(opts) do
     # So terminate/2 runs when the supervisor shuts us down.
     Process.flag(:trap_exit, true)
+    Session.limit_memory(opts[:max_heap_words])
 
     shell = Keyword.get_lazy(opts, :shell, &user_shell/0)
     argv = [Path.basename(shell) | Keyword.get(opts, :args, [])]
@@ -122,7 +126,11 @@ defmodule Guiltty.Session.Pty do
           parsers_seen: 0,
           armed: false,
           in_flight: 0,
-          pending: <<>>
+          pending: <<>>,
+          # {cols, rows, xpixel, ypixel} the shell hasn't heard yet, and the
+          # timer that will tell it
+          unsaid_size: nil,
+          size_timer: nil
         }
 
         {:ok, state}
@@ -266,14 +274,27 @@ defmodule Guiltty.Session.Pty do
     {:reply, :ok, arm(state)}
   end
 
+  # At its prompt, a shell moves up the rows it thinks the prompt took, erases
+  # and prints it at the width it was told. Told mid-drag, it prints at a width
+  # that's already gone, the text wraps where it doesn't expect, and the next
+  # redraw leaves a copy behind. So it hears once, when the size has settled.
+  # A program in the foreground (vim, htop) hears at once: it wants to
+  # follow, and has its own screen to redraw.
   def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
     {xpixel, ypixel} = pixels(cols, rows, cell_pixels)
-    {:reply, PtyNif.resize(state.pty, cols, rows, xpixel, ypixel), state}
+    size = {cols, rows, xpixel, ypixel}
+
+    if at_prompt?(state) do
+      {:reply, :ok, later_size(state, size)}
+    else
+      state = cancel_size(state)
+      {:reply, set_size(state, size), state}
+    end
   end
 
   @impl true
   def handle_cast({:write, bytes}, state) do
-    {:noreply, flush(%{state | pending: state.pending <> bytes})}
+    {:noreply, say_size(state) |> then(&flush(%{&1 | pending: &1.pending <> bytes}))}
   end
 
   def handle_cast({:answer, answers}, state) do
@@ -311,6 +332,8 @@ defmodule Guiltty.Session.Pty do
     {:noreply, flush(state)}
   end
 
+  def handle_info(:say_size, state), do: {:noreply, say_size(%{state | size_timer: nil})}
+
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %{parser: pid} = state) do
     {:noreply, %{state | parser: nil}}
   end
@@ -338,6 +361,38 @@ defmodule Guiltty.Session.Pty do
     do: {cols * w, rows * h}
 
   def pixels(_cols, _rows, _cell_pixels), do: {0, 0}
+
+  defp at_prompt?(state) do
+    case PtyNif.foreground(state.pty) do
+      {:ok, pgid} -> pgid == state.os_pid
+      _ -> false
+    end
+  end
+
+  defp later_size(state, size) do
+    state = cancel_size(state)
+    timer = Process.send_after(self(), :say_size, @resize_settle_ms)
+    %{state | unsaid_size: size, size_timer: timer}
+  end
+
+  defp cancel_size(%{size_timer: nil} = state), do: %{state | unsaid_size: nil}
+
+  defp cancel_size(state) do
+    Process.cancel_timer(state.size_timer)
+    %{state | unsaid_size: nil, size_timer: nil}
+  end
+
+  # Before typing reaches the shell too: what you type may depend on the size.
+  defp say_size(%{unsaid_size: nil} = state), do: state
+
+  defp say_size(%{unsaid_size: size} = state) do
+    state = cancel_size(state)
+    set_size(state, size)
+    state
+  end
+
+  defp set_size(state, {cols, rows, xpixel, ypixel}),
+    do: PtyNif.resize(state.pty, cols, rows, xpixel, ypixel)
 
   defp drain(state, 0), do: {:noreply, arm(state)}
 

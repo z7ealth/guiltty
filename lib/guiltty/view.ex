@@ -5,7 +5,12 @@ defmodule Guiltty.View do
 
   Marks are attribute bits on the copies of the rows sent to the renderer,
   never on the grid itself: the selection flips `inverse`, a search match
-  gets `match`, and the match you're on gets `current_match` too.
+  gets `match`, and the match you're on gets `current_match` too. Reverse
+  video (DECSCNM) flips `inverse` on every cell.
+
+  Colors a program changed (OSC 4, 10, 11) are swapped in here too, in
+  `recolor/2`. The renderer has one palette for the whole window, and these
+  belong to one pane.
 
       scroll = 0                    scroll = 2
       +----------------+            +----------------+
@@ -39,10 +44,44 @@ defmodule Guiltty.View do
         (Grid.line(grid, n) || blank(grid.cols))
         |> mark_matches(grid, n, search)
         |> mark_selection(grid, n, selection)
+        |> mark_reverse(grid)
 
       {i, line}
     end
   end
+
+  @doc "Whether the program changed any color, so rows need `recolor/2`."
+  def recolored?(grid),
+    do: map_size(grid.palette) > 0 or grid.fg_color != nil or grid.bg_color != nil
+
+  @doc "A row with the program's colors in place of the palette's and the default ones."
+  def recolor(line, grid) do
+    fg = rgb(grid.fg_color)
+    bg = rgb(grid.bg_color)
+
+    for <<head::binary-size(6), cell_fg::32, cell_bg::32 <- line>>, into: <<>> do
+      <<head::binary, swap_color(cell_fg, fg, grid.palette)::32,
+        swap_color(cell_bg, bg, grid.palette)::32>>
+    end
+  end
+
+  # 0 is the default color; 0x01_0000NN is palette entry NN (see Guiltty.Grid).
+  defp swap_color(0, default, _palette), do: default
+
+  defp swap_color(color, _default, palette) when map_size(palette) > 0 and color >>> 24 == 1 do
+    case palette do
+      %{^color => _} -> color
+      _ -> palette |> Map.get(color &&& 0xFF) |> palette_rgb(color)
+    end
+  end
+
+  defp swap_color(color, _default, _palette), do: color
+
+  defp palette_rgb(nil, color), do: color
+  defp palette_rgb(rgb, _color), do: rgb(rgb)
+
+  defp rgb(nil), do: 0
+  defp rgb({r, g, b}), do: Grid.rgb(r, g, b)
 
   @doc "Where the cursor shows, or nil when it's scrolled out of view."
   def cursor(grid, scroll) do
@@ -71,6 +110,14 @@ defmodule Guiltty.View do
     case Selection.cols_in_row(grid, selection, n) do
       nil -> line
       cols -> update_attrs(line, cols, &bxor(&1, Grid.attr(:inverse)))
+    end
+  end
+
+  defp mark_reverse(line, %{reverse_video: false}), do: line
+
+  defp mark_reverse(line, _grid) do
+    for <<glyph::32, attrs::16, colors::binary-size(8) <- line>>, into: <<>> do
+      <<glyph::32, bxor(attrs, Grid.attr(:inverse))::16, colors::binary>>
     end
   end
 

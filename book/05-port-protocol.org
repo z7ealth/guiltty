@@ -82,7 +82,8 @@ one byte.
 |  24 | IMAGE_DROP | Elixir->renderer | u64 uid: forget that image |
 |  25 | PLACEMENTS | Elixir->renderer | u16 cols, u16 rows (dropped if not the renderer's), u16 count, then 42 bytes each: u64 uid, i32 row, u16 col, u16 x and y offset, u32 source x, y, w, h, u16 cells wide and high, i32 z |
 
-This is version 12: IMAGE, IMAGE_DROP and PLACEMENTS, for pictures
+This is version 13: FOCUS, and KEY with what the key types with Shift and whether
+it was pressed, repeated or released (chapter 7). Version 12 added IMAGE, IMAGE_DROP and PLACEMENTS, for pictures
 (chapter 26); messages can be 64 MB (and a bit) long, for a 4096 x 4096
 RGBA image.
 Version 11: RESIZE carries the cell size in pixels, for programs that

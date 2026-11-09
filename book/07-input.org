@@ -62,6 +62,64 @@ Why these bytes:
   why it's written =^C=, and why Ctrl+I is the same byte as Tab and Ctrl+M
   the same as Enter.
 
+* Ctrl and Alt
+
+Ctrl+letter isn't the only control byte. The rest come from the punctuation that
+sits next to the letters in ASCII, and xterm also put them on the digit row:
+
+| Keys                 | Byte   | Better known as |
+|----------------------+--------+-----------------|
+| Ctrl+Space, Ctrl+2   | =0x00= | NUL             |
+| Ctrl+[, Ctrl+3       | =0x1B= | Esc             |
+| Ctrl+\\, Ctrl+4      | =0x1C= | SIGQUIT         |
+| Ctrl+], Ctrl+5       | =0x1D= |                 |
+| Ctrl+^, Ctrl+6       | =0x1E= |                 |
+| Ctrl+_, Ctrl+-, Ctrl+7 | =0x1F= | undo, in readline |
+| Ctrl+8               | =0x7F= | DEL             |
+
+*Left Alt puts an ESC in front*: Alt+B is =ESC b=, which is how readline moves
+back a word. That needs one thing from the renderer. SDL may also type the letter
+as text, which would reach the program as a second, stray =b=, so the renderer
+drops text while Left Alt is down. And Alt+Shift+1 should be =ESC != on a US
+keyboard but something else elsewhere, so KEY carries the key with Shift applied,
+from =SDL_GetKeyFromScancode=.
+
+*Right Alt doesn't*: on most layouts it's AltGr, which types characters (=@= on a
+Latin American keyboard). Those arrive as text.
+
+* The Kitty keyboard protocol
+
+All of the above loses information. Ctrl+I and Tab are the same byte, so are
+Ctrl+M and Enter, and Shift+Enter is just Enter. Esc is the first byte of every
+escape sequence, which is why programs wait a moment after it before believing it.
+
+A program can ask for better, with =CSI > flags u=, and gets each key spelled out
+as =CSI code ; mods u=:
+
+| Key         | Without | With flag 1  | With flags 1 + 2, on release |
+|-------------+---------+--------------+------------------------------|
+| Esc         | =ESC=   | =CSI 27 u=   | =CSI 27 ; 1 : 3 u=           |
+| Ctrl+I      | =0x09=  | =CSI 105 ; 5 u= | =CSI 105 ; 5 : 3 u=       |
+| Shift+Enter | =\r=    | =CSI 13 ; 2 u= | (Enter's release stays quiet) |
+| a           | =a=     | =a=          | =CSI 97 ; 1 : 3 u=           |
+
+Flag 8 makes every key an escape code, text too, and the Shift key itself. Then
+the text event for the same key is a second copy, so the Window swallows it (only
+that text: an =é= someone composed isn't that key). Flags 4 and 16 aren't offered,
+and a program can see that: =CSI ? u= answers with the flags that took.
+
+Each screen has its own stack of flags, so a program on the alternate screen can't
+leave the shell's keyboard in a strange mode. guiltty's own keys go first, as
+always, and their releases stay here too: a program shouldn't see a key let go
+that it never saw pressed.
+
+* Focus
+
+A program that asks (mode 1004) hears =CSI I= when its pane gets the keyboard and
+=CSI O= when it leaves, whether the window lost focus or you moved to another pane.
+=vim= uses it to notice files changed while you were away. The renderer reports
+the window's focus in a FOCUS message.
+
 * Keys that send sequences (MVP 3)
 
 Arrows, Home/End, PgUp/PgDn, Insert/Delete and F1-F12 have no byte of

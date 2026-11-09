@@ -44,6 +44,30 @@ defmodule Guiltty.Session do
     end
   end
 
+  # Past this, a session's process is killed and restarted, and only that
+  # tab loses anything: the VM running out of memory would take every tab.
+  # 2 GB, in words: far more than any screen needs, even with a million rows
+  # of scrollback, whose rows live in binaries.
+  @max_heap_words div(2 * 1024 * 1024 * 1024, 8)
+
+  @doc """
+  Puts the calling process under the per-tab memory limit, or `words` if given
+  (tests). From OTP 27 on the limit counts large binaries too, which is what
+  a tab's rows and images are; on OTP 26 only the heap, so those have limits of
+  their own (`:scrollback`, Guiltty.Graphics).
+  """
+  def limit_memory(words \\ nil) do
+    limit = %{size: words || @max_heap_words, kill: true, error_logger: true}
+
+    limit =
+      if String.to_integer(System.otp_release()) >= 27,
+        do: Map.put(limit, :include_shared_binaries, true),
+        else: limit
+
+    Process.flag(:max_heap_size, limit)
+    :ok
+  end
+
   @doc "Sends bytes to the shell. Use \"\\r\" for Enter."
   defdelegate write(id, bytes), to: Pty
 
@@ -59,7 +83,9 @@ defmodule Guiltty.Session do
   `cell_pixels` is one cell's `{width, height}` in pixels, or nil.
   """
   def resize(id, cols, rows, cell_pixels \\ nil) do
-    :ok = Screen.resize(id, cols, rows, cell_pixels)
+    # Nothing in the foreground but the shell: it's at its prompt, and the
+    # SIGWINCH below makes it draw that again.
+    :ok = Screen.resize(id, cols, rows, cell_pixels, at_prompt: Pty.busy(id) == nil)
     Pty.resize(id, cols, rows, cell_pixels)
   end
 end

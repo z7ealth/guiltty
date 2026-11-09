@@ -139,6 +139,141 @@ A replay draws one frame per ROWS message, as a live window does, so it
 also tests damage tracking: thirty small updates must end on exactly the
 picture one whole update gives, in each backend (chapter 22).
 
+* Conformance
+
+Every test above checks what guiltty was /written/ to do. Conformance asks
+a different question: what do programs /expect/ a terminal to do? Nobody
+certifies this. The closest thing to a standard is XTerm's "Control
+Sequences" document, and =TERM=xterm-256color= is a promise to behave like
+it. So v0.20.0 measures guiltty three ways:
+
+#+begin_example
+  what's measured                 by                        needs
+  -----------------------------   -----------------------   -----------------
+  the promises in our TERM        conformance_test.exs      nothing: mix test
+  xterm's behavior, sequence      esctest2                  Python, a checkout
+    by sequence
+  character widths                ucs-detect                Python, a venv
+#+end_example
+
+** The ratchet
+
+[[file:../test/guiltty/conformance_test.exs][conformance_test.exs]] holds one case per sequence: bytes in, a check on the
+grid. Cases that guiltty fails today are listed in =@known_gaps=, and the
+test turns both ways:
+
+#+begin_example
+                    the check passes       the check fails
+  not in the list   ok                     FAIL: something broke
+  in the list       FAIL: take it off      ok: still a known gap
+#+end_example
+
+So the list can't lie, and can only get shorter. Its first run proved the
+point: =mgc= (clear the margins) was on the list, and failed the test by
+passing. With no margins at all, there's nothing to clear.
+
+The same file checks the promises themselves. [[file:../test/fixtures/terminfo/xterm-256color.txt][The recorded terminfo entry]]
+lists every capability, and =@capabilities= must account for each: a case
+that proves it, =:input= (something the terminal sends, not receives), or a
+stated reason to skip it. The 169 =k= capabilities are keys: the keyboard
+tests' job. A recording, not a live =infocmp=, so an ncurses update can't
+fail the suite.
+
+** Outside suites, in a session with no window
+
+[[file:../test/conformance/run.exs][run.exs]] starts one =Session.Supervisor= with the suite as its "shell". The
+suite writes its questions to the PTY, and the real Parser and Screen answer
+them: the same code a window shows, without a window.
+
+#+begin_src sh
+  export ESCTEST_DIR=.../esctest2/esctest UCS_DETECT=.../venv/bin/ucs-detect
+  mix run --no-start test/conformance/run.exs esctest
+  mix run --no-start test/conformance/run.exs esctest --include='^CUP'   # try a few
+  mix run --no-start test/conformance/run.exs esctest-xterm              # needs Xvfb
+  mix run --no-start test/conformance/run.exs ucs-detect
+  mix run --no-start bench/soak.exs 600          # a long flood with resizes: memory should level off
+#+end_src
+
+A whole run takes under 90 seconds and saves its result in [[file:../test/conformance/baselines/][baselines/]], so a
+=git diff= after a change shows exactly what it fixed or broke. These suites
+are development tools: nothing in guiltty runs Python.
+
+=vttest= is the third suite, and the odd one out: its menus draw patterns
+for a person to look at, so it's run by hand, in a real window.
+
+** The baselines
+
+esctest asks for a checksum of a rectangle (=DECRQCRA=) to read the screen. With
+no answer, a test can do everything right and still time out: on v0.19.1, 361 of
+its 412 failures were just that. So the first thing v0.20.0 added was the answer.
+
+#+begin_example
+                     passed   known xterm bugs   failed
+  v0.19.1              112          43             412    (361 were timeouts)
+  v0.20.0              449          39              79
+#+end_example
+
+The 79 are on purpose, or for things guiltty doesn't offer. Here's all of them,
+from [[file:../test/conformance/baselines/esctest-guiltty.txt][the baseline]]:
+
+| Failures                          | Why                                         |
+|-----------------------------------+---------------------------------------------|
+| =XtermWinops= 20, =DECSET= 2 (=DECCOLM=), =RIS= 1, =DECRQSS= 2 | a program can't resize, move or iconify the window (chapter 20) |
+| =ChangeSpecialColor= 14, =ResetSpecialColor= 5 | colors for bold and the like (=OSC 5=): guiltty draws those with the theme |
+| =ChangeColor= 7, =ChangeDynamicColor= 7 | CIE color spaces, TekHVC, and =rgbi:= with xterm's gamma |
+| =DECRQM= 8                        | modes guiltty doesn't have, answered honestly as "permanently off", where esctest wants to turn them on |
+| =ED=, =EL=, =ECH=, =DECSED=, =DECSEL= 1 each | ISO protected areas (=ESC V=): no program uses them |
+| =DECSCL= 3                        | pretending to be an older terminal           |
+| =DA=, =DA2= 2 each                | esctest wants xterm's own list: 132 columns, a printer, sixel. guiltty only claims what it has |
+| =DECSET= 1 (=MoreFix=)            | a fix for one old program's bug, with =more= |
+
+xterm's own run is saved next to it, but isn't a score to compare with: this
+openSUSE build's checksums don't match any of esctest's settings, so most of its
+tests fail on the checksum itself. It's there to look a sequence up in.
+
+ucs-detect's numbers need the same care:
+
+#+begin_example
+  ZWJ emoji 100%, flags 100%, narrow 99.9%, 78 of 85 languages
+  wide 31.5%, VS-16 50%, VS-15 0%
+#+end_example
+
+These compare guiltty with ucs-detect's own table, which is newer than your
+system's. guiltty matches glibc's =wcwidth= on purpose (chapter 13): that's what
+programs use to lay out text, and a terminal that disagrees with them shifts every
+column after the character. U+FA6E, say, isn't assigned yet: ucs-detect says 2,
+glibc says 1, and guiltty says 1. Don't chase this score.
+
+** vttest
+
+vttest draws patterns for a person to judge. Run it at exactly 80 by 24: it moves
+its cursor by distances that only work if the screen's edge is where it expects, so
+in a wider window its borders come out shifted, which looks like a bug and isn't.
+Reading its screens as text from a session with no window, and rendering the color
+ones through the replay, gave this on v0.20.0:
+
+| Menu                          | Result                                         |
+|-------------------------------+------------------------------------------------|
+| 1 Cursor movements            | right, at 80 columns; the 132-column pass scrambles |
+| 2 Screen features             | right; wrap, tabs, regions, origin mode, save and restore, SGR |
+| 3 Character sets              | right; only the 8-bit columns show =�=, because raw bytes above 127 aren't UTF-8 |
+| 6 Terminal reports            | right; it found =DECREQTPARM= missing          |
+| 8 Insert and delete           | right, at 80 columns                           |
+| 9 Known bugs                  | right, for the ones run (B, the wrap, the regions) |
+| 11.5 ISO-6429 cursor movement | right                                          |
+| 11.6 Colors, and BCE          | right                                          |
+| 11.7 REP, SD, SU, SL, SR      | right                                          |
+
+What it can't pass: anything at 132 columns (=DECCOLM= is off, as in a default xterm,
+which also means the screen doesn't clear when vttest expects it to), double-size
+characters, VT52 mode, printing, and sending 8-bit controls, which UTF-8 rules out.
+Not run: the keyboard test and =DECUDK=, which need a person pressing keys, the mouse,
+and the deep VT420 menus, which esctest covers more closely than eyes could.
+
+=vim=, =less=, =man=, =top=, =nano=, =screen=, =tabs= and =tput= run for real in
+[[file:../test/guiltty/programs_test.exs][programs_test.exs]], including a resize while =vim= runs. =tmux=, =htop= and =mc=
+weren't installed when it was written.
+
 * Older Elixir and Erlang
 
 guiltty is written on the newest Elixir and Erlang, but the people who
@@ -215,6 +350,9 @@ for the newest.
   Elixir docs): which Erlang/OTP each Elixir runs on.
 - =inet:setopts/2=, =packet= and =packet_size=: what line mode does with
   a line over the limit.
+- XTerm's "Control Sequences" (ctlseqs), the closest thing to a standard.
+- =terminfo(5)= and =infocmp(1)=: what =TERM= promises programs.
+- esctest2's README: =--expected-terminal=, =--include=, known bugs.
 
 * Questions
 
@@ -223,6 +361,8 @@ for the newest.
 3. Why feed each fixture one byte at a time too?
 4. Why test old versions in a copy of the project, not in it?
 5. Why did the flood test pass on OTP 29 and fail on OTP 26?
+6. Why does a known gap that starts working fail the test?
+7. Why didn't "412 esctest failures" mean v0.19.1 got 412 things wrong?
 
 ** Answers
 :PROPERTIES:
@@ -244,3 +384,8 @@ for the newest.
    which contains =FLOOD-DONE=. It usually lost the race by a few
    milliseconds; on a slower, busier run it won, and the test stopped
    before taking a sample.
+6. So the list always tells the truth. If a fix didn't have to take its
+   case off the list, the list would slowly fill with things that work.
+7. It didn't. esctest reads the screen through =DECRQCRA=, which v0.19.1 didn't
+   answer, so 361 of those tests timed out whether or not the behavior they
+   checked was right. Only the other 51 were known wrong answers.

@@ -32,3 +32,4 @@ the loot (what to read next) and a few questions to check yourself.
 26. [[file:25-tab-styles.org][Tab styles: five ways to draw one row]]
 27. [[file:26-images.org][Images: pictures in a grid of characters]]
 28. [[file:27-split-panes.org][Split panes: one tab, several shells]]
+29. [[file:28-conversation.org][The conversation: what programs say to a terminal, and what it answers]]

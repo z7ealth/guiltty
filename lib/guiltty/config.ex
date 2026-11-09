@@ -49,6 +49,11 @@ defmodule Guiltty.Config do
       broadcast group (Ctrl+Shift+B): `["ssh", "mosh-client"]`
     * `:renderer` - `:vulkan` or `:gl`, for windows opened after a change;
       Vulkan falls back to OpenGL by itself when it can't start
+    * `:clipboard_write` - programs can put text on the clipboard (OSC 52),
+      from the focused pane; they can never read it
+    * `:screen_reports` - answer DECRQCRA and the title reports, for test
+      suites. Off: they let a program read the screen, even over ssh. For
+      tabs opened after a change
   """
 
   use GenServer
@@ -74,6 +79,8 @@ defmodule Guiltty.Config do
     scroll_bottom: ["shift+end"],
     clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
+    prev_prompt: ["ctrl+shift+z"],
+    next_prompt: ["ctrl+shift+x"],
     copy: ["ctrl+shift+c"],
     # Ctrl and the + key on US layouts (= and Shift+=) and on those where
     # + has a key of its own (Latin American, Spanish, German).
@@ -126,7 +133,9 @@ defmodule Guiltty.Config do
       tab_style: :flat,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
-      renderer: :vulkan
+      renderer: :vulkan,
+      clipboard_write: true,
+      screen_reports: false
     }
   end
 
@@ -354,7 +363,11 @@ defmodule Guiltty.Config do
          {:ok, ligatures} <- one_of(:ligatures, get.(:ligatures, d.ligatures), [true, false]),
          {:ok, pane_border} <- pane_border(get.(:pane_border, []), d.pane_border),
          {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
-         {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]) do
+         {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]),
+         {:ok, clipboard_write} <-
+           one_of(:clipboard_write, get.(:clipboard_write, d.clipboard_write), [true, false]),
+         {:ok, screen_reports} <-
+           one_of(:screen_reports, get.(:screen_reports, d.screen_reports), [true, false]) do
       {:ok,
        %{
          theme: theme,
@@ -373,7 +386,9 @@ defmodule Guiltty.Config do
          ligatures: ligatures,
          pane_border: pane_border,
          broadcast_programs: programs,
-         renderer: renderer
+         renderer: renderer,
+         clipboard_write: clipboard_write,
+         screen_reports: screen_reports
        }}
     end
   end

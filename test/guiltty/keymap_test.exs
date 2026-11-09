@@ -83,11 +83,121 @@ defmodule Guiltty.KeymapTest do
     assert key(@kp_enter, 0, @app) == "\eOM"
   end
 
-  test "plain letters, Ctrl+Alt and unknown keys produce nothing" do
+  test "plain letters and unknown keys produce nothing" do
     # Plain letters arrive as text events; the key event must not double them.
     assert key(?a) == nil
-    assert key(?a, @ctrl ||| @alt) == nil
     assert key(@caps_lock) == nil
+  end
+
+  describe "Ctrl and Alt, as xterm sends them" do
+    test "Ctrl with punctuation and the digit row" do
+      assert key(?\s, @ctrl) == <<0>>
+      assert key(?[, @ctrl) == <<0x1B>>
+      assert key(?\\, @ctrl) == <<0x1C>>
+      assert key(?], @ctrl) == <<0x1D>>
+      assert key(?6, @ctrl) == <<0x1E>>
+      assert key(?-, @ctrl) == <<0x1F>>
+      assert key(?2, @ctrl) == <<0>>
+      assert key(?8, @ctrl) == <<0x7F>>
+    end
+
+    test "left Alt is ESC, in front of what the key would send" do
+      left_alt = 0x0100
+      assert Keymap.to_bytes({:key, ?b, left_alt, %{kind: :press, shifted: ?b}}) == "\eb"
+      assert Keymap.to_bytes({:key, ?b, left_alt ||| 1, %{kind: :press, shifted: ?B}}) == "\eB"
+      assert Keymap.to_bytes({:key, ?1, left_alt ||| 1, %{kind: :press, shifted: ?!}}) == "\e!"
+      assert key(?a, @ctrl ||| left_alt) == <<0x1B, 1>>
+      assert key(0x08, left_alt) == <<0x1B, 0x7F>>
+      assert key(0x0D, left_alt) == "\e\r"
+    end
+
+    test "right Alt is AltGr: its text arrives as text" do
+      assert Keymap.to_bytes({:key, ?q, 0x0200, %{kind: :press, shifted: ?q}}) == nil
+    end
+
+    test "a key release is nothing, without the Kitty protocol" do
+      assert Keymap.to_bytes({:key, 0x0D, 0, %{kind: :release, shifted: 0x0D}}) == nil
+    end
+
+    test "modes change Enter and Backspace" do
+      input = Map.merge(Guiltty.Grid.default_input(), %{newline_mode: true, backarrow_bs: true})
+      assert Keymap.to_bytes({:key, 0x0D, 0}, input) == "\r\n"
+      assert Keymap.to_bytes({:key, 0x08, 0}, input) == <<0x08>>
+    end
+  end
+
+  describe "the Kitty keyboard protocol" do
+    defp kitty(flags, key, mods \\ 0, kind \\ :press, shifted \\ nil) do
+      input = %{Guiltty.Grid.default_input() | kitty: flags}
+      Keymap.to_bytes({:key, key, mods, %{kind: kind, shifted: shifted || key}}, input)
+    end
+
+    test "flag 1: what was ambiguous is spelled out" do
+      assert kitty(1, 0x1B) == "\e[27u"
+      assert kitty(1, ?i, @ctrl) == "\e[105;5u"
+      assert kitty(1, ?a, 0x0100) == "\e[97;3u"
+      assert kitty(1, 0x0D, @shift) == "\e[13;2u"
+      assert kitty(1, 0x09, @shift) == "\e[9;2u"
+    end
+
+    test "flag 1: plain keys stay as they were, and typing stays text" do
+      assert kitty(1, 0x0D) == "\r"
+      assert kitty(1, 0x09) == "\t"
+      assert kitty(1, 0x08) == <<0x7F>>
+      assert kitty(1, ?a) == nil
+      assert kitty(1, ?a, @shift) == nil
+      assert kitty(1, 0x40000052) == "\e[A"
+      assert kitty(1, 0x40000052, @ctrl) == "\e[1;5A"
+    end
+
+    test "flag 2: repeats and releases" do
+      assert kitty(1 + 2, 0x1B, 0, :release) == "\e[27;1:3u"
+      assert kitty(1 + 2, ?i, @ctrl, :repeat) == "\e[105;5:2u"
+      assert kitty(1 + 2, 0x40000052, 0, :release) == "\e[1;1:3A"
+      # Enter's release stays quiet, so `reset` can still be typed blind.
+      assert kitty(1 + 2, 0x0D, 0, :release) == nil
+      assert kitty(1, 0x1B, 0, :release) == nil
+    end
+
+    test "flag 8: every key is an escape code, text and Shift too" do
+      assert kitty(8, ?a) == "\e[97u"
+      assert kitty(8, ?a, @shift, :press, ?A) == "\e[97;2u"
+      assert kitty(8, 0x0D) == "\e[13u"
+      assert kitty(8, 0x08) == "\e[127u"
+      assert kitty(8, 0x400000E1, @shift) == "\e[57441;2u"
+      assert kitty(1, 0x400000E1, @shift) == nil
+    end
+
+    test "function keys" do
+      assert kitty(1, 0x4000003A + 2) == "\e[13~"
+      assert kitty(1, 0x4000003A, @ctrl) == "\e[1;5P"
+      assert kitty(1, 0x4B + 0x40000000, @shift) == "\e[5;2~"
+    end
+  end
+
+  describe "mouse encodings" do
+    defp mouse_with(modes, kind \\ :press, cell_pixels \\ nil) do
+      input = Map.merge(Guiltty.Grid.default_input(), modes)
+      Keymap.mouse({:mouse, kind, 0, 300, 2, 0, 1}, input, cell_pixels)
+    end
+
+    test "mode 9 is presses alone" do
+      assert mouse_with(%{mouse: 9, mouse_sgr: true}) == "\e[<0;301;3M"
+      assert mouse_with(%{mouse: 9, mouse_sgr: true}, :release) == nil
+    end
+
+    test "1005 writes large coordinates in UTF-8" do
+      assert mouse_with(%{mouse: 1000, mouse_utf8: true}) == <<"\e[M", 32, 333::utf8, 35::utf8>>
+    end
+
+    test "1015 is decimal" do
+      assert mouse_with(%{mouse: 1000, mouse_urxvt: true}) == "\e[32;301;3M"
+    end
+
+    test "1016 is SGR in pixels, at the cell's middle" do
+      assert mouse_with(%{mouse: 1000, mouse_pixels: true}, :press, {10, 20}) == "\e[<0;3006;51M"
+      assert mouse_with(%{mouse: 1000, mouse_pixels: true, mouse_sgr: true}) == "\e[<0;301;3M"
+    end
   end
 
   describe "paste" do

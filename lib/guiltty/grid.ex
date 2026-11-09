@@ -71,6 +71,16 @@ defmodule Guiltty.Grid do
   # Set by Guiltty.View on what it shows, never stored in the grid.
   @match 0x400
   @current_match 0x800
+  @overline 0x1000
+  # DECSCA: selective erase leaves this cell alone.
+  @protected 0x2000
+  # On a row's last cell: the text goes on in the next row (it wrapped).
+  # This is how a resize knows what to join again (reflow).
+  @wrapped 0x4000
+  # Part of a hyperlink (OSC 8): `links` says where it goes.
+  @link 0x8000
+  # The pen's bits that SGR doesn't touch: SGR 0 keeps them.
+  @sticky @protected ||| @link
 
   @default_color 0
 
@@ -90,8 +100,29 @@ defmodule Guiltty.Grid do
     keypad: :numeric,
     bracketed_paste: false,
     mouse: nil,
-    mouse_sgr: false
+    mouse_sgr: false,
+    mouse_utf8: false,
+    mouse_urxvt: false,
+    mouse_pixels: false,
+    # LNM: Enter sends CR LF, and a line feed also returns the carriage
+    newline_mode: false,
+    focus_events: false,
+    # the wheel on the alternate screen sends arrow keys (mode 1007); on
+    # by default, unlike xterm's, so less and man scroll
+    alternate_scroll: true,
+    # DECBKM: Backspace sends BS instead of DEL
+    backarrow_bs: false,
+    # Kitty keyboard protocol flags (see Guiltty.Keymap)
+    kitty: 0
   }
+
+  # How many saved SGR pens and titles a program may stack up (xterm's limit).
+  @max_stack 10
+  @max_links 2048
+  @max_marks 1024
+  # Only this many of the newest rows of scrollback are rewrapped on a
+  # resize: the rest keep their shape, cut or padded when shown.
+  @reflow_rows 100_000
 
   defstruct [
     :cols,
@@ -107,6 +138,24 @@ defmodule Guiltty.Grid do
     # scroll region, 0-based and inclusive
     top: 0,
     bottom: nil,
+    # left and right margins (DECSLRM), 0-based and inclusive; margins? says
+    # they're narrower than the screen, which sends text the slow way
+    left: 0,
+    right: nil,
+    margins?: false,
+    # DECLRMM: CSI s sets the margins instead of saving the cursor
+    lrmm: false,
+    # {row, col}: the last cell inside the margins was just written, so the
+    # next character wraps. Without margins, col == cols says the same.
+    pending_at: nil,
+    # tab stops, sorted: nil is every 8 columns, as a new terminal has
+    tabs: nil,
+    reverse_wrap: false,
+    reverse_wrap_all: false,
+    # DECSCNM: the whole screen in reverse video (Guiltty.View draws it)
+    reverse_video: false,
+    # mode 12: the program's say on blinking, or nil for the cursor's own
+    cursor_blink: nil,
     cursor_visible: true,
     # set by the program (DECSCUSR): {:block | :underline | :bar, blink?},
     # or nil for the user's choice from the config
@@ -114,11 +163,15 @@ defmodule Guiltty.Grid do
     autowrap: true,
     origin: false,
     insert: false,
-    # character sets: G0 and G1 are :ascii or :dec_graphics; gl says which
-    # one is in use (SO picks G1, SI picks G0)
+    # character sets: G0 to G3 are :ascii, :dec_graphics, :uk or :latin1; gl says
+    # which one is in use (SO, SI, LS2, LS3), and single_shift says which
+    # one the next character alone comes from (SS2, SS3)
     g0: :ascii,
     g1: :ascii,
+    g2: :ascii,
+    g3: :ascii,
     gl: 0,
+    single_shift: nil,
     # DECSC state, one per screen
     saved: %{main: nil, alt: nil},
     # the last cluster printed, {row, col, text}: REP repeats it, and a
@@ -135,6 +188,46 @@ defmodule Guiltty.Grid do
     history: 0,
     scrollback_max: 10_000,
     title: "",
+    icon_name: "",
+    # titles and icon names saved by XTWINOPS 22, newest first
+    title_stack: [],
+    icon_stack: [],
+    # pens saved by XTPUSHSGR, newest first
+    sgr_stack: [],
+    # the theme (Guiltty.Theme), for answering what color something is
+    theme: nil,
+    # colors the program changed (OSC 4, 10, 11, 12): palette index => {r, g, b}
+    palette: %{},
+    fg_color: nil,
+    bg_color: nil,
+    cursor_color: nil,
+    # answers that show the screen's contents (DECRQCRA): off unless asked
+    # for, because a program at the other end of ssh could read the screen
+    screen_reports: false,
+    # the level DECSCL set, for DECRQSS to report
+    conformance: {65, 1},
+    # DECSACE: DECCARA and DECRARA take a rectangle, not a stream of cells
+    sace_rect: false,
+    # DEC modes XTSAVE remembered
+    saved_modes: %{},
+    # OSC 52: {target, text} for the window to put on the clipboard, once
+    clipboard: nil,
+    clipboard_target: :clipboard,
+    # OSC 7: the program's working directory, as the URI it sent
+    cwd_uri: nil,
+    # OSC 8: where text printed now links to, and where earlier links are:
+    # {row number, first col, last col, uri}, newest first
+    link: nil,
+    links: [],
+    # OSC 133: row numbers where prompts start, newest first
+    prompt_marks: [],
+    # how many rows above the cursor were taken for the prompt, by a resize
+    # the shell hasn't answered yet
+    prompt_rows: nil,
+    # mode 2026: the program is drawing; viewers wait for it to finish
+    synchronized: false,
+    # Kitty keyboard flags saved per screen, newest first
+    kitty_stack: %{main: [], alt: []},
     input: @input_modes,
     # bytes to send back to the program (answers to its queries), newest first
     responses: [],
@@ -171,6 +264,13 @@ defmodule Guiltty.Grid do
   def attr(:spacer), do: @spacer
   def attr(:match), do: @match
   def attr(:current_match), do: @current_match
+  def attr(:overline), do: @overline
+  def attr(:protected), do: @protected
+  def attr(:wrapped), do: @wrapped
+  def attr(:link), do: @link
+
+  @doc "The input modes a new terminal starts with."
+  def default_input, do: @input_modes
 
   @spec indexed(0..255) :: color()
   def indexed(n), do: 0x01_000000 ||| n
@@ -181,8 +281,9 @@ defmodule Guiltty.Grid do
   def cell_size, do: @cell_size
 
   @doc """
-  A blank grid. Options: `:scrollback` (rows to keep, default 10,000) and
-  `:cell_pixels` (see `set_cell_pixels/2`).
+  A blank grid. Options: `:scrollback` (rows to keep, default 10,000),
+  `:cell_pixels` (see `set_cell_pixels/2`), `:theme` (what the default colors
+  are, for programs that ask) and `:screen_reports` (answer DECRQCRA).
   """
   @spec new(pos_integer(), pos_integer(), keyword()) :: t()
   def new(cols \\ 80, rows \\ 24, opts \\ []) do
@@ -190,9 +291,12 @@ defmodule Guiltty.Grid do
       cols: cols,
       rows: rows,
       bottom: rows - 1,
+      right: cols - 1,
       lines: blank_screen(cols, rows),
       scrollback_max: Keyword.get(opts, :scrollback, 10_000),
-      cell_pixels: Keyword.get(opts, :cell_pixels)
+      cell_pixels: Keyword.get(opts, :cell_pixels),
+      theme: Keyword.get(opts, :theme),
+      screen_reports: Keyword.get(opts, :screen_reports, false)
     }
     |> all_dirty()
   end
@@ -207,7 +311,11 @@ defmodule Guiltty.Grid do
   ## Reading
 
   @doc "The cursor as `{row, col}`, clamped to a visible cell."
-  def cursor(grid), do: {grid.row, min(grid.col, grid.cols - 1)}
+  def cursor(grid), do: {grid.row, visible_col(grid)}
+
+  # The column the cursor shows in: a pending wrap stays on the last cell.
+  defp visible_col(%{pending_at: {row, col}, row: row, col: col}), do: col - 1
+  defp visible_col(grid), do: min(grid.col, grid.cols - 1)
 
   @doc "Returns `[{row_index, row}]` for changed rows and clears the dirty set."
   def take_dirty(%{dirty: :all} = grid),
@@ -306,12 +414,93 @@ defmodule Guiltty.Grid do
 
   defp print(grid, <<>>, _nif?), do: grid
 
-  defp print(grid, text, nif?) do
-    text = translate(text, if(grid.gl == 1, do: grid.g1, else: grid.g0))
+  # SS2, SS3: the next character alone comes from G2 or G3.
+  defp print(%{single_shift: set} = grid, text, nif?) when set != nil do
+    {first, rest} = String.next_grapheme(text)
 
+    grid =
+      print(%{grid | single_shift: nil}, translate(first, Map.fetch!(grid, set)), :plain, nif?)
+
+    print(grid, rest, nif?)
+  end
+
+  defp print(%{link: uri} = grid, text, nif?) when uri != nil do
+    after_ = print(%{grid | link: nil}, text, nif?)
+    remember_link(%{after_ | link: uri}, grid, uri)
+  end
+
+  defp print(grid, text, nif?), do: print(grid, translate(text, current_set(grid)), :plain, nif?)
+
+  defp print(grid, <<>>, :plain, _nif?), do: grid
+
+  defp print(%{margins?: true} = grid, text, :plain, _nif?) do
+    case continued(grid, text) do
+      {row, col, graphemes} ->
+        put_in_margins(%{grid | row: row, col: col, pending_at: nil}, graphemes)
+
+      nil ->
+        put_in_margins(grid, String.graphemes(text))
+    end
+  end
+
+  defp print(grid, text, :plain, nif?) do
     if ascii?(text),
       do: grid |> put_text(text) |> remember_last(binary_part(text, byte_size(text) - 1, 1)),
       else: put_clusters(grid, text, nif?)
+  end
+
+  defp current_set(%{gl: 0, g0: set}), do: set
+  defp current_set(%{gl: 1, g1: set}), do: set
+  defp current_set(%{gl: 2, g2: set}), do: set
+  defp current_set(%{gl: 3, g3: set}), do: set
+
+  # Text printed inside margins: a character at a time, wrapping at the right
+  # margin to the left one. Past the right margin the screen's edge is the
+  # limit instead.
+  defp put_in_margins(grid, graphemes) do
+    {grid, units} = intern_units(grid, graphemes)
+    units |> Enum.reduce(grid, &put_in_margins_unit(&2, &1)) |> remember_margin_last(graphemes)
+  end
+
+  defp put_in_margins_unit(grid, {_glyph, width} = unit) do
+    pending? = grid.pending_at == {grid.row, grid.col}
+    inside? = pending? or grid.col <= grid.right
+    edge = if inside?, do: grid.right, else: grid.cols - 1
+    from = if pending?, do: grid.col, else: min(grid.col, grid.cols - 1)
+
+    cond do
+      from + width - 1 <= edge ->
+        write_margin_unit(%{grid | col: from, pending_at: nil}, unit, edge)
+
+      grid.autowrap ->
+        %{grid | col: if(inside?, do: grid.left, else: 0), pending_at: nil}
+        |> index()
+        |> put_in_margins_unit(unit)
+
+      true ->
+        write_margin_unit(%{grid | col: max(edge - width + 1, 0), pending_at: nil}, unit, edge)
+    end
+  end
+
+  defp write_margin_unit(grid, {_glyph, width} = unit, edge) do
+    grid =
+      grid
+      |> then(&if(&1.insert, do: insert_chars(&1, width), else: &1))
+      |> write_units([unit], width)
+
+    next = grid.col + width
+
+    cond do
+      next <= edge -> %{grid | col: next}
+      grid.autowrap -> %{grid | col: next, pending_at: {grid.row, next}}
+      true -> %{grid | col: edge}
+    end
+  end
+
+  defp remember_margin_last(grid, graphemes) do
+    text = List.last(graphemes)
+    col = visible_col(grid) + 1 - Unicode.width(text)
+    %{grid | last_char: {grid.row, max(col, 0), text}}
   end
 
   @doc """
@@ -358,10 +547,10 @@ defmodule Guiltty.Grid do
 
   defp batch_ready?(grid) do
     %{row: row, rows: rows, bottom: bottom} = grid
-    current = if grid.gl == 1, do: grid.g1, else: grid.g0
 
     row == rows - 1 and bottom == rows - 1 and grid.top == 0 and grid.col == 0 and
-      not grid.insert and current == :ascii and
+      not grid.insert and current_set(grid) == :ascii and not grid.margins? and
+      grid.link == nil and grid.single_shift == nil and not grid.input.newline_mode and
       elem(grid.lines, row) == elem(cached_blank(grid), 0)
   end
 
@@ -411,6 +600,11 @@ defmodule Guiltty.Grid do
 
   @doc "REP: prints the last printed character `n` more times."
   def repeat(%{last_char: nil} = grid, _n), do: grid
+
+  def repeat(%{margins?: true} = grid, n) do
+    {_row, _col, text} = grid.last_char
+    put_in_margins(grid, List.duplicate(text, min(n, grid.cols * grid.rows)))
+  end
 
   def repeat(grid, n) do
     {_row, _col, text} = grid.last_char
@@ -522,7 +716,7 @@ defmodule Guiltty.Grid do
   defp put_units(grid, []), do: grid
 
   defp put_units(%{col: col, cols: cols, autowrap: true} = grid, units) when col >= cols do
-    grid |> Map.put(:col, 0) |> index() |> put_units(units)
+    grid |> mark_wrapped() |> Map.put(:col, 0) |> index() |> put_units(units)
   end
 
   defp put_units(%{autowrap: false} = grid, [{_glyph, width} = unit | rest])
@@ -559,7 +753,7 @@ defmodule Guiltty.Grid do
   defp put_cells(grid, <<>>, 0), do: grid
 
   defp put_cells(%{col: col, cols: cols} = grid, cells, n) when col >= cols do
-    grid |> Map.put(:col, 0) |> index() |> put_cells(cells, n)
+    grid |> mark_wrapped() |> Map.put(:col, 0) |> index() |> put_cells(cells, n)
   end
 
   defp put_cells(grid, cells, n) do
@@ -628,12 +822,22 @@ defmodule Guiltty.Grid do
     replace_cells(grid, grid.row, grid.col, cells)
   end
 
+  # The last cell of the row says the text goes on in the next one. Writing
+  # over that cell takes the mark away, as it should: the text changed.
+  defp mark_wrapped(grid) do
+    offset = (grid.cols - 1) * @cell_size + 4
+    line = elem(grid.lines, grid.row)
+    <<before::binary-size(^offset), attrs::16, after_::binary>> = line
+    line = <<before::binary, attrs ||| @wrapped::16, after_::binary>>
+    %{grid | lines: put_elem(grid.lines, grid.row, line)} |> dirty_rows(grid.row..grid.row)
+  end
+
   ## ASCII
 
   defp put_text(grid, <<>>), do: grid
 
   defp put_text(%{col: col, cols: cols, autowrap: true} = grid, text) when col >= cols do
-    grid |> Map.put(:col, 0) |> index() |> put_text(text)
+    grid |> mark_wrapped() |> Map.put(:col, 0) |> index() |> put_text(text)
   end
 
   # Autowrap off: everything past the edge lands on the last cell.
@@ -695,41 +899,143 @@ defmodule Guiltty.Grid do
   }
 
   defp translate(text, :ascii), do: text
+  defp translate(text, :uk), do: String.replace(text, "#", "£")
+
+  # ISO Latin-1's upper half, where ASCII is: ! is ¡, A is Á.
+  defp translate(text, :latin1) do
+    for <<c::utf8 <- text>>, into: "", do: <<if(c in 0x20..0x7F, do: c + 0x80, else: c)::utf8>>
+  end
 
   defp translate(text, :dec_graphics) do
     for <<c::utf8 <- text>>, into: "", do: <<Map.get(@dec_graphics, c, c)::utf8>>
   end
 
-  def designate(grid, :g0, set), do: %{grid | g0: set}
-  def designate(grid, :g1, set), do: %{grid | g1: set}
+  def designate(grid, which, set) when which in [:g0, :g1, :g2, :g3],
+    do: Map.put(grid, which, set)
+
   def shift(grid, gl), do: %{grid | gl: gl}
+
+  @doc "SS2, SS3: the next character alone comes from `:g2` or `:g3`."
+  def single_shift(grid, set), do: %{grid | single_shift: set}
 
   ## Cursor
 
-  def carriage_return(grid), do: %{grid | col: 0}
+  def carriage_return(%{margins?: false} = grid), do: %{grid | col: 0}
 
-  def backspace(grid), do: %{grid | col: max(min(grid.col, grid.cols - 1) - 1, 0)}
-
-  def tab(grid) do
-    next = (div(grid.col, @tab_width) + 1) * @tab_width
-    %{grid | col: min(next, grid.cols - 1)}
+  # To the left margin; from outside it, to the screen's edge (unless origin
+  # mode keeps the cursor inside).
+  def carriage_return(grid) do
+    col = if visible_col(grid) >= grid.left or grid.origin, do: grid.left, else: 0
+    %{grid | col: col, pending_at: nil}
   end
 
+  @doc "Backspace: one cell left. See `move_back/2`."
+  def backspace(grid), do: move_back(grid, 1)
+
   @doc """
-  Moves to `{row, col}`, clamped to the screen. In origin mode, rows count
-  from the top of the scroll region and stay inside it.
+  CUB, and backspace: `n` cells left, stopping at the margin. With reverse
+  wrap (mode 45) and autowrap, it goes on to the end of the row above, but
+  only over a row that wrapped: as in xterm, the start of the line is as far
+  as text flows back. A wrap that's pending counts as the first cell back.
   """
-  def move_to(%{origin: true} = grid, row, col) do
-    %{grid | row: clamp(grid.top + row, grid.top, grid.bottom), col: clamp(col, 0, grid.cols - 1)}
+  def move_back(%{reverse_wrap_all: true, autowrap: true} = grid, n), do: wrap_back_from(grid, n)
+  def move_back(%{reverse_wrap: true, autowrap: true} = grid, n), do: wrap_back_from(grid, n)
+  def move_back(grid, n), do: move_by(grid, 0, -n)
+
+  defp wrap_back_from(grid, n) do
+    pending? = grid.col >= grid.cols or grid.pending_at == {grid.row, grid.col}
+    n = if pending?, do: n - 1, else: n
+    wrap_back(%{grid | col: visible_col(grid), pending_at: nil}, n)
   end
 
-  def move_to(grid, row, col) do
-    %{grid | row: clamp(row, 0, grid.rows - 1), col: clamp(col, 0, grid.cols - 1)}
+  defp wrap_back(grid, 0), do: grid
+
+  defp wrap_back(grid, n) do
+    left = if grid.col >= grid.left, do: grid.left, else: 0
+    width = grid.col - left
+
+    cond do
+      n <= width ->
+        %{grid | col: grid.col - n}
+
+      # Mode 1045, the original reverse wrap: over any row, from the top of
+      # the scroll region around to its bottom.
+      grid.reverse_wrap_all ->
+        row = if grid.row == grid.top, do: grid.bottom, else: max(grid.row - 1, 0)
+        wrap_back(%{grid | row: row, col: grid.right}, n - width - 1)
+
+      grid.row > grid.top and row_wrapped?(elem(grid.lines, grid.row - 1)) ->
+        wrap_back(%{grid | row: grid.row - 1, col: grid.right}, n - width - 1)
+
+      true ->
+        %{grid | col: left}
+    end
   end
+
+  @doc "HT: to the next tab stop, or the margin if there's none before it."
+  def tab(grid), do: tab(grid, 1)
+
+  @doc "CHT: `n` tab stops forward."
+  def tab(grid, 0), do: grid
+
+  def tab(grid, n) do
+    col = visible_col(grid)
+    edge = if col <= grid.right, do: grid.right, else: grid.cols - 1
+    tab(%{grid | col: min(next_stop(grid.tabs, col) || edge, edge), pending_at: nil}, n - 1)
+  end
+
+  @doc "CBT: `n` tab stops back."
+  def back_tab(grid, 0), do: grid
+
+  def back_tab(grid, n) do
+    col = visible_col(grid)
+    back_tab(%{grid | col: max(prev_stop(grid.tabs, col) || 0, 0), pending_at: nil}, n - 1)
+  end
+
+  defp next_stop(nil, col), do: (div(col, @tab_width) + 1) * @tab_width
+  defp next_stop(stops, col), do: Enum.find(stops, &(&1 > col))
+
+  defp prev_stop(nil, 0), do: nil
+  defp prev_stop(nil, col), do: div(col - 1, @tab_width) * @tab_width
+  defp prev_stop(stops, col), do: stops |> Enum.reverse() |> Enum.find(&(&1 < col))
+
+  # The widest grid the renderer can show: a resize keeps these.
+  defp default_stops, do: Enum.to_list(0..4095//@tab_width)
+
+  @doc "HTS: a tab stop at the cursor's column."
+  def set_tab_stop(grid) do
+    stops = grid.tabs || default_stops()
+    %{grid | tabs: Enum.sort(Enum.uniq([visible_col(grid) | stops]))}
+  end
+
+  @doc "TBC: 0 clears the tab stop at the cursor, 3 clears them all."
+  def clear_tab_stop(grid, 0),
+    do: %{grid | tabs: List.delete(grid.tabs || default_stops(), visible_col(grid))}
+
+  def clear_tab_stop(grid, 3), do: %{grid | tabs: []}
+  def clear_tab_stop(grid, _mode), do: grid
 
   @doc """
-  Moves by a relative amount. Vertical moves stop at the scroll region's
-  edge when the cursor is inside it, and at the screen's edge otherwise.
+  Moves to `{row, col}`, clamped to the screen. In origin mode, they count
+  from the corner of the scroll region and margins, and stay inside them.
+  """
+  def move_to(grid, row, col), do: grid |> move_row(row) |> move_col(col)
+
+  @doc "VPA: to a row, keeping the column."
+  def move_row(%{origin: true} = grid, row),
+    do: %{grid | row: clamp(grid.top + row, grid.top, grid.bottom), pending_at: nil}
+
+  def move_row(grid, row), do: %{grid | row: clamp(row, 0, grid.rows - 1), pending_at: nil}
+
+  @doc "CHA: to a column, keeping the row."
+  def move_col(%{origin: true} = grid, col),
+    do: %{grid | col: clamp(grid.left + col, grid.left, grid.right), pending_at: nil}
+
+  def move_col(grid, col), do: %{grid | col: clamp(col, 0, grid.cols - 1), pending_at: nil}
+
+  @doc """
+  Moves by a relative amount. Moves stop at the scroll region's and the
+  margins' edge when the cursor is inside them, and at the screen's otherwise.
   """
   def move_by(grid, drow, dcol) do
     {lo, hi} =
@@ -737,16 +1043,28 @@ defmodule Guiltty.Grid do
         do: {grid.top, grid.bottom},
         else: {0, grid.rows - 1}
 
+    col = visible_col(grid)
+    left = if col >= grid.left, do: grid.left, else: 0
+    right = if col <= grid.right, do: grid.right, else: grid.cols - 1
+
     %{
       grid
       | row: clamp(grid.row + drow, lo, hi),
-        col: clamp(min(grid.col, grid.cols - 1) + dcol, 0, grid.cols - 1)
+        col: clamp(col + dcol, left, right),
+        pending_at: nil
     }
   end
 
   @doc "The cursor's row for reports (CPR): relative to the region in origin mode."
   def report_row(%{origin: true} = grid), do: grid.row - grid.top
   def report_row(grid), do: grid.row
+
+  @doc "The cursor's column for reports: relative to the margin in origin mode."
+  def report_col(%{origin: true} = grid), do: visible_col(grid) - grid.left
+  def report_col(grid), do: visible_col(grid)
+
+  @doc "Mode 12: whether the program wants the cursor blinking."
+  def set_cursor_blink(grid, on?), do: %{grid | cursor_blink: on?}
 
   def set_cursor_visible(grid, visible), do: %{grid | cursor_visible: visible}
 
@@ -755,7 +1073,12 @@ defmodule Guiltty.Grid do
 
   @doc "DECSC: saves the cursor, the pen, origin mode and the character sets."
   def save_cursor(grid) do
-    saved = Map.take(grid, [:row, :col, :attrs, :fg, :bg, :origin, :g0, :g1, :gl])
+    saved =
+      Map.take(
+        grid,
+        [:row, :col, :attrs, :fg, :bg, :origin] ++ [:g0, :g1, :g2, :g3, :gl]
+      )
+
     %{grid | saved: Map.put(grid.saved, screen(grid), saved)}
   end
 
@@ -773,12 +1096,21 @@ defmodule Guiltty.Grid do
             origin: false,
             g0: :ascii,
             g1: :ascii,
-            gl: 0
+            g2: :ascii,
+            g3: :ascii,
+            gl: 0,
+            pending_at: nil
         }
 
       saved ->
         grid = Map.merge(grid, saved)
-        %{grid | row: min(grid.row, grid.rows - 1), col: min(grid.col, grid.cols)}
+
+        %{
+          grid
+          | row: min(grid.row, grid.rows - 1),
+            col: min(grid.col, grid.cols),
+            pending_at: nil
+        }
     end
   end
 
@@ -787,12 +1119,31 @@ defmodule Guiltty.Grid do
 
   ## Scrolling
 
-  @doc "Line feed (IND): down one row, scrolling the region up at its bottom."
+  @doc """
+  Line feed (IND): down one row, scrolling the region up at its bottom.
+  Outside the margins there's nothing to scroll.
+  """
+  def index(%{margins?: true} = grid) do
+    cond do
+      grid.row == grid.bottom -> if in_margins?(grid), do: scroll_up(grid, 1), else: grid
+      grid.row < grid.rows - 1 -> %{grid | row: grid.row + 1}
+      true -> grid
+    end
+  end
+
   def index(%{row: row, bottom: row} = grid), do: scroll_up(grid, 1)
   def index(%{row: row, rows: rows} = grid) when row < rows - 1, do: %{grid | row: row + 1}
   def index(grid), do: grid
 
   @doc "Reverse index (RI): up one row, scrolling the region down at its top."
+  def reverse_index(%{margins?: true} = grid) do
+    cond do
+      grid.row == grid.top -> if in_margins?(grid), do: scroll_down(grid, 1), else: grid
+      grid.row > 0 -> %{grid | row: grid.row - 1}
+      true -> grid
+    end
+  end
+
   def reverse_index(%{row: row, top: row} = grid), do: scroll_down(grid, 1)
   def reverse_index(%{row: row} = grid) when row > 0, do: %{grid | row: row - 1}
   def reverse_index(grid), do: grid
@@ -805,15 +1156,15 @@ defmodule Guiltty.Grid do
 
   @doc "IL: inserts `n` blank rows at the cursor, pushing the rest of the region down."
   def insert_lines(grid, n) do
-    if in_region?(grid),
-      do: grid |> shift_rows(grid.row, grid.bottom, n) |> Map.put(:col, 0),
+    if in_region?(grid) and in_margins?(grid),
+      do: grid |> shift_rows(grid.row, grid.bottom, n) |> Map.put(:col, grid.left),
       else: grid
   end
 
   @doc "DL: deletes `n` rows at the cursor, pulling the rest of the region up."
   def delete_lines(grid, n) do
-    if in_region?(grid),
-      do: grid |> shift_rows(grid.row, grid.bottom, -n) |> Map.put(:col, 0),
+    if in_region?(grid) and in_margins?(grid),
+      do: grid |> shift_rows(grid.row, grid.bottom, -n) |> Map.put(:col, grid.left),
       else: grid
   end
 
@@ -826,13 +1177,120 @@ defmodule Guiltty.Grid do
       else: grid
   end
 
+  @doc """
+  DECSLRM: sets the left and right margins (0-based, inclusive) and homes
+  the cursor. Nothing happens unless they leave at least two columns.
+  """
+  def set_margins(grid, left, right) do
+    right = min(right, grid.cols - 1)
+
+    if left < right do
+      %{grid | left: left, right: right, margins?: left > 0 or right < grid.cols - 1}
+      |> move_to(0, 0)
+    else
+      grid
+    end
+  end
+
+  @doc "DECLRMM: whether CSI s sets margins. Turning it off drops them."
+  def set_margin_mode(grid, true), do: %{grid | lrmm: true}
+
+  def set_margin_mode(grid, false),
+    do: %{grid | lrmm: false, left: 0, right: grid.cols - 1, margins?: false}
+
   defp in_region?(grid), do: grid.row >= grid.top and grid.row <= grid.bottom
+
+  defp in_margins?(grid) do
+    col = visible_col(grid)
+    col >= grid.left and col <= grid.right
+  end
+
+  @doc "SL (`n` negative) or SR: moves the columns inside the margins sideways."
+  def shift_columns(grid, n), do: move_columns(grid, grid.left, grid.right, n)
+
+  @doc "DECIC: inserts `n` blank columns at the cursor, inside the margins."
+  def insert_columns(grid, n) do
+    if in_region?(grid) and in_margins?(grid),
+      do: move_columns(grid, visible_col(grid), grid.right, n),
+      else: grid
+  end
+
+  @doc "DECDC: deletes `n` columns at the cursor, inside the margins."
+  def delete_columns(grid, n) do
+    if in_region?(grid) and in_margins?(grid),
+      do: move_columns(grid, visible_col(grid), grid.right, -n),
+      else: grid
+  end
+
+  @doc "DECBI: left one cell; at the left margin, the columns move right instead."
+  def back_index(grid) do
+    col = visible_col(grid)
+
+    cond do
+      col == grid.left and in_region?(grid) -> shift_columns(grid, 1)
+      col > 0 -> %{grid | col: col - 1, pending_at: nil}
+      true -> grid
+    end
+  end
+
+  @doc "DECFI: right one cell; at the right margin, the columns move left instead."
+  def forward_index(grid) do
+    col = visible_col(grid)
+
+    cond do
+      col == grid.right and in_region?(grid) -> shift_columns(grid, -1)
+      col < grid.cols - 1 -> %{grid | col: col + 1, pending_at: nil}
+      true -> grid
+    end
+  end
+
+  # The cells in columns from..to of every row of the scroll region move by
+  # n (positive = right); blank cells fill in behind.
+  defp move_columns(grid, from, to, n) do
+    size = to - from + 1
+    n = clamp(n, -size, size)
+    blank = blank_cell(grid.bg)
+
+    Enum.reduce(grid.top..grid.bottom, grid, fn row, grid ->
+      cells = row_slice(grid, row, from, size)
+      keep = (size - abs(n)) * @cell_size
+
+      moved =
+        if n >= 0 do
+          :binary.copy(blank, n) <> binary_part(cells, 0, keep)
+        else
+          binary_part(cells, -n * @cell_size, keep) <> :binary.copy(blank, -n)
+        end
+
+      replace_cells(grid, row, from, moved)
+    end)
+  end
+
+  defp row_slice(grid, row, col, n),
+    do: binary_part(elem(grid.lines, row), col * @cell_size, n * @cell_size)
 
   # Moves rows from..to by n (positive = down), filling with blank rows.
   # Rows pushed off the top of the whole main screen go to the scrollback.
   #
   # The usual case, a line feed at the bottom of the whole screen, is one
   # row up: tuple operations, without going through a list.
+  defp shift_rows(%{margins?: true} = grid, from, to, n) do
+    size = to - from + 1
+    n = clamp(n, -size, size)
+    width = grid.right - grid.left + 1
+    blank = :binary.copy(blank_cell(grid.bg), width)
+    region = for row <- from..to, do: row_slice(grid, row, grid.left, width)
+
+    region =
+      if n >= 0,
+        do: List.duplicate(blank, n) ++ Enum.take(region, size - n),
+        else: Enum.drop(region, -n) ++ List.duplicate(blank, -n)
+
+    region
+    |> Enum.with_index(from)
+    |> Enum.reduce(grid, fn {cells, row}, grid -> replace_cells(grid, row, grid.left, cells) end)
+  end
+
   defp shift_rows(%{rows: rows} = grid, 0, to, -1) when to == rows - 1 do
     grid = if grid.alt?, do: grid, else: save_lines(grid, [elem(grid.lines, 0)])
     {blank, grid} = cached_blank(grid)
@@ -962,23 +1420,38 @@ defmodule Guiltty.Grid do
 
   ## Characters in a line
 
-  @doc "ICH: inserts `n` blank cells at the cursor; cells pushed past the edge are lost."
+  @doc """
+  ICH: inserts `n` blank cells at the cursor; cells pushed past the right
+  margin are lost. Outside the margins it does nothing.
+  """
   def insert_chars(grid, n) do
-    col = min(grid.col, grid.cols - 1)
-    n = min(n, grid.cols - col)
-    keep = (grid.cols - col - n) * @cell_size
-    <<_::binary-size(^col * @cell_size), tail::binary>> = elem(grid.lines, grid.row)
-    moved = binary_part(tail, 0, keep)
-    replace_cells(grid, grid.row, col, :binary.copy(blank_cell(grid.bg), n) <> moved)
+    col = visible_col(grid)
+
+    if col > grid.right or (grid.margins? and col < grid.left) do
+      grid
+    else
+      room = grid.right - col + 1
+      n = min(n, room)
+      moved = row_slice(grid, grid.row, col, room - n)
+      replace_cells(grid, grid.row, col, :binary.copy(blank_cell(grid.bg), n) <> moved)
+    end
   end
 
-  @doc "DCH: deletes `n` cells at the cursor; blank cells enter at the right edge."
+  @doc """
+  DCH: deletes `n` cells at the cursor; blank cells enter at the right margin.
+  Outside the margins it does nothing.
+  """
   def delete_chars(grid, n) do
-    col = min(grid.col, grid.cols - 1)
-    n = min(n, grid.cols - col)
-    <<_::binary-size(^col * @cell_size), tail::binary>> = elem(grid.lines, grid.row)
-    moved = binary_part(tail, n * @cell_size, byte_size(tail) - n * @cell_size)
-    replace_cells(grid, grid.row, col, moved <> :binary.copy(blank_cell(grid.bg), n))
+    col = visible_col(grid)
+
+    if col > grid.right or (grid.margins? and col < grid.left) do
+      grid
+    else
+      room = grid.right - col + 1
+      n = min(n, room)
+      moved = row_slice(grid, grid.row, col + n, room - n)
+      replace_cells(grid, grid.row, col, moved <> :binary.copy(blank_cell(grid.bg), n))
+    end
   end
 
   ## Erasing
@@ -1009,24 +1482,151 @@ defmodule Guiltty.Grid do
       | scrollback: %{},
         recent: [],
         scrollback_first: grid.history,
-        graphics: Graphics.clear_scrollback(grid.graphics)
+        graphics: Graphics.clear_scrollback(grid.graphics),
+        links: Enum.filter(grid.links, fn {n, _, _, _} -> n >= grid.history end),
+        prompt_marks: Enum.filter(grid.prompt_marks, &(&1 >= grid.history))
     }
   end
 
   def erase_display(grid, _mode), do: grid
 
   @doc "EL: 0 = cursor to end of line, 1 = start to cursor, 2 = whole line."
-  def erase_line(grid, 0),
-    do: blank_cells(grid, grid.row, min(grid.col, grid.cols - 1), grid.cols)
-
-  def erase_line(grid, 1), do: blank_cells(grid, grid.row, 0, min(grid.col, grid.cols - 1) + 1)
+  def erase_line(grid, 0), do: blank_cells(grid, grid.row, visible_col(grid), grid.cols)
+  def erase_line(grid, 1), do: blank_cells(grid, grid.row, 0, visible_col(grid) + 1)
   def erase_line(grid, 2), do: blank_row(grid, grid.row)
   def erase_line(grid, _mode), do: grid
 
   @doc "ECH: erases `n` cells from the cursor, without moving it."
   def erase_chars(grid, n) do
-    from = min(grid.col, grid.cols - 1)
+    from = visible_col(grid)
     blank_cells(grid, grid.row, from, min(from + n, grid.cols))
+  end
+
+  @doc "DECSED: as ED, but protected cells (DECSCA) stay."
+  def selective_erase_display(grid, 0) do
+    grid = selective_erase_line(grid, 0)
+    Enum.reduce((grid.row + 1)..(grid.rows - 1)//1, grid, &selective_blank(&2, &1, 0, grid.cols))
+  end
+
+  def selective_erase_display(grid, 1) do
+    grid = selective_erase_line(grid, 1)
+    Enum.reduce(0..(grid.row - 1)//1, grid, &selective_blank(&2, &1, 0, grid.cols))
+  end
+
+  def selective_erase_display(grid, 2),
+    do: Enum.reduce(0..(grid.rows - 1), grid, &selective_blank(&2, &1, 0, grid.cols))
+
+  def selective_erase_display(grid, _mode), do: grid
+
+  @doc "DECSEL: as EL, but protected cells (DECSCA) stay."
+  def selective_erase_line(grid, 0),
+    do: selective_blank(grid, grid.row, visible_col(grid), grid.cols)
+
+  def selective_erase_line(grid, 1),
+    do: selective_blank(grid, grid.row, 0, visible_col(grid) + 1)
+
+  def selective_erase_line(grid, 2), do: selective_blank(grid, grid.row, 0, grid.cols)
+  def selective_erase_line(grid, _mode), do: grid
+
+  defp selective_blank(grid, _row, from, to) when from >= to, do: grid
+
+  defp selective_blank(grid, row, from, to) do
+    blank = blank_cell(grid.bg)
+    cells = row_slice(grid, row, from, to - from)
+
+    kept =
+      for <<cell::binary-size(@cell_size) <- cells>>, into: <<>> do
+        <<_glyph::32, attrs::16, _::binary>> = cell
+        if (attrs &&& @protected) != 0, do: cell, else: blank
+      end
+
+    replace_cells(grid, row, from, kept)
+  end
+
+  @doc "DECSCA: whether what's printed from now on is protected."
+  def set_protected(grid, true), do: %{grid | attrs: grid.attrs ||| @protected}
+  def set_protected(grid, false), do: %{grid | attrs: grid.attrs &&& bnot(@protected)}
+
+  ## Rectangles (DECFRA and friends)
+  #
+  # {top, left, bottom, right}, 0-based and inclusive, on the whole screen.
+
+  @doc "DECFRA: fills a rectangle with a character, in the current pen."
+  def fill_rect(grid, codepoint, {top, left, bottom, right}) do
+    cell = <<codepoint::32, grid.attrs::16, grid.fg::32, grid.bg::32>>
+    cells = :binary.copy(cell, right - left + 1)
+    Enum.reduce(top..bottom, grid, &replace_cells(&2, &1, left, cells))
+  end
+
+  @doc "DECERA: erases a rectangle."
+  def erase_rect(grid, {top, left, bottom, right}) do
+    cells = :binary.copy(blank_cell(grid.bg), right - left + 1)
+    Enum.reduce(top..bottom, grid, &replace_cells(&2, &1, left, cells))
+  end
+
+  @doc "DECSERA: erases a rectangle, leaving protected cells."
+  def selective_erase_rect(grid, {top, left, bottom, right}),
+    do: Enum.reduce(top..bottom, grid, &selective_blank(&2, &1, left, right + 1))
+
+  @doc "DECCRA: copies a rectangle so its corner lands at `{to_row, to_col}`, clipped to the screen."
+  def copy_rect(grid, {top, left, bottom, right}, {to_row, to_col}) do
+    width = min(right - left + 1, grid.cols - to_col)
+    height = min(bottom - top + 1, grid.rows - to_row)
+
+    if width <= 0 or height <= 0 do
+      grid
+    else
+      rows = for i <- 0..(height - 1), do: {to_row + i, row_slice(grid, top + i, left, width)}
+
+      Enum.reduce(rows, grid, fn {row, cells}, grid -> replace_cells(grid, row, to_col, cells) end)
+    end
+  end
+
+  @doc """
+  DECCARA and DECRARA: runs `fun` on the attributes of each cell of a
+  rectangle (or, with `stream: true`, from its first to its last cell, the
+  way text flows).
+  """
+  def change_rect_attrs(grid, {top, left, bottom, right}, fun, opts \\ []) do
+    stream? = Keyword.get(opts, :stream, false)
+
+    Enum.reduce(top..bottom, grid, fn row, grid ->
+      from = if stream? and row > top, do: 0, else: left
+      to = if stream? and row < bottom, do: grid.cols - 1, else: right
+      cells = row_slice(grid, row, from, to - from + 1)
+
+      changed =
+        for <<glyph::32, attrs::16, colors::binary-size(8) <- cells>>, into: <<>> do
+          <<glyph::32, fun.(attrs)::16, colors::binary>>
+        end
+
+      replace_cells(grid, row, from, changed)
+    end)
+  end
+
+  @doc """
+  DECRQCRA's checksum of a rectangle: the sum of its cells' characters, as a
+  VT420 computes it (the negative of the sum, in 16 bits). Only asked for
+  when `screen_reports` is on: it lets a program read the screen.
+  """
+  def checksum_rect(grid, {top, left, bottom, right}) do
+    sum =
+      Enum.reduce(top..bottom, 0, fn row, sum ->
+        cells = row_slice(grid, row, left, right - left + 1)
+
+        for <<glyph::32, _::binary-size(10) <- cells>>, reduce: sum do
+          sum -> sum + rem(checksum_glyph(grid, glyph), 0x10000)
+        end
+      end)
+
+    band(0x10000 - band(sum, 0xFFFF), 0xFFFF)
+  end
+
+  defp checksum_glyph(_grid, glyph) when glyph < @first_cluster, do: glyph
+
+  defp checksum_glyph(grid, glyph) do
+    <<first::utf8, _::binary>> = glyph_text(grid, glyph)
+    first
   end
 
   @doc "DECALN: fills the screen with E (used by vttest to check alignment)."
@@ -1039,17 +1639,44 @@ defmodule Guiltty.Grid do
         row: 0,
         col: 0,
         top: 0,
-        bottom: grid.rows - 1
+        bottom: grid.rows - 1,
+        left: 0,
+        right: grid.cols - 1,
+        margins?: false,
+        pending_at: nil
     }
     |> all_dirty()
   end
 
   ## Modes and the pen
 
-  def set_pen(grid, attrs, fg, bg), do: %{grid | attrs: attrs, fg: fg, bg: bg}
+  def set_pen(grid, attrs, fg, bg),
+    do: %{grid | attrs: attrs ||| (grid.attrs &&& @sticky), fg: fg, bg: bg}
 
-  def set_mode(grid, mode, value) when mode in [:autowrap, :insert],
-    do: Map.put(grid, mode, value)
+  # Turning autowrap off ends a pending wrap: the cursor is simply on the
+  # last cell (DEC STD 070).
+  def set_mode(grid, :autowrap, false),
+    do: %{grid | autowrap: false, col: visible_col(grid), pending_at: nil}
+
+  def set_mode(grid, mode, value)
+      when mode in [:autowrap, :insert, :reverse_wrap, :reverse_wrap_all],
+      do: Map.put(grid, mode, value)
+
+  @doc "DECSCNM: the whole screen in reverse video."
+  def set_reverse_video(%{reverse_video: on?} = grid, on?), do: grid
+  def set_reverse_video(grid, on?), do: %{grid | reverse_video: on?} |> all_dirty()
+
+  @doc "XTPUSHSGR: saves the pen."
+  def push_sgr(grid) do
+    pen = {grid.attrs, grid.fg, grid.bg}
+    %{grid | sgr_stack: Enum.take([pen | grid.sgr_stack], @max_stack)}
+  end
+
+  @doc "XTPOPSGR: restores the pen saved last."
+  def pop_sgr(%{sgr_stack: []} = grid), do: grid
+
+  def pop_sgr(%{sgr_stack: [{attrs, fg, bg} | rest]} = grid),
+    do: %{grid | attrs: attrs, fg: fg, bg: bg, sgr_stack: rest}
 
   @doc "DECOM: origin mode; switching it homes the cursor."
   def set_origin(grid, on?), do: %{grid | origin: on?} |> move_to(0, 0)
@@ -1057,6 +1684,153 @@ defmodule Guiltty.Grid do
   def set_input(grid, mode, value), do: %{grid | input: Map.put(grid.input, mode, value)}
 
   def set_title(grid, title), do: %{grid | title: title}
+  def set_icon_name(grid, name), do: %{grid | icon_name: name}
+
+  @doc "XTWINOPS 22: saves the title (`:title`), the icon name (`:icon`), or both (`:both`)."
+  def push_title(grid, :both), do: grid |> push_title(:icon) |> push_title(:title)
+
+  def push_title(grid, :title),
+    do: %{grid | title_stack: Enum.take([grid.title | grid.title_stack], @max_stack)}
+
+  def push_title(grid, :icon),
+    do: %{grid | icon_stack: Enum.take([grid.icon_name | grid.icon_stack], @max_stack)}
+
+  @doc "XTWINOPS 23: restores what `push_title/2` saved last."
+  def pop_title(grid, :both), do: grid |> pop_title(:icon) |> pop_title(:title)
+  def pop_title(%{title_stack: []} = grid, :title), do: grid
+  def pop_title(%{icon_stack: []} = grid, :icon), do: grid
+
+  def pop_title(%{title_stack: [title | rest]} = grid, :title),
+    do: %{grid | title: title, title_stack: rest}
+
+  def pop_title(%{icon_stack: [name | rest]} = grid, :icon),
+    do: %{grid | icon_name: name, icon_stack: rest}
+
+  @doc "OSC 4: a palette color changed, or `nil` to go back to the theme's."
+  def set_palette(grid, index, nil),
+    do: %{grid | palette: Map.delete(grid.palette, index)} |> all_dirty()
+
+  def set_palette(grid, index, color),
+    do: %{grid | palette: Map.put(grid.palette, index, color)} |> all_dirty()
+
+  @doc "OSC 104 with no index: the whole palette back to the theme's."
+  def reset_palette(%{palette: palette} = grid) when map_size(palette) == 0, do: grid
+  def reset_palette(grid), do: %{grid | palette: %{}} |> all_dirty()
+
+  @doc "OSC 10, 11, 12: a dynamic color changed (`nil`: back to the theme's)."
+  def set_dynamic_color(grid, which, color) when which in [:fg_color, :bg_color, :cursor_color],
+    do: grid |> Map.put(which, color) |> all_dirty()
+
+  @doc "A new theme, for answering programs that ask what color something is."
+  def set_theme(grid, theme), do: %{grid | theme: theme}
+
+  @doc "OSC 52: text for the clipboard."
+  def set_clipboard(grid, target, text),
+    do: %{grid | clipboard: text, clipboard_target: target}
+
+  @doc "What OSC 52 asked to put on the clipboard since the last call, if anything."
+  def take_clipboard(%{clipboard: nil} = grid), do: {nil, grid}
+
+  def take_clipboard(grid),
+    do: {{grid.clipboard_target, grid.clipboard}, %{grid | clipboard: nil}}
+
+  @doc "OSC 7: the program's working directory, as a URI."
+  def set_cwd_uri(grid, uri), do: %{grid | cwd_uri: uri}
+
+  ## Hyperlinks (OSC 8)
+
+  @doc "Text printed from now on links to `uri`, or to nothing with nil."
+  def set_link(grid, nil), do: %{grid | link: nil, attrs: grid.attrs &&& bnot(@link)}
+  def set_link(grid, uri), do: %{grid | link: uri, attrs: grid.attrs ||| @link}
+
+  # Compares the cursor before and after printing: every row in between holds
+  # some of the link.
+  defp remember_link(grid, before, uri) do
+    first = before.history + before.row
+    last = grid.history + grid.row
+    from = visible_col(before)
+    to = visible_col(%{grid | col: max(grid.col - 1, 0), pending_at: nil})
+
+    spans =
+      for n <- first..last//1 do
+        {n, if(n == first, do: from, else: 0), if(n == last, do: to, else: grid.cols - 1), uri}
+      end
+
+    %{grid | links: Enum.take(Enum.reverse(spans) ++ grid.links, @max_links)}
+  end
+
+  @doc "Where the link at row number `n`, column `col` goes, or nil."
+  def link_at(grid, n, col) do
+    with line when is_binary(line) <- line(grid, n),
+         true <- (attrs_at(line, col) &&& @link) != 0,
+         {_, _, _, uri} <-
+           Enum.find(grid.links, fn {row, c1, c2, _} -> row == n and col in c1..c2 end) do
+      uri
+    else
+      _ -> nil
+    end
+  end
+
+  ## Prompts (OSC 133)
+
+  @doc "A prompt starts on the cursor's row. The alternate screen has none."
+  def mark_prompt(%{alt?: true} = grid), do: grid
+
+  def mark_prompt(grid) do
+    n = grid.history + grid.row
+    marks = [n | Enum.reject(grid.prompt_marks, &(&1 == n))]
+    %{grid | prompt_marks: Enum.take(marks, @max_marks)}
+  end
+
+  @doc "The row number of the closest prompt before `n` (`:older`) or after it (`:newer`)."
+  def prompt_near(grid, n, :older) do
+    Enum.find(grid.prompt_marks, &(&1 < n and &1 >= grid.scrollback_first))
+  end
+
+  def prompt_near(grid, n, :newer) do
+    grid.prompt_marks |> Enum.reverse() |> Enum.find(&(&1 > n))
+  end
+
+  ## Mode 2026
+
+  @doc "Whether viewers should wait: the program is in the middle of drawing."
+  def set_synchronized(grid, on?), do: %{grid | synchronized: on?}
+
+  ## Kitty keyboard flags, one stack per screen
+
+  @doc "Flags as a program set them, keeping only what guiltty can do."
+  def kitty_flags(flags), do: flags &&& 0b01011
+
+  def push_kitty(grid, flags) do
+    screen = screen(grid)
+    stack = Enum.take([grid.input.kitty | grid.kitty_stack[screen]], @max_stack * 2)
+
+    %{grid | kitty_stack: Map.put(grid.kitty_stack, screen, stack)}
+    |> set_input(:kitty, kitty_flags(flags))
+  end
+
+  def pop_kitty(grid, n) do
+    screen = screen(grid)
+    {popped, stack} = Enum.split(grid.kitty_stack[screen], n)
+
+    %{grid | kitty_stack: Map.put(grid.kitty_stack, screen, stack)}
+    |> set_input(:kitty, List.last(popped, 0))
+  end
+
+  # 1: exactly these. 2: add them. 3: take them away.
+  def set_kitty(grid, flags, mode) do
+    flags = kitty_flags(flags)
+
+    set_input(
+      grid,
+      :kitty,
+      case mode do
+        2 -> grid.input.kitty ||| flags
+        3 -> grid.input.kitty &&& bnot(flags)
+        _ -> flags
+      end
+    )
+  end
 
   def respond(grid, bytes), do: %{grid | responses: [bytes | grid.responses]}
 
@@ -1079,7 +1853,9 @@ defmodule Guiltty.Grid do
         do: Graphics.clear_screen(grid.graphics, :alt, grid.rows),
         else: grid.graphics
 
-    %{grid | other_lines: grid.lines, lines: alt, alt?: true, graphics: graphics} |> all_dirty()
+    %{grid | other_lines: grid.lines, lines: alt, alt?: true, graphics: graphics}
+    |> all_dirty()
+    |> Map.put(:pending_at, nil)
   end
 
   @doc "Back to the main screen, exactly as it was left."
@@ -1100,7 +1876,8 @@ defmodule Guiltty.Grid do
       Map.take(
         grid,
         [:scrollback, :recent, :scrollback_first, :history, :scrollback_max] ++
-          [:clusters, :cluster_ids, :next_cluster, :cell_pixels]
+          [:clusters, :cluster_ids, :next_cluster, :cell_pixels, :theme, :screen_reports] ++
+          [:prompt_marks, :links]
       )
 
     grid.cols |> new(grid.rows) |> Map.merge(keep)
@@ -1115,42 +1892,440 @@ defmodule Guiltty.Grid do
         bg: 0,
         top: 0,
         bottom: grid.rows - 1,
+        left: 0,
+        right: grid.cols - 1,
+        margins?: false,
+        lrmm: false,
+        pending_at: nil,
+        reverse_wrap: false,
+        reverse_wrap_all: false,
         cursor_visible: true,
         autowrap: true,
         origin: false,
         insert: false,
         g0: :ascii,
         g1: :ascii,
+        g2: :ascii,
+        g3: :ascii,
         gl: 0,
+        single_shift: nil,
+        link: nil,
+        synchronized: false,
         saved: Map.put(grid.saved, screen(grid), nil),
         input: @input_modes
     }
   end
 
   @doc """
-  Changes the size without reflowing text: rows are cut or padded on the
-  right, and rows are added or removed at the bottom. When shrinking would
-  push the cursor off the screen, rows go from the top instead, so the line
-  you're typing on stays visible. Both screens are resized, and the scroll
-  region goes back to the whole screen.
+  Changes the size. A new width rewraps the main screen and its scrollback
+  (reflow): rows that wrapped join up again and split at the new width, and
+  the cursor stays on the same character (see "Reflow", below).
+
+  The alternate screen isn't rewrapped: the program there redraws itself.
+  Its rows are cut or padded, and rows are added or removed at the bottom.
+  When a height change alone would push the cursor off the screen, rows go
+  from the top instead, so the line you're typing on stays visible. The
+  scroll region and margins go back to the whole screen.
+
+  With `at_prompt: true` the shell is waiting at its prompt, and will redraw
+  it after this resize: see "The prompt", below.
   """
-  def resize(grid, cols, rows) do
+  def resize(grid, cols, rows, opts \\ [])
+  def resize(%{cols: cols} = grid, cols, rows, _opts), do: resize_height(grid, rows)
+
+  def resize(%{alt?: true} = grid, cols, rows, _opts) do
     drop_top = max(grid.row - (rows - 1), 0)
+    alt = fit_screen(grid.lines, cols, rows, drop_top)
+    main = %{grid | lines: grid.other_lines}
+    {main_lines, main_cursor, main} = reflow(main, saved_main_cursor(grid), cols, rows, nil)
+
+    %{
+      resized(main, cols, rows)
+      | lines: alt,
+        other_lines: main_lines,
+        row: min(grid.row - drop_top, rows - 1),
+        col: min(grid.col, cols - 1),
+        saved: restore_saved_main(grid.saved, main_cursor)
+    }
+    |> all_dirty()
+  end
+
+  def resize(grid, cols, rows, opts) do
+    prompt_rows = if opts[:at_prompt], do: prompt_rows(grid)
+    prompt_top = if prompt_rows, do: max(grid.row - prompt_rows, 0)
+    {lines, {row, col}, grid} = reflow(grid, {grid.row, grid.col}, cols, rows, prompt_top)
+    grid = %{grid | prompt_rows: prompt_rows}
+    moved = grid.row - row
+
+    %{resized(grid, cols, rows) | lines: lines, other_lines: nil, row: row, col: col}
+    |> all_dirty()
+    |> scrolled(moved)
+  end
+
+  defp resize_height(grid, rows) do
+    cols = grid.cols
+    drop_top = max(grid.row - (rows - 1), 0)
+
+    # Rows that leave over the top of the main screen are scrollback, like
+    # any others. On the alternate screen the program redraws.
+    grid =
+      if grid.alt?,
+        do: grid,
+        else: save_lines(grid, grid.lines |> Tuple.to_list() |> Enum.take(drop_top))
+
     other = if grid.other_lines, do: fit_screen(grid.other_lines, cols, rows, 0)
 
+    %{
+      resized(grid, cols, rows)
+      | lines: fit_screen(grid.lines, cols, rows, drop_top),
+        other_lines: other,
+        row: min(grid.row - drop_top, rows - 1),
+        col: min(grid.col, cols - 1)
+    }
+    |> all_dirty()
+    |> scrolled(drop_top)
+  end
+
+  defp resized(grid, cols, rows) do
     %{
       grid
       | cols: cols,
         rows: rows,
-        lines: fit_screen(grid.lines, cols, rows, drop_top),
-        other_lines: other,
-        row: min(grid.row - drop_top, rows - 1),
-        col: min(grid.col, cols - 1),
         top: 0,
-        bottom: rows - 1
+        bottom: rows - 1,
+        left: 0,
+        right: cols - 1,
+        margins?: false,
+        pending_at: nil
     }
-    |> all_dirty()
-    |> scrolled(drop_top)
+  end
+
+  defp saved_main_cursor(grid) do
+    case grid.saved[:main] do
+      %{row: row, col: col} -> {row, col}
+      _ -> {0, 0}
+    end
+  end
+
+  defp restore_saved_main(saved, {row, col}) do
+    case saved[:main] do
+      %{} = main -> Map.put(saved, :main, %{main | row: row, col: col})
+      _ -> saved
+    end
+  end
+
+  ## Reflow
+  #
+  #     old scrollback + screen           logical lines          new rows
+  #     +-----------+                                            +-------+
+  #     |aaaaaaaaaaa|>  (wrapped)   ->    aaaaaaaaaaaaaa    ->   |aaaaaaa|>
+  #     |aaa        |                                            |aaaaaaa|
+  #     |bb         |                     bb                     |bb     |
+  #     +-----------+                                            +-------+
+  #
+  # Every row knows whether it wrapped (a bit on its last cell), so rows join
+  # exactly where the text ran on, and a line that ended on its own stays
+  # ended even if it was full. The last rows of the result are the new screen;
+  # the rest is the new scrollback, numbered from 0 again.
+  #
+  # ### The prompt
+  #
+  # A shell waiting at its prompt redraws it on SIGWINCH: it moves up as many
+  # rows as it knows the prompt took, erases to the end of the screen, and
+  # prints it again. It knows nothing about reflow. Split a full-width prompt
+  # row in two and it lands one row short, leaving a copy behind, at every
+  # resize. So the prompt's own rows aren't rewrapped: they stay the rows the
+  # shell thinks they are, cut or padded, and it redraws them a moment later.
+  #
+  # Where the prompt starts is an OSC 133 mark if the shell sends them.
+  # Otherwise, a guess: going up from the cursor, a row belongs if it wrapped
+  # (a long command) or reaches the right edge (a prompt's filler, or its right
+  # side, which zsh keeps a column from the edge). A line of output just
+  # above that happens to reach the edge is cut too; marks don't have that
+  # problem.
+
+  #
+  # A drag is many resizes before the shell says anything, and the rows get cut
+  # and padded along the way, so a guess would soon stop recognizing them. The
+  # first one is kept in `prompt_rows` until the program prints something.
+
+  @max_prompt_rows 16
+
+  defp prompt_rows(%{prompt_rows: rows}) when rows != nil, do: rows
+  defp prompt_rows(grid), do: grid.row - prompt_top(grid)
+
+  @doc "The program printed something: what a resize knew about its prompt is out of date."
+  def forget_prompt_rows(%{prompt_rows: nil} = grid), do: grid
+  def forget_prompt_rows(grid), do: %{grid | prompt_rows: nil}
+
+  defp prompt_top(%{prompt_marks: [mark | _], history: history, row: row})
+       when mark >= history and mark <= history + row,
+       do: mark - history
+
+  defp prompt_top(grid), do: prompt_top(grid, grid.row, @max_prompt_rows)
+
+  defp prompt_top(_grid, 0, _left), do: 0
+  defp prompt_top(_grid, row, 0), do: row
+
+  defp prompt_top(grid, row, left) do
+    above = elem(grid.lines, row - 1)
+
+    if row_wrapped?(above) or reaches_edge?(above, grid.cols),
+      do: prompt_top(grid, row - 1, left - 1),
+      else: row
+  end
+
+  defp reaches_edge?(row, cols), do: div(byte_size(trim_line(row)), @cell_size) >= cols - 1
+
+  defp reflow(grid, cursor, cols, rows, prompt_top) do
+    {older, newer} = reflow_split(grid)
+    screen = reflow_screen(grid, cursor)
+    {screen, prompt} = Enum.split(screen, prompt_top || length(screen))
+    base = grid.scrollback_first
+    start = base + length(older)
+
+    numbered =
+      (newer ++ screen) |> Enum.with_index(start) |> Enum.map(fn {row, n} -> {n, row} end)
+
+    screen_first = grid.history
+
+    {new_rows, total, cursor_at, positions} =
+      numbered
+      |> logical_lines()
+      |> Enum.reduce({Enum.reverse(older), length(older), nil, %{}}, fn line, acc ->
+        wrap_logical(line, cols, cursor, screen_first, acc)
+      end)
+
+    first_prompt = screen_first + length(screen)
+
+    {new_rows, total, cursor_at, positions} =
+      keep_prompt(
+        prompt,
+        first_prompt,
+        cols,
+        cursor,
+        screen_first,
+        {new_rows, total, cursor_at, positions}
+      )
+
+    new_rows = Enum.reverse(new_rows)
+    {cursor_row, cursor_col} = cursor_at || {total, 0}
+    # The newest rows fill the screen, as long as the cursor stays on it.
+    top = max(max(total - rows, cursor_row - rows + 1), 0) |> min(cursor_row)
+    {saved, shown} = Enum.split(new_rows, top)
+    lines = shown |> Enum.take(rows) |> Enum.map(&fit_line(&1, cols))
+    lines = lines ++ List.duplicate(blank_line(cols, @default_color), rows - length(lines))
+
+    grid =
+      %{
+        grid
+        | scrollback: %{},
+          recent: [],
+          scrollback_first: 0,
+          history: 0,
+          links: moved_links(grid.links, positions, cols),
+          prompt_marks: moved_marks(grid.prompt_marks, positions, grid.scrollback_first)
+      }
+      |> save_lines(saved)
+
+    # Rows saved_lines dropped because they're past scrollback_max keep their
+    # numbers, and the screen's rows follow on.
+    {List.to_tuple(lines), {cursor_row - top, cursor_col}, grid}
+  end
+
+  # The prompt's rows, one for one.
+  defp keep_prompt(prompt, first, cols, {cursor_row, cursor_col}, screen_first, acc) do
+    cursor_n = screen_first + cursor_row
+
+    prompt
+    |> Enum.with_index(first)
+    |> Enum.reduce(acc, fn {row, n}, {out, at, cursor, positions} ->
+      cursor = if n == cursor_n, do: {at, min(cursor_col, cols - 1)}, else: cursor
+      {[row | out], at + 1, cursor, Map.put(positions, n, {at, 0, [0]})}
+    end)
+  end
+
+  defp reflow_split(grid) do
+    saved =
+      for n <- grid.scrollback_first..(grid.history - 1)//1, do: saved_line(grid, n)
+
+    Enum.split(saved, max(length(saved) - @reflow_rows, 0))
+  end
+
+  # The screen down to the last row that has something, or the cursor's. The
+  # blank rows after it aren't text: they mustn't push text into the scrollback.
+  defp reflow_screen(grid, {cursor_row, _col}) do
+    rows = Tuple.to_list(grid.lines)
+
+    last =
+      rows
+      |> Enum.with_index()
+      |> Enum.reduce(cursor_row, fn {row, i}, last ->
+        if trim_line(row) != <<>>, do: max(last, i), else: last
+      end)
+
+    Enum.take(rows, last + 1)
+  end
+
+  # [{row number, row}] into logical lines: [[{row number, row}]].
+  defp logical_lines(numbered) do
+    numbered
+    |> Enum.chunk_while(
+      [],
+      fn {_n, row} = item, acc ->
+        if row_wrapped?(row),
+          do: {:cont, [item | acc]},
+          else: {:cont, Enum.reverse([item | acc]), []}
+      end,
+      fn
+        [] -> {:cont, []}
+        acc -> {:cont, Enum.reverse(acc), []}
+      end
+    )
+  end
+
+  defp row_wrapped?(row) when byte_size(row) < @cell_size, do: false
+
+  defp row_wrapped?(row) do
+    col = div(byte_size(row), @cell_size) - 1
+    (attrs_at(row, col) &&& @wrapped) != 0
+  end
+
+  # One logical line: its rows joined, then cut at the new width.
+  defp wrap_logical(
+         line,
+         cols,
+         {cursor_row, cursor_col},
+         screen_first,
+         {out, first_row, cursor, positions}
+       ) do
+    {cells, offsets} = join_rows(line)
+    cuts = cut_points(cells, cols)
+    rows = wrapped_rows(cells, cuts, cols)
+    out = Enum.reduce(rows, out, &[&1 | &2])
+
+    positions =
+      Enum.reduce(offsets, positions, fn {n, offset}, positions ->
+        Map.put(positions, n, {first_row, offset, cuts})
+      end)
+
+    cursor_n = screen_first + cursor_row
+
+    cursor =
+      case List.keyfind(offsets, cursor_n, 0) do
+        {_, offset} -> place(first_row, offset + cursor_col, cuts, cols)
+        nil -> cursor
+      end
+
+    {out, first_row + length(rows), cursor, positions}
+  end
+
+  # Joined cells, and where each old row starts in them. A wide character
+  # that wrapped left a blank in the last column: it isn't text, so it goes.
+  defp join_rows(line) do
+    {parts, offsets, _size} =
+      line
+      |> Enum.with_index()
+      |> Enum.reduce({[], [], 0}, fn {{n, row}, i}, {parts, offsets, size} ->
+        next = Enum.at(line, i + 1)
+        cells = row_cells(row, next)
+        {[cells | parts], [{n, size} | offsets], size + div(byte_size(cells), @cell_size)}
+      end)
+
+    {parts |> Enum.reverse() |> IO.iodata_to_binary(), Enum.reverse(offsets)}
+  end
+
+  defp row_cells(row, nil), do: trim_line(row)
+
+  defp row_cells(row, {_n, next}) do
+    last = div(byte_size(row), @cell_size) - 1
+    offset = last * @cell_size
+    <<before::binary-size(^offset), glyph::32, attrs::16, colors::binary-size(8)>> = row
+
+    if glyph == ?\s and wide?(next, 0),
+      do: before,
+      else: <<before::binary, glyph::32, attrs &&& bnot(@wrapped)::16, colors::binary>>
+  end
+
+  # Where each new row starts, in cells. A wide character never splits.
+  defp cut_points(cells, cols) do
+    total = div(byte_size(cells), @cell_size)
+    do_cut_points(cells, 0, total, cols, [0])
+  end
+
+  defp do_cut_points(_cells, at, total, cols, acc) when at + cols >= total, do: Enum.reverse(acc)
+
+  defp do_cut_points(cells, at, total, cols, acc) do
+    next = at + cols
+    next = if spacer?(cells, next) and cols > 1, do: next - 1, else: next
+    do_cut_points(cells, next, total, cols, [next | acc])
+  end
+
+  defp wrapped_rows(cells, cuts, cols) do
+    total = div(byte_size(cells), @cell_size)
+    ends = tl(cuts) ++ [total]
+
+    Enum.zip(cuts, ends)
+    |> Enum.map(fn {from, to} ->
+      row = binary_part(cells, from * @cell_size, (to - from) * @cell_size)
+      if to == total, do: row, else: wrapped_row(row, to - from, cols)
+    end)
+  end
+
+  # A row that goes on in the next: full width, with the mark on its last cell.
+  defp wrapped_row(row, width, cols) do
+    row = row <> blank_line(cols - width, @default_color)
+    offset = (cols - 1) * @cell_size + 4
+    <<before::binary-size(^offset), attrs::16, after_::binary>> = row
+    <<before::binary, attrs ||| @wrapped::16, after_::binary>>
+  end
+
+  # An offset into a logical line, as {new row, col}. Past the end of the
+  # text (a cursor out in blank space), rows go on as they would have.
+  defp place(first_row, offset, cuts, cols) do
+    {i, start} =
+      cuts
+      |> Enum.with_index()
+      |> Enum.reduce({0, 0}, fn {cut, i}, acc -> if cut <= offset, do: {i, cut}, else: acc end)
+
+    col = offset - start
+
+    if col > cols,
+      do: {first_row + i + div(col, cols), rem(col, cols)},
+      else: {first_row + i, col}
+  end
+
+  defp moved_marks(marks, positions, first) do
+    marks
+    |> Enum.filter(&(&1 >= first))
+    |> Enum.flat_map(fn n ->
+      case positions do
+        %{^n => {first_row, offset, cuts}} ->
+          {row, _col} = place(first_row, offset, cuts, 1_000_000)
+          [row]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  # A link that now wraps becomes a span on each row it's on.
+  defp moved_links(links, positions, cols) do
+    Enum.flat_map(links, fn {n, c1, c2, uri} ->
+      case positions do
+        %{^n => {first_row, offset, cuts}} ->
+          {r1, n1} = place(first_row, offset + c1, cuts, cols)
+          {r2, n2} = place(first_row, offset + c2, cuts, cols)
+
+          for row <- r2..r1//-1 do
+            {row, if(row == r1, do: n1, else: 0), if(row == r2, do: n2, else: cols - 1), uri}
+          end
+
+        _ ->
+          []
+      end
+    end)
   end
 
   ## Helpers

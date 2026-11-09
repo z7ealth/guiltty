@@ -135,6 +135,8 @@ the renderer, some reach the shell's process:
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |
 | =copy_on_select=, =wheel_lines= | Window         | live                          |
+| =clipboard_write=              | Window          | live: whether OSC 52 reaches the clipboard (chapter 28) |
+| =screen_reports=               | Screen          | tabs opened after a change: answer DECRQCRA (chapter 28) |
 | =keys=                         | Window          | live; a punctuation key is named by what it types without Shift on your layout (see below) |
 
 The renderer can't read the config itself: it's a separate program with

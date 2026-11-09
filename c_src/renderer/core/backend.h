@@ -25,6 +25,11 @@ enum cell_attr : uint16_t {
     ATTR_SPACER = 0x200, // the right half
     ATTR_MATCH = 0x400, // a search match (Guiltty.View)
     ATTR_CURRENT_MATCH = 0x800, // the match the search is on
+    ATTR_OVERLINE = 0x1000,
+    // On the wire only, with bits the core uses for itself below: part of a
+    // hyperlink. The grid's other two high bits (protected, wrapped) are its
+    // own bookkeeping and mean nothing here.
+    WIRE_LINK = 0x8000,
     // Not on the wire, set by the core. The glyph has its own colors
     // (emoji): draw it as is instead of in the fg color.
     CELL_COLOR_GLYPH = 0x8000,

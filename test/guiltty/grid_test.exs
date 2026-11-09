@@ -111,16 +111,18 @@ defmodule Guiltty.GridTest do
   end
 
   describe "resize" do
-    test "truncates and pads without reflow" do
-      grid = run("0123456789\r\nab") |> Grid.resize(4, 4)
-      assert Grid.dump(grid) == "0123\nab\n\n"
-      assert Grid.dump(Grid.resize(grid, 6, 2)) == "0123\nab"
+    test "a height change alone leaves the rows as they are" do
+      grid = run("0123456789\r\nab") |> Grid.resize(10, 5)
+      assert Grid.dump(grid) == "0123456789\nab\n\n\n"
     end
 
     test "keeps the cursor's line when rows shrink" do
       grid = run("1\r\n2\r\n3") |> Grid.resize(10, 2)
       assert Grid.dump(grid) == "2\n3"
       assert Grid.cursor(grid) == {1, 1}
+      # What left over the top isn't lost.
+      assert Grid.scrollback_size(grid) == 1
+      assert Grid.line_text(grid, Grid.line(grid, 0)) |> String.trim_trailing() == "1"
     end
   end
 

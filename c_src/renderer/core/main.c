@@ -89,6 +89,8 @@ struct cluster {
 };
 
 struct renderer {
+    // The key that just pasted: its release stays here.
+    SDL_Keycode paste_key;
     SDL_Window *window;
     void *backend;
     struct fonts fonts;
@@ -199,11 +201,21 @@ static void send_text(const char *text) {
     (void)proto_write(STDOUT_FILENO, msg, (uint32_t)(1 + n));
 }
 
-static void send_key(SDL_Keycode key, SDL_Keymod mod) {
+static void send_key(const SDL_KeyboardEvent *ev, enum key_kind kind) {
+    // What the key types with Shift (or without), in this layout: programs
+    // need it for Alt+Shift+1, which reaches them as ESC !. SDL_GetKeyFromScancode(3).
+    SDL_Keycode shifted = SDL_GetKeyFromScancode(ev->scancode, ev->mod & SDL_KMOD_SHIFT, false);
     uint8_t msg[key_message_size];
     msg[0] = MSG_KEY;
-    put_u32(msg + 1, key);
-    put_u16(msg + 5, mod);
+    put_u32(msg + 1, ev->key);
+    put_u16(msg + 5, ev->mod);
+    put_u32(msg + 7, shifted);
+    msg[11] = kind;
+    (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
+}
+
+static void send_focus(bool focused) {
+    uint8_t msg[2] = {MSG_FOCUS, focused};
     (void)proto_write(STDOUT_FILENO, msg, sizeof msg);
 }
 
@@ -471,7 +483,10 @@ static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
     (void)(rd_u32(&rd, &glyph) && rd_u16(&rd, &attrs) && rd_u32(&rd, &fg) && rd_u32(&rd, &bg));
 
     struct cell *out = &r->cells[idx];
-    *out = (struct cell){.attrs = attrs};
+    // The wire's top bits aren't the core's: keep only what's drawn. A link
+    // shows as an underline.
+    constexpr uint16_t drawn = 0x1FFF;
+    *out = (struct cell){.attrs = (uint16_t)((attrs & drawn) | ((attrs & WIRE_LINK) ? ATTR_UNDERLINE : 0))};
     r->glyphs[idx] = glyph;
     resolve(t, fg, t->fg, (attrs & ATTR_BOLD) && r->bold_is_bright, out->fg);
     resolve(t, bg, t->bg, false, out->bg);
@@ -494,7 +509,7 @@ static void decode_cell(struct renderer *r, const uint8_t *wire, size_t idx) {
         memcpy(out->fg, t->fg, 3);
     }
     if (attrs & ATTR_HIDDEN)
-        out->attrs &= (uint16_t)~(ATTR_UNDERLINE | ATTR_STRIKE);
+        out->attrs &= (uint16_t)~(ATTR_UNDERLINE | ATTR_STRIKE | ATTR_OVERLINE);
     constexpr uint16_t recolored = ATTR_INVERSE | ATTR_MATCH | ATTR_CURRENT_MATCH;
     if ((bg >> 24) == COLOR_DEFAULT && !(attrs & recolored))
         out->attrs |= CELL_DEFAULT_BG;
@@ -1254,6 +1269,7 @@ static void read_placements(struct renderer *r, struct reader *rd) {
     case MSG_MOUSE:
     case MSG_FRAME:
     case MSG_TAB_CLICK:
+    case MSG_FOCUS:
         break;
     }
     fprintf(stderr, "renderer: unexpected message tag %u\n", tag);
@@ -1624,7 +1640,9 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
         // A finished composition (é after a dead key) arrives here.
         r->preedit[0] = '\0';
         restart_blink(r);
-        if (!r->demo)
+        // Left Alt makes a key a command, which the key event carries; SDL may
+        // or may not type its letter too. Right Alt is AltGr, and does type.
+        if (!r->demo && !(SDL_GetModState() & SDL_KMOD_LALT))
             send_text(ev->text.text);
         break;
     case SDL_EVENT_TEXT_EDITING:
@@ -1643,9 +1661,18 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
             if (text != nullptr)
                 send_paste(text);
             SDL_free(text);
+            r->paste_key = ev->key.key;
         } else {
-            send_key(ev->key.key, ev->key.mod);
+            send_key(&ev->key, ev->key.repeat ? KEY_REPEAT : KEY_PRESS);
         }
+        break;
+    case SDL_EVENT_KEY_UP:
+        // A program that asked for key releases shouldn't see one for a key
+        // it never saw pressed.
+        if (r->paste_key == ev->key.key)
+            r->paste_key = 0;
+        else if (!r->demo)
+            send_key(&ev->key, KEY_RELEASE);
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -1673,6 +1700,8 @@ static bool is_paste(SDL_Keycode key, SDL_Keymod mod) {
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         r->focused = ev->type == SDL_EVENT_WINDOW_FOCUS_GAINED;
         restart_blink(r);
+        if (!r->demo)
+            send_focus(r->focused);
         break;
     default:
         break;

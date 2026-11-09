@@ -29,6 +29,24 @@ defmodule Guiltty.EscapeSafetyTest do
           end)
         end)
       end),
+      # With intermediates: reports, rectangles, margins, the pen's stack.
+      StreamData.bind(params, fn ps ->
+        StreamData.bind(StreamData.member_of(["", "?"]), fn mark ->
+          StreamData.bind(StreamData.member_of(["$", "'", "\"", "*", "#", " "]), fn middle ->
+            StreamData.map(StreamData.integer(0x40..0x7E), fn final ->
+              "\e[" <> mark <> Enum.join(ps, ";") <> middle <> <<final>>
+            end)
+          end)
+        end)
+      end),
+      # Questions about colors and settings, with any data around them.
+      StreamData.map(StreamData.binary(max_length: 20), &("\eP$q" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 20), &("\eP+q" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 20), &("\e]4;1;" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 20), &("\e]10;" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 20), &("\e]52;c;" <> &1 <> "\e\\")),
+      StreamData.map(StreamData.binary(max_length: 20), &("\e]8;;" <> &1 <> "\e\\")),
+      StreamData.constant("\e]4;1;?\e\\\e]10;?\e\\\e]11;?\e\\\e]12;?\e\\"),
       StreamData.map(StreamData.binary(max_length: 40), &("\e]" <> &1 <> "\a")),
       StreamData.map(StreamData.binary(max_length: 40), &("\eP" <> &1 <> "\e\\")),
       StreamData.map(StreamData.binary(max_length: 40), &("\e_G" <> &1 <> "\e\\")),
@@ -59,7 +77,37 @@ defmodule Guiltty.EscapeSafetyTest do
     StreamData.map(StreamData.list_of(pair, max_length: 6), &Enum.join(&1, ","))
   end
 
-  @fixed_answers ["\e[?62;22c", "\e[>1;10;0c", "\e[0n", "\e[8;5;20t"]
+  @fixed_answers [
+    "\e[?65;6;21;22;28c",
+    "\e[>64;10;0c",
+    "\eP!|00000000\e\\",
+    "\e[0n",
+    "\e[2;1;1;128;128;1;0x",
+    "\e[3;1;1;128;128;1;0x",
+    "\e[8;5;20t",
+    "\e[?13n",
+    "\e[?21n",
+    "\e[?27;1;0;0n",
+    "\e[?50n",
+    "\e[?57;0n",
+    "\e[0*{",
+    "\e[?70n",
+    "\e[?83n",
+    "\eP0$r\e\\"
+  ]
+
+  # Answers with numbers in them, which is all a program can get back: where
+  # the cursor is, whether a mode is on, what a color or setting is.
+  @number_answers [
+    ~r/\A\e\[\?\d{1,4};\d{1,4};1R\z/,
+    ~r/\A\e\[\??\d{1,5};[0-4]\$y\z/,
+    ~r/\A\e\[\?\d{1,2}u\z/,
+    ~r/\A\e\](?:4;\d{1,3}|1[012]);rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}\e\\\z/,
+    ~r/\A\eP1\$r[0-9;" $*|a-zA-Z~}]{1,60}\e\\\z/,
+    ~r/\A\eP\d{1,5}!~[0-9A-F]{4}\e\\\z/,
+    # XTGETTCAP: hex digits only, the name and the value.
+    ~r/\A\eP[01]\+r[0-9a-fA-F]*(?:=[0-9A-F]*)?\e\\\z/
+  ]
 
   property "answers are only ever the fixed ones, never the program's data" do
     check all(seqs <- StreamData.list_of(sequence(), max_length: 30), max_runs: 1000) do
@@ -69,6 +117,7 @@ defmodule Guiltty.EscapeSafetyTest do
         assert answer in @fixed_answers or
                  answer =~ ~r/\A\e\[\d{1,4};\d{1,4}R\z/ or
                  answer =~ ~r/\A\eP>\|guiltty \d+\.\d+\.\d+\e\\\z/ or
+                 Enum.any?(@number_answers, &(answer =~ &1)) or
                  kitty_answer?(answer),
                "unexpected answer #{inspect(answer)}"
       end

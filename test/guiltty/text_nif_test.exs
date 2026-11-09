@@ -98,7 +98,15 @@ defmodule Guiltty.TextNifTest do
   # The three helpers, each against the Elixir it replaced.
   property "text_run, ascii? and ascii_cells agree with their Elixir versions" do
     check all(bytes <- StreamData.binary(max_length: 64)) do
-      run = Enum.find_index(:binary.bin_to_list(bytes), &(&1 < 0x20 or &1 == 0x7F))
+      list = :binary.bin_to_list(bytes)
+
+      run =
+        list
+        |> Enum.zip(tl(list ++ [0]))
+        |> Enum.find_index(fn {b, next} ->
+          b < 0x20 or b == 0x7F or (b == 0xC2 and next in 0x80..0x9F)
+        end)
+
       assert TextNif.text_run(bytes) == (run || byte_size(bytes))
 
       assert TextNif.ascii?(bytes) == Enum.all?(:binary.bin_to_list(bytes), &(&1 < 0x80))

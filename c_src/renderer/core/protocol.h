@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 12;
+constexpr uint16_t protocol_version = 13;
 
 // Largest message we accept; anything bigger is a protocol error. An IMAGE
 // can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
@@ -35,7 +35,9 @@ enum msg_tag : uint8_t {
     MSG_ROWS = 3,
     // renderer -> Elixir: UTF-8 text typed by the user
     MSG_TEXT = 4,
-    // renderer -> Elixir: u32 SDL keycode, u16 SDL modifiers
+    // renderer -> Elixir: u32 SDL keycode, u16 SDL modifiers, u32 the keycode
+    // with Shift applied in this layout ('A' for 'a', '!' for '1'), u8 kind
+    // (enum key_kind)
     MSG_KEY = 5,
     // renderer -> Elixir: u16 cols, u16 rows that now fit the window, then
     // u16 cell width, u16 cell height in pixels (for programs that draw
@@ -96,7 +98,10 @@ enum msg_tag : uint8_t {
     // image), u16 cells wide and high (0: from the image's own size), i32
     // z (below 0: under the text). Drawn in order.
     MSG_PLACEMENTS = 25,
+    // renderer -> Elixir: the window gained (1) or lost (0) the keyboard: u8
+    MSG_FOCUS = 26,
 };
+enum key_kind : uint8_t { KEY_PRESS = 1, KEY_REPEAT = 2, KEY_RELEASE = 3 };
 enum image_format : uint8_t { IMAGE_RGB = 0, IMAGE_RGBA = 1, IMAGE_PNG = 2 };
 // An image's side, in pixels, at most: every GPU holds a 4096 texture.
 constexpr uint32_t max_image_side = 4096;
@@ -155,13 +160,13 @@ constexpr size_t setup_fixed_size =
     1 + 2 * sizeof(uint16_t) + theme_size + options_size + sizeof(uint16_t);
 // Up to the cluster count; the row count follows the clusters.
 constexpr size_t rows_header_size = 1 + 4 * sizeof(uint16_t) + 2 + sizeof(uint16_t);
-constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t);
+constexpr size_t key_message_size = 1 + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint32_t) + 1;
 constexpr size_t resize_message_size = 1 + 4 * sizeof(uint16_t);
 constexpr size_t mouse_message_size = 1 + 2 + 3 * sizeof(uint16_t) + 1;
 static_assert(mouse_message_size == 10);
 static_assert(setup_fixed_size == 788);
 static_assert(rows_header_size == 13);
-static_assert(key_message_size == 7);
+static_assert(key_message_size == 12);
 static_assert(resize_message_size == 9);
 
 enum read_result { READ_OK, READ_EOF, READ_ERROR };

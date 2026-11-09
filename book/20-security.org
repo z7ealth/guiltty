@@ -390,6 +390,33 @@ they can't do anything you couldn't. Since v0.15.0 launching doesn't use
 distribution at all (chapter 23), so turning it off entirely would only
 cost =guiltty stop= and =remote=: DEVLOG "Later".
 
+* What a program may ask of the terminal
+
+The output of a program isn't data, it's instructions, and the program may not be
+who you think: a server at the far end of ssh, or a file you =cat=. Answers are
+the sharp edge, because a terminal's answer arrives at the program as if you typed
+it. A terminal that repeats a program's words back can be made to type a command
+at your shell.
+
+So guiltty answers with numbers and fixed strings. The property in
+[[file:../test/guiltty/escape_safety_test.exs][escape_safety_test.exs]] throws random sequences at it and checks every answer
+against a short list of shapes. It found its way into this release's design:
+=XTGETTCAP= answers with the name it was asked about, so a name that isn't hex
+digits gets no answer at all.
+
+| A program can't                        | Because                                  |
+|----------------------------------------+------------------------------------------|
+| read the clipboard (=OSC 52;c;?=)      | it would get whatever you copied last    |
+| read the title (=CSI 21 t=)            | it chose the title: a command and a newline |
+| read the screen (=DECRQCRA=)           | a checksum per cell reads any screen, slowly |
+| resize, move or iconify the window     | it isn't its window                      |
+| set the clipboard from the background  | only the pane with the keyboard can      |
+| open a link by itself                  | Ctrl+click; http, https, mailto and file only |
+
+=screen_reports: true= turns the two "read" answers on, for test suites (chapter 10).
+A link shows where it goes in the status as it opens, because text can claim to be
+one address and link to another.
+
 * Loot
 
 - =gcc(1)=: "Program Instrumentation Options" (=-fstack-protector=,

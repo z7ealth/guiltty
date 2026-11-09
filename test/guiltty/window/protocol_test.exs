@@ -48,7 +48,15 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Protocol.decode(<<15, 1234::32>>) == {:ok, {:frame, 1234}}
     assert Protocol.decode(<<16, 2>>) == {:ok, {:tab_click, 2}}
     assert Protocol.decode(<<4, "hé">>) == {:ok, {:text, "hé"}}
-    assert Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0x40>>) == {:ok, {:key, ?c, 0x40}}
+
+    assert Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0x40, 0, 0, 0, ?C, 1>>) ==
+             {:ok, {:key, ?c, 0x40, %{kind: :press, shifted: ?C}}}
+
+    assert {:ok, {:key, ?c, 0, %{kind: :release}}} =
+             Protocol.decode(<<5, 0, 0, 0, ?c, 0, 0, 0, 0, 0, ?c, 3>>)
+
+    assert Protocol.decode(<<26, 1>>) == {:ok, {:focus, true}}
+    assert Protocol.decode(<<26, 0>>) == {:ok, {:focus, false}}
 
     assert Protocol.decode(<<6, 100::16, 30::16, 9::16, 18::16>>) ==
              {:ok, {:resize, 100, 30, {9, 18}}}

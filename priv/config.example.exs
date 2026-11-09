@@ -166,10 +166,22 @@
     focus_right: ["ctrl+shift+right"],
     focus_up: ["ctrl+shift+up"],
     focus_down: ["ctrl+shift+down"],
+    # Jumps to the prompt before or after the view (a shell must mark them:
+    # OSC 133).
+    prev_prompt: ["ctrl+shift+z"],
+    next_prompt: ["ctrl+shift+x"],
     # Moves the separator nearest the focused pane, that way.
     resize_left: ["alt+shift+left"],
     resize_right: ["alt+shift+right"],
     resize_up: ["alt+shift+up"],
     resize_down: ["alt+shift+down"]
-  ]
+  ],
+
+  # Programs can put text on the clipboard (OSC 52), from the focused pane.
+  # They can never read it.
+  # clipboard_write: true,
+
+  # Answer DECRQCRA and the title reports, for terminal test suites. Leave it
+  # off: these let a program read your screen, even from the far end of ssh.
+  # screen_reports: false
 ]

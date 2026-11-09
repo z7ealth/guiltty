@@ -31,6 +31,45 @@ defmodule Guiltty.SessionTest do
     :exit, _ -> false
   end
 
+  describe "a tab that runs out of memory" do
+    test "every session process is under the limit", %{id: id} do
+      for role <- [:pty, :screen, :parser] do
+        pid = GenServer.whereis(Session.via(id, role))
+        {:max_heap_size, %{size: size, kill: true}} = Process.info(pid, :max_heap_size)
+        assert size > 0
+      end
+    end
+
+    test "dies alone: the other tab doesn't notice", %{id: id} do
+      other = :memory_hog
+      # Room to start, then a screen full of scrollback goes past it.
+      opts = [
+        id: other,
+        shell: System.find_executable("bash"),
+        args: ["--norc", "--noprofile"],
+        env: %{"PS1" => "$ "},
+        scrollback: 1_000_000,
+        max_heap_words: 200_000
+      ]
+
+      sup =
+        start_supervised!(%{
+          id: :hog,
+          start: {Session.Supervisor, :start_link, [opts]},
+          restart: :temporary
+        })
+
+      first = GenServer.whereis(Session.via(other, :screen))
+      ref = Process.monitor(first)
+      Session.write(other, "seq 1 2000000\r")
+      assert_receive {:DOWN, ^ref, :process, ^first, :killed}, 30_000
+
+      Session.write(id, "echo $((6 * 7))\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^42$/m end)
+      _ = sup
+    end
+  end
+
   test "a command's output reaches the screen", %{id: id} do
     assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
     Session.write(id, "echo $((6 * 7))\r")
