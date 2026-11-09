@@ -1468,6 +1468,11 @@ crashed the Window. The suite passed anyway, because the crash came after the ch
 It now stops the renderer from inside the Window. Elixir 1.18.4 on OTP 26 passed, apart
 from one race in a test: vim's redraw after a resize can wipe the answer it's waiting for.
 
+**tmux.** Its feature list said `margins,rectfill`: reporting a VT520 means tmux now
+draws with code only test suites had run. It holds up: panes side by side, floods,
+clears, resizes, the mouse, the clipboard, focus, copy mode, detach, vim in a pane.
+htop and mc too.
+
 ### Later
 
 - Kitty keyboard flags 4 (alternate keys) and 16 (text as codepoints).

@@ -67,9 +67,11 @@ defmodule Guiltty.ProgramsTest do
   end
 
   setup context do
-    case context[:needs] do
-      nil -> :ok
-      program -> if System.find_executable(program), do: :ok, else: {:skip, "no #{program}"}
+    needed = Enum.reject([context[:needs], context[:needs_too]], &is_nil/1)
+
+    case Enum.reject(needed, &System.find_executable/1) do
+      [] -> :ok
+      [program | _] -> {:skip, "no #{program}"}
     end
   end
 
@@ -184,6 +186,293 @@ defmodule Guiltty.ProgramsTest do
     shows(id, ~r/^#{long}$/m)
     :ok = Session.resize(id, 40, 24)
     shows(id, ~r/^#{String.slice(long, 0, 40)}$/m)
+    back_at_prompt(id)
+  end
+
+  describe "tmux" do
+    # tmux sees a VT520 and uses DECSLRM and DECFRA: a pane scrolling beside
+    # another is drawn with left and right margins.
+    defp tmux(id) do
+      socket = "guiltty-test-#{System.unique_integer([:positive])}"
+      on_exit(fn -> System.cmd("tmux", ["-L", socket, "kill-server"], stderr_to_stdout: true) end)
+      run(id, "PS1='$ ' tmux -L #{socket} -f /dev/null new-session bash --norc --noprofile")
+      assert eventually(fn -> Session.dump(id) =~ "[0]" end), Session.dump(id)
+      assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end), Session.dump(id)
+      # New panes too: not your shell and its config, which takes time to start.
+      System.cmd("tmux", [
+        "-L",
+        socket,
+        "set",
+        "-g",
+        "default-command",
+        "PS1='$ ' bash --norc --noprofile"
+      ])
+
+      socket
+    end
+
+    # Column by column, what the left and right sides of the screen show.
+    defp side(id, range) do
+      Session.dump(id)
+      |> String.split("\n")
+      |> Enum.map(
+        &(&1
+          |> String.pad_trailing(80)
+          |> String.slice(range)
+          |> String.trim_trailing())
+      )
+    end
+
+    @tag needs: "tmux"
+    test "it uses margins and rectangles here", %{id: id} do
+      socket = tmux(id)
+
+      {features, 0} =
+        System.cmd("tmux", ["-L", socket, "display", "-p", "\#{client_termfeatures}"])
+
+      assert features =~ "margins"
+      assert features =~ "rectfill"
+    end
+
+    @tag needs: "tmux"
+    test "a pane scrolling beside another leaves it alone", %{id: id} do
+      tmux(id)
+      Session.write(id, "echo LEFT-A; echo LEFT-B\r")
+      shows(id, ~r/^LEFT-B/m)
+      # Ctrl+B %: a pane to the right, and the focus goes there.
+      Session.write(id, <<2, ?%>>)
+      assert eventually(fn -> Session.dump(id) =~ "│" end), Session.dump(id)
+      Session.write(id, "seq 1 500; echo RIGHT-DONE\r")
+      assert eventually(fn -> Session.dump(id) =~ "RIGHT-DONE" end), Session.dump(id)
+      assert eventually(fn -> Session.dump(id) =~ ~r/│500\s*$/m end), Session.dump(id)
+
+      left = side(id, 0..38)
+      assert Enum.member?(left, "LEFT-A"), Session.dump(id)
+      assert Enum.member?(left, "LEFT-B"), Session.dump(id)
+      refute Enum.any?(left, &(&1 =~ ~r/^\d+$/)), Session.dump(id)
+
+      # The border stays whole down the screen, and the numbers are in order.
+      rows = Session.dump(id) |> String.split("\n") |> Enum.take(23)
+
+      assert Enum.all?(rows, &(String.at(String.pad_trailing(&1, 80), 40) == "│")),
+             Session.dump(id)
+
+      numbers =
+        side(id, 41..79)
+        |> Enum.flat_map(fn line ->
+          case Integer.parse(line) do
+            {n, ""} -> [n]
+            _ -> []
+          end
+        end)
+
+      assert numbers == Enum.sort(numbers) and numbers != [], Session.dump(id)
+
+      assert Enum.chunk_every(numbers, 2, 1, :discard) |> Enum.all?(fn [a, b] -> b == a + 1 end),
+             Session.dump(id)
+    end
+
+    @tag needs: "tmux"
+    test "a clear in one pane leaves the other", %{id: id} do
+      tmux(id)
+      Session.write(id, "echo STAYS\r")
+      shows(id, ~r/^STAYS/m)
+      Session.write(id, <<2, ?%>>)
+      assert eventually(fn -> Session.dump(id) =~ "│" end)
+      Session.write(id, "seq 1 15; clear; echo CLEARED\r")
+      assert eventually(fn -> side(id, 41..79) |> Enum.member?("CLEARED") end), Session.dump(id)
+      refute side(id, 41..79) |> Enum.any?(&(&1 =~ ~r/^\d+$/)), Session.dump(id)
+      assert Enum.member?(side(id, 0..38), "STAYS"), Session.dump(id)
+    end
+
+    @tag needs: "tmux"
+    test "panes survive the window changing size", %{id: id} do
+      tmux(id)
+      Session.write(id, "echo STAYS\r")
+      shows(id, ~r/^STAYS/m)
+      Session.write(id, <<2, ?%>>)
+      assert eventually(fn -> Session.dump(id) =~ "│" end)
+      :ok = Session.resize(id, 120, 30)
+      assert eventually(fn -> Session.dump(id) |> String.split("\n") |> length() == 30 end)
+      Session.write(id, "seq 1 200; echo DONE-1\r")
+      assert eventually(fn -> Session.dump(id) =~ "DONE-1" end), Session.dump(id)
+      assert eventually(fn -> Session.dump(id) =~ "STAYS" end), Session.dump(id)
+      :ok = Session.resize(id, 70, 24)
+
+      assert eventually(fn -> Session.dump(id) =~ "STAYS" and Session.dump(id) =~ "[0]" end),
+             Session.dump(id)
+    end
+  end
+
+  describe "tmux, as you'd use it" do
+    defp grid(id), do: :sys.get_state(Session.via(id, :screen)).grid
+
+    defp tmux_cmd(socket, args) do
+      {out, 0} = System.cmd("tmux", ["-L", socket | args], stderr_to_stdout: true)
+      out
+    end
+
+    defp split_right(id) do
+      Session.write(id, <<2, ?%>>)
+      assert eventually(fn -> Session.dump(id) =~ "│" end), Session.dump(id)
+    end
+
+    # What guiltty sends for the mouse in SGR mode (see Guiltty.Keymap.mouse/3).
+    defp press(id, col, row, button \\ 0),
+      do: Session.write(id, "\e[<#{button};#{col + 1};#{row + 1}M")
+
+    defp drag(id, col, row), do: Session.write(id, "\e[<32;#{col + 1};#{row + 1}M")
+    defp release(id, col, row), do: Session.write(id, "\e[<0;#{col + 1};#{row + 1}m")
+
+    @tag needs: "tmux"
+    test "true color reaches the cell", %{id: id} do
+      tmux(id)
+      Session.write(id, "clear; printf '\\033[38;2;255;100;0mORANGE\\033[0m\\n'\r")
+      shows(id, ~r/^ORANGE/m)
+      g = grid(id)
+
+      row =
+        Session.dump(id)
+        |> String.split("\n")
+        |> Enum.find_index(&String.starts_with?(&1, "ORANGE"))
+
+      {?O, _attrs, fg, _bg} = Guiltty.Grid.cell(g, row, 0)
+      assert fg == Guiltty.Grid.rgb(255, 100, 0)
+    end
+
+    @tag needs: "tmux"
+    test "focus events reach the program in the pane", %{id: id} do
+      socket = tmux(id)
+      tmux_cmd(socket, ["set", "-g", "focus-events", "on"])
+      # tmux only asks the terminal for focus events as a client attaches.
+      Session.write(id, <<2, ?d>>)
+      shows(id, "[detached")
+      Session.write(id, "tmux -L #{socket} attach\r")
+      assert eventually(fn -> grid(id).input.focus_events end), Session.dump(id)
+      Session.write(id, "printf '\\033[?1004h'; cat -v\r")
+      Process.sleep(300)
+      # What the window sends when it loses and gains the keyboard.
+      Session.write(id, "\e[O")
+      Session.write(id, "\e[I")
+
+      assert eventually(fn -> Session.dump(id) =~ "^[[O" and Session.dump(id) =~ "^[[I" end),
+             Session.dump(id)
+    end
+
+    @tag needs: "tmux"
+    test "copying in tmux reaches the clipboard, as OSC 52", %{id: id} do
+      socket = tmux(id)
+      tmux_cmd(socket, ["set", "-g", "set-clipboard", "on"])
+      :ok = Session.Screen.subscribe(id, self())
+      tmux_cmd(socket, ["set-buffer", "-w", "from tmux"])
+      assert_receive {:clipboard, ^id, {:clipboard, "from tmux"}}, 5_000
+    end
+
+    @tag needs: "tmux"
+    test "scrollback, in copy mode", %{id: id} do
+      tmux(id)
+      Session.write(id, "seq 1 2000; echo THE-END\r")
+      shows(id, ~r/^THE-END/m)
+      Session.write(id, <<2, ?[>>)
+      Session.write(id, "\e[5~")
+      assert eventually(fn -> Session.dump(id) =~ ~r/\[\d+\/\d+\]/ end), Session.dump(id)
+      refute Session.dump(id) =~ "THE-END"
+      assert Session.dump(id) =~ ~r/^19\d\d/m
+      Session.write(id, "q")
+      shows(id, ~r/^THE-END/m)
+    end
+
+    @tag needs: "tmux"
+    test "detach and attach bring the screen back", %{id: id} do
+      socket = tmux(id)
+      Session.write(id, "echo STILL-HERE\r")
+      shows(id, ~r/^STILL-HERE/m)
+      Session.write(id, <<2, ?d>>)
+      shows(id, "[detached")
+      Session.write(id, "tmux -L #{socket} attach\r")
+      shows(id, "[0]")
+      shows(id, ~r/^STILL-HERE/m)
+    end
+
+    @tag needs: "vim"
+    @tag needs_too: "tmux"
+    test "vim in a pane: resized, then quit", %{id: id} do
+      tmux(id)
+      Session.write(id, "echo BEFORE-VIM\r")
+      shows(id, ~r/^BEFORE-VIM/m)
+      split_right(id)
+      path = Path.join(plain_dir(), "pane.txt")
+      Session.write(id, "vim -u NONE -N #{path}\r")
+      # vim's own screen: the name alone could be the command being typed.
+      assert eventually(fn -> Session.dump(id) =~ "│~" end), Session.dump(id)
+      Session.write(id, "ifrom a pane\e")
+      shows(id, "from a pane")
+      :ok = Session.resize(id, 110, 30)
+
+      assert eventually(fn ->
+               Session.dump(id) =~ "from a pane" and Session.dump(id) =~ "BEFORE-VIM"
+             end),
+             Session.dump(id)
+
+      Session.write(id, ":wq\r")
+      assert eventually(fn -> File.exists?(path) end)
+      assert File.read!(path) == "from a pane\n"
+
+      assert eventually(fn ->
+               Session.dump(id) =~ "BEFORE-VIM" and not (Session.dump(id) =~ "from a pane")
+             end),
+             Session.dump(id)
+    end
+
+    @tag needs: "tmux"
+    test "the mouse: asks for it, clicks a pane, drags a border, scrolls", %{id: id} do
+      socket = tmux(id)
+      tmux_cmd(socket, ["set", "-g", "mouse", "on"])
+      assert eventually(fn -> grid(id).input.mouse != nil and grid(id).input.mouse_sgr end)
+      split_right(id)
+      index = fn -> tmux_cmd(socket, ["display", "-p", "\#{pane_index}"]) |> String.trim() end
+      assert index.() == "1"
+
+      # A click in the left pane focuses it.
+      press(id, 5, 5)
+      release(id, 5, 5)
+      assert eventually(fn -> index.() == "0" end)
+
+      # A drag on the border moves it.
+      width = fn -> tmux_cmd(socket, ["display", "-p", "\#{pane_width}"]) |> String.trim() end
+      assert width.() == "40"
+      press(id, 40, 5)
+      drag(id, 30, 5)
+      release(id, 30, 5)
+      assert eventually(fn -> width.() != "40" end), Session.dump(id)
+      assert String.to_integer(width.()) < 40
+
+      # The wheel over a pane scrolls it back, in copy mode.
+      Session.write(id, "seq 1 500\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^500/m end), Session.dump(id)
+      press(id, 5, 5, 64)
+      assert eventually(fn -> Session.dump(id) =~ ~r/\[\d+\/\d+\]/ end), Session.dump(id)
+    end
+  end
+
+  @tag needs: "htop"
+  test "htop: draws its meters and quits", %{id: id} do
+    run(id, "htop")
+    shows(id, "Load average")
+    shows(id, "PID")
+    Session.write(id, "q")
+    back_at_prompt(id)
+  end
+
+  @tag needs: "mc"
+  test "mc: draws its panels, line drawing and all, and quits", %{id: id} do
+    run(id, "HOME=#{plain_dir()} mc --nosubshell")
+    shows(id, "Name")
+    shows(id, ~r/[┌│]/)
+    # F10, and yes.
+    Session.write(id, "\e[21~")
+    Process.sleep(500)
+    Session.write(id, "y\r")
     back_at_prompt(id)
   end
 

@@ -270,9 +270,10 @@ characters, VT52 mode, printing, and sending 8-bit controls, which UTF-8 rules o
 Not run: the keyboard test and =DECUDK=, which need a person pressing keys, the mouse,
 and the deep VT420 menus, which esctest covers more closely than eyes could.
 
-=vim=, =less=, =man=, =top=, =nano=, =screen=, =tabs= and =tput= run for real in
-[[file:../test/guiltty/programs_test.exs][programs_test.exs]], including a resize while =vim= runs. =tmux=, =htop= and =mc=
-weren't installed when it was written.
+=vim=, =less=, =man=, =top=, =nano=, =screen=, =htop=, =mc=, =tmux=, =tabs= and =tput=
+run for real in [[file:../test/guiltty/programs_test.exs][programs_test.exs]], including a resize while =vim= runs. =tmux= matters most:
+it sees a VT520, and so draws panes side by side with left and right margins and
+rectangle fills. That's those features in daily use, not just in a test suite.
 
 * Older Elixir and Erlang
 
