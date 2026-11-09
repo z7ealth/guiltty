@@ -322,7 +322,8 @@ defmodule Guiltty.Keymap do
                  # The key that types + without Shift (Latin American, Spanish,
                  # German...). "+" can't be written in a key name: it joins
                  # the parts.
-                 "plus" => ?+
+                 "plus" => ?+,
+                 "space" => ?\s
                },
                Map.new(1..12, fn n -> {"f#{n}", @f1 + n - 1} end)
              )

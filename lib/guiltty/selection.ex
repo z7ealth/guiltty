@@ -33,6 +33,25 @@ defmodule Guiltty.Selection do
 
   def extend(sel, pos), do: %{sel | head: pos}
 
+  @doc """
+  Everything, as Select All in an editor: from the oldest row of scrollback
+  to the last row with text on the screen (or the cursor's, if that's
+  lower), so the empty rows below the prompt don't come along. On the
+  alternate screen (vim, htop) there's no scrollback: the screen alone.
+  """
+  def all(grid) do
+    first = if grid.alt?, do: grid.history, else: grid.scrollback_first
+    bottom = grid.history + grid.rows - 1
+    cursor = grid.history + grid.row
+
+    last =
+      Enum.find(bottom..cursor//-1, cursor, fn n ->
+        grid |> Grid.line_text(Grid.line(grid, n)) |> String.trim() != ""
+      end)
+
+    %__MODULE__{anchor: {first, 0}, head: {last, grid.cols - 1}, mode: :char}
+  end
+
   @doc "The selected cells as `{{row, col}, {row, col}}`, first to last, inclusive."
   def range(grid, sel) do
     {from, to} = Enum.min_max([sel.anchor, sel.head])

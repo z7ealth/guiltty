@@ -142,6 +142,8 @@
     clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
     copy: ["ctrl+shift+c"],
+    # Selects everything: the scrollback and the screen, as in an editor.
+    select_all: ["ctrl+shift+a"],
     # Ctrl and the + key: "plus" names the key that types + without Shift
     # (Latin American, Spanish, German layouts).
     zoom_in: ["ctrl+=", "ctrl+shift+=", "ctrl+plus"],
@@ -158,7 +160,7 @@
     # Puts the tab in the broadcast group, or takes it out: all its panes.
     broadcast: ["ctrl+shift+b"],
     # Opens the AI tool set below, and goes back.
-    ai: ["ctrl+shift+a"],
+    ai: ["ctrl+shift+space"],
     # Split panes: a new pane right of the focused one, or below it, with
     # half its room.
     split_right: ["ctrl+shift+o"],

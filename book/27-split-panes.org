@@ -205,7 +205,7 @@ and nothing joins; a second press adds it as a local pane.
 
 * The AI key
 
-A pane runs any program, so an AI tool is just one more. Press Ctrl+Shift+A (=ai= in
+A pane runs any program, so an AI tool is just one more. Press Ctrl+Shift+Space (=ai= in
 =keys:=, like any other key), and the command in the =ai= setting opens beside you, in
 the directory you were in. Press it again and you go back to where you were; again, and you return to
 it. That's all guiltty knows about AI: it starts a program and talks to no one, so

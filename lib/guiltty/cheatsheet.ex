@@ -60,6 +60,7 @@ defmodule Guiltty.Cheatsheet do
       {"Copy & paste",
        [
          {"Copy", k.(:copy)},
+         {"Select all", k.(:select_all)},
          {"Paste", "Ctrl+Shift+V / Shift+Ins"},
          {"Select", "drag"},
          {"Select word / line", "double / triple click"},
@@ -259,7 +260,8 @@ defmodule Guiltty.Cheatsheet do
     "down" => "Down",
     "left" => "Left",
     "right" => "Right",
-    "plus" => "+"
+    "plus" => "+",
+    "space" => "Space"
   }
 
   @doc false

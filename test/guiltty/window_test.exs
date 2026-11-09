@@ -91,7 +91,7 @@ defmodule Guiltty.WindowTest do
       end)
     end
 
-    defp ai_key(window), do: key(window, ?a, @ctrl ||| @shift)
+    defp ai_key(window), do: key(window, ?\s, @ctrl ||| @shift)
 
     defp members(window), do: :sys.get_state(window).members
 
@@ -106,7 +106,7 @@ defmodule Guiltty.WindowTest do
         %{state | config: %{state.config | keys: keys}, bindings: rebound(keys)}
       end)
 
-      key(window, ?a, @ctrl ||| @shift)
+      ai_key(window)
       Process.sleep(200)
       assert panes_of_tab(window, id) == []
       key(window, ?y, @ctrl ||| @shift)
@@ -230,6 +230,17 @@ defmodule Guiltty.WindowTest do
       # Pasted, not run: no Enter.
       refute Session.dump(id) =~ "command not found"
       assert Screen.selection_text(id) == nil
+    end
+
+    test "Ctrl+Shift+A selects everything, for PRIMARY", %{id: id, window: window} do
+      path = watch_port(window)
+      Session.write(id, "echo FIRST; echo LAST\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^LAST$/m end)
+
+      key(window, ?a, @ctrl ||| @shift)
+
+      assert eventually(fn -> (Screen.selection_text(id) || "") =~ ~r/^FIRST\n.*^LAST$/ms end)
+      assert eventually(fn -> File.read!(path) =~ ~r/\x12\x01.*FIRST\nLAST/s end)
     end
 
     test "with nothing selected, does nothing", %{id: id, window: window} do

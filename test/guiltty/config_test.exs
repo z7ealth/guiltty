@@ -174,6 +174,11 @@ defmodule Guiltty.ConfigTest do
     assert "ctrl+shift+h" in keys.cheatsheet
     assert "ctrl+plus" in keys.zoom_in
     assert Guiltty.Keymap.parse_key("ctrl+plus") == {:ok, {?+, MapSet.new([:ctrl])}}
+    # "space" names the space bar: " " can't be written in a key name.
+    assert keys.ai == ["ctrl+shift+space"]
+
+    assert Guiltty.Keymap.parse_key("ctrl+shift+space") ==
+             {:ok, {?\s, MapSet.new([:ctrl, :shift])}}
   end
 
   test "the example config is valid" do

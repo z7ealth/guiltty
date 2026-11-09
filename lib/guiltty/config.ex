@@ -87,6 +87,7 @@ defmodule Guiltty.Config do
     prev_prompt: ["ctrl+shift+z"],
     next_prompt: ["ctrl+shift+x"],
     copy: ["ctrl+shift+c"],
+    select_all: ["ctrl+shift+a"],
     # Ctrl and the + key on US layouts (= and Shift+=) and on those where
     # + has a key of its own (Latin American, Spanish, German).
     zoom_in: ["ctrl+=", "ctrl+shift+=", "ctrl+plus"],
@@ -97,7 +98,7 @@ defmodule Guiltty.Config do
     cheatsheet: ["ctrl+shift+h", "ctrl+shift+/"],
     lock_tab: ["ctrl+shift+l"],
     broadcast: ["ctrl+shift+b"],
-    ai: ["ctrl+shift+a"],
+    ai: ["ctrl+shift+space"],
     split_right: ["ctrl+shift+o"],
     split_down: ["ctrl+shift+e"],
     focus_left: ["ctrl+shift+left"],

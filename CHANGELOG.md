@@ -8,6 +8,20 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.22.1 — 2026-11-09 — Select all
+
+### Added
+- Ctrl+Shift+A selects everything, as Select All does in an editor: the
+  scrollback and the screen, down to the last row with text (on vim's or
+  htop's screen, that screen alone). Like a mouse selection it goes to the
+  primary selection, as `copy_on_select` says; Ctrl+Shift+C copies it.
+  `select_all` in `keys:`.
+- `space` names the space bar in `keys:` (`"ctrl+shift+space"`).
+
+### Changed
+- The AI key is Ctrl+Shift+Space now, and Ctrl+Shift+A selects all. A
+  config that sets `ai:` under `keys:` keeps its own key.
+
 ## 0.22.0 — 2026-11-09 — Clickable URLs
 
 ### Added

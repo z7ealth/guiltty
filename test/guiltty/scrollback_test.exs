@@ -11,6 +11,7 @@ defmodule Guiltty.ScrollbackTest do
   end
 
   defp lines(n), do: Enum.map_join(1..n, "\r\n", &"line #{&1}")
+  defp joined(range), do: Enum.map_join(range, "\n", &"line #{&1}")
   defp text(grid, n), do: grid |> Grid.line_text(Grid.line(grid, n)) |> String.trim_trailing()
 
   describe "scrollback" do
@@ -108,6 +109,22 @@ defmodule Guiltty.ScrollbackTest do
       n = grid.history
       assert Selection.text(grid, Selection.new({n, 5}, 2)) == "/tmp/x"
       assert Selection.text(grid, Selection.new({n, 5}, 3)) == "cd /tmp/x; ls"
+    end
+
+    test "select all takes the scrollback and the screen, not the empty rows below" do
+      grid = run(lines(5) <> "\r\n$ ", 10, 8)
+      # nothing scrolled off yet: 6 rows of text, 2 empty below the prompt
+      assert Selection.all(grid) == %Selection{anchor: {0, 0}, head: {5, 9}, mode: :char}
+      assert Selection.text(grid, Selection.all(grid)) == joined(1..5) <> "\n$"
+
+      # 11 rows on a 3-row screen: lines 1 to 8 scrolled off, 5 to 8 kept
+      grid = run(lines(10) <> "\r\n$ ", 10, 3, scrollback: 4)
+      assert Selection.text(grid, Selection.all(grid)) == joined(5..10) <> "\n$"
+    end
+
+    test "select all on the alternate screen takes the screen alone" do
+      grid = run(lines(5) <> "\e[?1049h\e[Hvim\r\nhere", 10, 3)
+      assert Selection.text(grid, Selection.all(grid)) == "vim\nhere"
     end
 
     test "never takes half of a wide character" do

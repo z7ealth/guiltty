@@ -56,7 +56,8 @@ everywhere. That's why the defaults lean on them:
 | zoom_out, zoom_reset, open_config | =ctrl+-=, =ctrl+0=, =ctrl+,= | yes | yes        |
 
 =plus= names the =+= key, on layouts where it has one of its own: =+= can't
-be written in a key name, it joins the parts. For any other key that
+be written in a key name, it joins the parts. =space= names the space bar
+(=ai= is ="ctrl+shift+space"=), since a key name can't hold a space either. For any other key that
 doesn't fit your layout, name the key you press as your layout types it
 unshifted (LatAm's =' ?= key: ="ctrl+shift+'"=).
 

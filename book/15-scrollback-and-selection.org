@@ -155,6 +155,41 @@ the same cell is just a click: it clears the selection. Selected text has
 trailing spaces removed per row, rows joined by newlines, and never half
 a wide character ([[file:../lib/guiltty/selection.ex][Guiltty.Selection]]).
 
+** Select all
+
+Ctrl+Shift+A (=select_all=) is the keyboard's way to the same thing:
+=Screen.select(id, :all)= builds a selection from the oldest row of
+scrollback to the last row with text, by character, as if you had dragged
+over all of it ([[file:../lib/guiltty/selection.ex::def all][Selection.all/1]]).
+The end isn't the bottom of the screen: below a shell's prompt there are
+usually empty rows, and copying them would put a run of blank lines at the
+end of what you paste. So it walks up from the bottom to the first row
+that isn't blank, and never above the cursor's row. On the alternate
+screen there's no scrollback to take (vim's rows aren't your shell's
+history), so it starts at the screen's top.
+
+#+begin_example
+  "line 1\r\n ... line 5\r\n$ " on a 10x8 screen (the test in scrollback_test.exs)
+
+  row 0   line 1     <- scrollback_first = history = 0   anchor {0, 0}
+  row 1   line 2
+  ...
+  row 4   line 5
+  row 5   $ _        <- the cursor                        head   {5, 9}
+  row 6              (blank: left out)
+  row 7              (blank: left out)
+
+  Selection.text -> "line 1\nline 2\nline 3\nline 4\nline 5\n$"
+#+end_example
+
+With scrollback, only the top moves: the anchor is =scrollback_first=,
+the oldest row still kept, whose number keeps counting up as old rows
+are dropped.
+
+The Window then treats the text as the end of a drag: =copy_selected/2=
+sends it to PRIMARY (and to CLIPBOARD too with =copy_on_select:
+:clipboard=), so the mouse and the key share one rule.
+
 ** When the text under it changes
 
 Because a selection holds row numbers, it follows its text as output
@@ -191,6 +226,7 @@ Elixir tells it what to own:
 | Action                  | Messages                                                |
 |-------------------------+---------------------------------------------------------|
 | select with the mouse   | Elixir -> renderer CLIPBOARD (target 1, primary)        |
+| Ctrl+Shift+A            | the same, for everything (select all)                   |
 | Ctrl+Shift+C            | Elixir -> renderer CLIPBOARD (target 0, clipboard)      |
 | Ctrl+Shift+V            | renderer reads CLIPBOARD, sends PASTE                   |
 | middle click            | Elixir -> renderer PASTE_PRIMARY; renderer sends PASTE  |

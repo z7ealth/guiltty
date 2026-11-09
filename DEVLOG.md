@@ -1534,3 +1534,25 @@ offset, not by column.
 - Alacritty's keyboard hints (Ctrl+Shift+O labels every URL on screen).
 - More schemes (`ssh:`, `git://`, `magnet:`) once there's a safe way to hand them to
   the desktop.
+
+## 2026-11-09 — Select all, and the AI key moves (v0.22.1)
+
+_Draft: agent, awaiting user_
+
+**Tried.** Ctrl+Shift+A is Select All in every editor, so the AI key gave it up
+and moved to Ctrl+Shift+Space. Key names had no way to say "space" (a key name is
+split on `+`, and every single character is its own key, but not the space), so
+`space` joined `plus` as a named key. Select all builds the same selection a drag
+would, from the oldest row of scrollback down to the last row with text, and then
+does what letting go of the mouse does: the primary selection, as `copy_on_select`
+says. Both paths now share one function for that.
+
+**Broke.** Elixir wasn't on the machine when the change was written (the switch to
+asdf was half done), so the code waited for its first run. When it came, everything
+passed on the first try. Two test expectations had been wrong before that, caught by
+re-reading them, not by running them: the row arithmetic with `scrollback: 4`, and a
+helper that joins rows with `\r\n` where the selection gives `\n`.
+
+**Clicked.** The end of "all" isn't the bottom of the screen. A shell leaves empty
+rows under its prompt, and taking them puts blank lines at the end of every paste,
+so the selection stops at the last row with text.

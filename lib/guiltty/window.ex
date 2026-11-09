@@ -668,15 +668,7 @@ defmodule Guiltty.Window do
   end
 
   defp local_mouse({:mouse, :release, 0, _col, _row, _mods, _}, id, %{selecting: true} = state) do
-    case {on_pane(id, &Screen.select(&1, :finish)), state.config.copy_on_select} do
-      {text, copy} when is_binary(text) and text != "" and copy != false ->
-        send_port(state, Protocol.clipboard(:primary, text))
-        if copy == :clipboard, do: send_port(state, Protocol.clipboard(:clipboard, text))
-
-      _ ->
-        :ok
-    end
-
+    copy_selected(state, on_pane(id, &Screen.select(&1, :finish)))
     %{state | selecting: false}
   end
 
@@ -769,6 +761,21 @@ defmodule Guiltty.Window do
       end
     end)
   end
+
+  # What a finished selection does with its text, as copy_on_select says:
+  # the primary selection (middle click pastes it), and the clipboard too.
+  defp copy_selected(state, text) when is_binary(text) and text != "" do
+    case state.config.copy_on_select do
+      false ->
+        :ok
+
+      copy ->
+        send_port(state, Protocol.clipboard(:primary, text))
+        if copy == :clipboard, do: send_port(state, Protocol.clipboard(:clipboard, text))
+    end
+  end
+
+  defp copy_selected(_state, _text), do: :ok
 
   # Typing in the focused pane may go to a broadcast group; another pane is
   # just that pane.
@@ -941,6 +948,12 @@ defmodule Guiltty.Window do
         :ok
     end
 
+    state
+  end
+
+  # Like a drag that selected everything: the same copy_on_select applies.
+  defp run(:select_all, state) do
+    copy_selected(state, on_screen(state, &Screen.select(&1, :all)))
     state
   end
 

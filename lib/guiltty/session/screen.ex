@@ -97,7 +97,8 @@ defmodule Guiltty.Session.Screen do
   Mouse selection at a visible `{row, col}`: `{:start, pos, clicks}`
   (1 = by character, 2 = by word, 3 = by line), `{:extend, pos}`, or
   `:finish`, which returns the selected text (nil for a plain click, which
-  clears the selection instead).
+  clears the selection instead). `:all` selects the scrollback and the
+  screen, and returns the text.
   """
   def select(id, action), do: GenServer.call(Session.via(id, :screen), {:select, action})
 
@@ -335,6 +336,12 @@ defmodule Guiltty.Session.Screen do
   def handle_call({:select, {:start, pos, clicks}}, _from, state) do
     selection = Selection.new(position(state, pos), clicks)
     {:reply, :ok, notify(%{state | selection: selection, selected_text: nil})}
+  end
+
+  def handle_call({:select, :all}, _from, state) do
+    selection = Selection.all(state.grid)
+    text = Selection.text(state.grid, selection)
+    {:reply, text, notify(%{state | selection: selection, selected_text: text})}
   end
 
   def handle_call({:select, {:extend, pos}}, _from, %{selection: %Selection{} = sel} = state) do
