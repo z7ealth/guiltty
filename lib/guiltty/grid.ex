@@ -2184,6 +2184,9 @@ defmodule Guiltty.Grid do
     )
   end
 
+  @doc "Whether a row's text goes on in the next row (it wrapped)."
+  def wrapped?(row), do: row_wrapped?(row)
+
   defp row_wrapped?(row) when byte_size(row) < @cell_size, do: false
 
   defp row_wrapped?(row) do

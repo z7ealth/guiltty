@@ -48,7 +48,7 @@ defmodule Guiltty.Session.Screen do
 
   use GenServer
 
-  alias Guiltty.{Config, Grid, Search, Selection, Session, Terminal, View}
+  alias Guiltty.{Config, Grid, Search, Selection, Session, Terminal, Url, View}
   alias Guiltty.Session.Pty
 
   @resize_quiet_ms 1_000
@@ -106,8 +106,19 @@ defmodule Guiltty.Session.Screen do
 
   def clear_selection(id), do: GenServer.call(Session.via(id, :screen), :clear_selection)
 
-  @doc "Where the link at a visible `{row, col}` goes, or nil (OSC 8)."
-  def link_at(id, pos), do: GenServer.call(Session.via(id, :screen), {:link_at, pos})
+  @doc """
+  Where the link at a visible `{row, col}` goes, or nil: one a program
+  marked (OSC 8), or with `urls?`, a URL in the text (see `Guiltty.Url`).
+  """
+  def link_at(id, pos, urls? \\ false),
+    do: GenServer.call(Session.via(id, :screen), {:link_at, pos, urls?})
+
+  @doc """
+  The pointer is at a visible `{row, col}` with Ctrl held, or nil when it
+  isn't: the link under it shows underlined, as long as it stays there.
+  """
+  def hover(id, pos, urls? \\ false),
+    do: GenServer.call(Session.via(id, :screen), {:hover, pos, urls?})
 
   @doc "Scrolls to the prompt before (`:older`) or after (`:newer`) the view's top (OSC 133)."
   def jump_prompt(id, direction),
@@ -170,6 +181,10 @@ defmodule Guiltty.Session.Screen do
        selected_text: nil,
        # %{query: binary, match: Search.match() | nil}
        search: nil,
+       # %{pos: {row, col}, urls?: boolean}: Ctrl is held over this cell, and
+       # the link under it is underlined. Looked up again on every update,
+       # so it follows whatever the text there is now
+       hover: nil,
        # the last update was decorated (see Guiltty.View): the next plain one
        # must send every row
        decorated: false,
@@ -218,8 +233,11 @@ defmodule Guiltty.Session.Screen do
   def handle_call({:unsubscribe, _pid}, _from, state), do: {:reply, :ok, state}
 
   def handle_call(:take_update, _from, state) do
+    underline = hover_spans(state)
+
     decorated =
-      View.decorated?(state.scroll, state.selection, state.search) or state.grid.reverse_video
+      View.decorated?(state.scroll, state.selection, state.search) or underline != [] or
+        state.grid.reverse_video
 
     grid =
       if state.decorated and not decorated, do: Grid.mark_all_dirty(state.grid), else: state.grid
@@ -227,7 +245,9 @@ defmodule Guiltty.Session.Screen do
     {rows, grid} = Grid.take_dirty(grid)
 
     rows =
-      if decorated, do: View.rows(grid, state.scroll, state.selection, state.search), else: rows
+      if decorated,
+        do: View.rows(grid, state.scroll, state.selection, state.search, underline),
+        else: rows
 
     rows =
       if View.recolored?(grid),
@@ -267,9 +287,19 @@ defmodule Guiltty.Session.Screen do
     {:reply, :ok, state |> keep_view(state.grid.history) |> after_change()}
   end
 
-  def handle_call({:link_at, {row, col}}, _from, state) do
-    n = View.top(state.grid, state.scroll) + row
-    {:reply, Grid.link_at(state.grid, n, col), state}
+  def handle_call({:link_at, pos, urls?}, _from, state) do
+    case link_under(state, pos, urls?) do
+      {uri, _spans} -> {:reply, uri, state}
+      nil -> {:reply, nil, state}
+    end
+  end
+
+  def handle_call({:hover, pos, urls?}, _from, state) do
+    hover = if pos, do: %{pos: pos, urls?: urls?}
+
+    if hover == state.hover,
+      do: {:reply, :ok, state},
+      else: {:reply, :ok, notify(%{state | hover: hover})}
   end
 
   def handle_call(:cwd_uri, _from, state), do: {:reply, state.grid.cwd_uri, state}
@@ -443,6 +473,33 @@ defmodule Guiltty.Session.Screen do
     end
   end
 
+  # The link under a visible cell and the cells it covers: one a program
+  # marked (OSC 8) wins over a URL found in the text.
+  defp link_under(state, {row, col}, urls?) do
+    n = View.top(state.grid, state.scroll) + row
+
+    case Grid.link_at(state.grid, n, col) do
+      nil when urls? -> Url.at(state.grid, n, col)
+      nil -> nil
+      uri -> {uri, osc8_spans(state.grid, uri)}
+    end
+  end
+
+  # Every piece of the link still on screen or in the scrollback. `links`
+  # remembers spans whose text was overwritten since: those don't count.
+  defp osc8_spans(grid, uri) do
+    for {n, c1, c2, ^uri} <- grid.links, Grid.link_at(grid, n, c1) == uri, do: {n, c1, c2}
+  end
+
+  defp hover_spans(%{hover: nil}), do: []
+
+  defp hover_spans(%{hover: %{pos: pos, urls?: urls?}} = state) do
+    case link_under(state, pos, urls?) do
+      {_uri, spans} -> spans
+      nil -> []
+    end
+  end
+
   defp after_change(state) do
     state
     |> answer_queries()
@@ -516,7 +573,7 @@ defmodule Guiltty.Session.Screen do
 
   defp viewer_state(state, grid) do
     {Grid.cursor(grid), grid.cursor_visible, grid.cursor_style, grid.title, grid.input, grid.alt?,
-     state.scroll, state.selection, state.search, Grid.scrollback_size(grid),
+     state.scroll, state.selection, state.search, state.hover, Grid.scrollback_size(grid),
      Grid.graphics_version(grid), grid.cursor_blink, grid.cursor_color}
   end
 

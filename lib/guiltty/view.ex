@@ -5,8 +5,10 @@ defmodule Guiltty.View do
 
   Marks are attribute bits on the copies of the rows sent to the renderer,
   never on the grid itself: the selection flips `inverse`, a search match
-  gets `match`, and the match you're on gets `current_match` too. Reverse
-  video (DECSCNM) flips `inverse` on every cell.
+  gets `match`, and the match you're on gets `current_match` too. The link
+  under the pointer while Ctrl is held gets `underline`, as in Ghostty, so
+  you can see what a click would open. Reverse video (DECSCNM) flips
+  `inverse` on every cell.
 
   Colors a program changed (OSC 4, 10, 11) are swapped in here too, in
   `recolor/2`. The renderer has one palette for the whole window, and these
@@ -33,8 +35,11 @@ defmodule Guiltty.View do
   @doc "Whether the view differs from the grid's own rows."
   def decorated?(scroll, selection, search), do: scroll > 0 or selection != nil or search != nil
 
-  @doc "Every visible row, as `[{index, row}]`."
-  def rows(grid, scroll, selection, search) do
+  @doc """
+  Every visible row, as `[{index, row}]`. `underline` is a list of
+  `{row number, first col, last col}` to underline (the hovered link).
+  """
+  def rows(grid, scroll, selection, search, underline \\ []) do
     top = top(grid, scroll)
 
     for i <- 0..(grid.rows - 1) do
@@ -43,6 +48,7 @@ defmodule Guiltty.View do
       line =
         (Grid.line(grid, n) || blank(grid.cols))
         |> mark_matches(grid, n, search)
+        |> mark_underline(n, underline)
         |> mark_selection(grid, n, selection)
         |> mark_reverse(grid)
 
@@ -101,6 +107,15 @@ defmodule Guiltty.View do
           else: Grid.attr(:match)
 
       update_attrs(line, c1..c2, &(&1 ||| bits))
+    end)
+  end
+
+  defp mark_underline(line, _n, []), do: line
+
+  defp mark_underline(line, n, spans) do
+    Enum.reduce(spans, line, fn
+      {^n, c1, c2}, line -> update_attrs(line, c1..c2, &(&1 ||| Grid.attr(:underline)))
+      _span, line -> line
     end)
   end
 

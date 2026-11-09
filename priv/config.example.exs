@@ -188,6 +188,11 @@
   # They can never read it.
   # clipboard_write: true,
 
+  # Ctrl+click opens URLs in plain text (http, https, mailto, file), like the
+  # one a server prints when it starts. Hold Ctrl to see them underlined.
+  # Links a program marks (OSC 8) open either way.
+  # link_url: true,
+
   # Answer DECRQCRA and the title reports, for terminal test suites. Leave it
   # off: these let a program read your screen, even from the far end of ssh.
   # screen_reports: false

@@ -323,6 +323,28 @@ defmodule Guiltty.WindowTest do
       refute File.read!(path) =~ <<21, "javascript">>
     end
 
+    test "Ctrl+click opens a URL in plain text; Ctrl+hover underlines it",
+         %{id: id, window: window} do
+      path = record_port(window)
+      drain_renderer(window)
+      screen = GenServer.whereis(Guiltty.Session.via(id, :screen))
+
+      Session.write(id, "clear; echo 'at http://localhost:4000 now'\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^at http:\/\/localhost:4000 now$/m end)
+      row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 =~ ~r/^at http/))
+      mouse = fn kind, button, col, mods -> <<9, kind, button, col::16, row::16, mods::16, 1>> end
+
+      # Moving over it with Ctrl held: underlined. Without Ctrl: not.
+      renderer(window, mouse.(2, 3, 5, @ctrl))
+      assert eventually(fn -> :sys.get_state(screen).hover == %{pos: {row, 5}, urls?: true} end)
+      renderer(window, mouse.(2, 3, 6, 0))
+      assert eventually(fn -> :sys.get_state(screen).hover == nil end)
+
+      renderer(window, mouse.(0, 0, 5, @ctrl))
+      assert eventually(fn -> File.read!(path) =~ <<21, "http://localhost:4000">> end)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "opening http://localhost:4000" end)
+    end
+
     test "the Kitty keyboard protocol, once a program asks", %{id: id, window: window} do
       Session.write(id, "printf '\\033[>1u'; cat -v\r")
       assert eventually(fn -> :sys.get_state(window).pane_state[id][:input][:kitty] == 1 end)

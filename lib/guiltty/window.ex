@@ -69,7 +69,9 @@ defmodule Guiltty.Window do
   background job can't replace what you copied. It can ask to hear about
   focus (mode 1004): `CSI I` when its pane gets the keyboard, `CSI O` when it
   leaves. And text can be a link (OSC 8): Ctrl+click opens it, for http,
-  https, mailto and file URIs.
+  https, mailto and file URIs. With `link_url` (on by default), so does a URL
+  that's only text, like the address a server prints (see `Guiltty.Url`).
+  Holding Ctrl over a link underlines it.
 
   ## Closing a busy tab
 
@@ -177,6 +179,8 @@ defmodule Guiltty.Window do
       zoom: 0,
       # the left button is down and selecting
       selecting: false,
+      # the pane whose link shows underlined (Ctrl held over it)
+      hover: nil,
       # search mode: %{query: binary, found: boolean}
       search: nil,
       alt_screen: false,
@@ -646,7 +650,9 @@ defmodule Guiltty.Window do
   ## The mouse, when the program doesn't want it
 
   defp local_mouse({:mouse, :press, 0, col, row, mods, clicks}, id, state) do
-    link = if (mods &&& @kmod_ctrl) != 0, do: on_pane(id, &Screen.link_at(&1, {row, col}))
+    link =
+      if (mods &&& @kmod_ctrl) != 0,
+        do: on_pane(id, &Screen.link_at(&1, {row, col}, state.config.link_url))
 
     if is_binary(link) do
       open_link(state, link)
@@ -706,7 +712,26 @@ defmodule Guiltty.Window do
     end
   end
 
+  # Moving with no button down: with Ctrl held, the link under the pointer
+  # shows underlined (as in Ghostty), so you can see what a click opens.
+  defp local_mouse({:mouse, :motion, 3, col, row, mods, _}, id, state) do
+    if (mods &&& @kmod_ctrl) != 0 do
+      state = if state.hover != id, do: unhover(state), else: state
+      on_pane(id, &Screen.hover(&1, {row, col}, state.config.link_url))
+      %{state | hover: id}
+    else
+      unhover(state)
+    end
+  end
+
   defp local_mouse(_event, _id, state), do: state
+
+  defp unhover(%{hover: nil} = state), do: state
+
+  defp unhover(state) do
+    on_pane(state.hover, &Screen.hover(&1, nil))
+    %{state | hover: nil}
+  end
 
   # A link comes from whatever printed it, so it only opens if it's the kind
   # of thing a browser or mail app should open. The status shows where it
@@ -1338,6 +1363,7 @@ defmodule Guiltty.Window do
   # cheatsheet) ends, and its panes are no longer viewed.
   defp leave_tab(state) do
     if state.search, do: on_screen(state, &Screen.end_search/1)
+    state = unhover(state)
 
     %{
       unview_all(state)

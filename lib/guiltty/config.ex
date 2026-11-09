@@ -54,6 +54,8 @@ defmodule Guiltty.Config do
       nothing: guiltty doesn't pick one for you
     * `:clipboard_write` - programs can put text on the clipboard (OSC 52),
       from the focused pane; they can never read it
+    * `:link_url` - Ctrl+click opens URLs found in plain text (http, https,
+      mailto, file), not only links a program marked (OSC 8)
     * `:screen_reports` - answer DECRQCRA and the title reports, for test
       suites. Off: they let a program read the screen, even over ssh. For
       tabs opened after a change
@@ -140,6 +142,7 @@ defmodule Guiltty.Config do
       renderer: :vulkan,
       ai: %{command: nil, position: :right},
       clipboard_write: true,
+      link_url: true,
       screen_reports: false
     }
   end
@@ -372,6 +375,7 @@ defmodule Guiltty.Config do
          {:ok, ai} <- ai(get.(:ai, []), d.ai),
          {:ok, clipboard_write} <-
            one_of(:clipboard_write, get.(:clipboard_write, d.clipboard_write), [true, false]),
+         {:ok, link_url} <- one_of(:link_url, get.(:link_url, d.link_url), [true, false]),
          {:ok, screen_reports} <-
            one_of(:screen_reports, get.(:screen_reports, d.screen_reports), [true, false]) do
       {:ok,
@@ -395,6 +399,7 @@ defmodule Guiltty.Config do
          renderer: renderer,
          ai: ai,
          clipboard_write: clipboard_write,
+         link_url: link_url,
          screen_reports: screen_reports
        }}
     end

@@ -8,6 +8,15 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.22.0 — 2026-11-09 — Clickable URLs
+
+### Added
+- Ctrl+click opens URLs in plain text, like the address `mix phx.server`
+  prints, not only links a program marked (OSC 8). Hold Ctrl and move the
+  mouse over one to see it underlined. It finds http, https, mailto and file
+  URLs, even when one wraps onto the next row, and leaves out punctuation
+  that ends the sentence. `link_url: false` turns it off.
+
 ## 0.21.0 — 2026-11-09 — The AI key
 
 ### Added

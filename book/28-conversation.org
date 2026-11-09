@@ -143,6 +143,76 @@ The top three are bookkeeping, and the renderer uses those same bits for its own
 purposes in a drawn cell, so it masks them off as a row arrives, drawing a link as
 an underline.
 
+* Links nobody marked
+
+Most programs don't say "this is a link". A web server starting up just prints its
+address:
+
+#+begin_example
+  [info] Access GuilttyWebsiteWeb.Endpoint at http://localhost:4000
+#+end_example
+
+So, like Alacritty and Ghostty, guiltty also looks for URLs in the text itself, but
+only when you ask: holding Ctrl over one underlines it, and Ctrl+click opens it.
+Nothing is stored. The text under the pointer is searched each time, so there's
+nothing to go stale.
+
+The search is a pattern (Alacritty's, cut down to the schemes guiltty opens: http,
+https, mailto and file): the scheme, then everything up to a space or a character a
+URL can't hold (=<>"{|}^`\=, control characters). Then the end is trimmed, because
+a sentence often ends right after a URL: =.,:;!?'= at the end go, and so does a =)=
+or =]= with no partner inside the URL. =(https://x.y/a)= gives =https://x.y/a=, and
+=https://en.wikipedia.org/wiki/Rust_(language)= keeps its bracket.
+
+A long URL wraps, so the search runs over the *logical line*: rows joined where
+they wrapped, the same bit reflow uses (chapter 9).
+
+#+begin_example
+       0         1
+       01234567890123456789
+  r0  |go to https://exampl|>    the last cell has the wrapped bit
+  r1  |e.com/a/long/path no|>
+  r2  |w                   |
+       \_ joined: "go to https://example.com/a/long/path now"
+       \_ match:  bytes 6..36 -> cells {r0, 6..19} and {r1, 0..16}
+#+end_example
+
+Each cell remembers which byte of the joined text it starts at, so the regex's
+byte offsets turn back into cells. A wide character takes two cells but is one
+piece of text, which is why it goes by bytes and not columns.
+
+The underline is a decoration, like a search match: =View= sets the =underline=
+bit on the copy of the rows it sends, never on the grid.
+
+#+begin_example
+  renderer          Window                     Screen
+     | motion, Ctrl    |                          |
+     |---------------->| hover(pane, {row, col})  |
+     |                 |------------------------->| keeps the position
+     |                 |        screen_dirty      |
+     |                 |<-------------------------|
+     |                 |        take_update       | Url.at -> spans,
+     |                 |------------------------->| View underlines them
+     |   ROWS          |<-------------------------|
+     |<----------------|                          |
+     | press, Ctrl     | link_at(pane, pos, true) |
+     |---------------->|------------------------->| OSC 8 link, or Url.at
+     |   OPEN_URL      |<-------------------------|
+     |<----------------|                          |
+#+end_example
+
+A link a program marked (OSC 8) wins over what the pattern finds: the program
+knows better where its link goes. Those are always drawn underlined anyway.
+=link_url: false= in the config turns the pattern off.
+
+The underline shows when the pointer moves with Ctrl down. Pressing Ctrl with the
+mouse still doesn't show it until the mouse moves: the renderer only reports the
+mouse when it moves.
+
+Code: [[file:../lib/guiltty/url.ex::def at][Url.at/3]],
+[[file:../lib/guiltty/session/screen.ex::defp link_under][Screen's link_under]],
+[[file:../lib/guiltty/window.ex::Moving with no button down][Window, Ctrl+hover]].
+
 * Not drawing half a frame
 
 A program that redraws a lot sends many writes, and a frame can land between them:
@@ -160,6 +230,9 @@ can die halfway, so after 150 ms the Screen lets go by itself.
   terminal-wg's specifications.
 - VT510 Programmer Information, for =DECRQM=, =DECRQSS= and the rectangle operations.
 - OSC 8: "Hyperlinks in Terminal Emulators" (Egmont Koblinger's gist).
+- URLs in plain text: Alacritty's =hints= (its man page, =alacritty(5)=) and Ghostty's
+  =link-url= setting. Elixir's =Regex.scan/3= with =return: :index= (byte offsets),
+  and PCRE's =\x{...}= and Unicode mode (=u=).
 
 * Questions
 
@@ -169,6 +242,9 @@ can die halfway, so after 150 ms the Screen lets go by itself.
 4. A cell has no room for a link's address. Where does it live?
 5. What does a program lose if guiltty doesn't answer =CSI 21 t=? What does an
    attacker lose?
+6. =mix phx.server= prints its address as plain text. How does a Ctrl+click find
+   where the URL starts and ends, and why doesn't =see https://x.y.= open
+   =https://x.y.=?
 
 ** Answers
 :PROPERTIES:
@@ -187,3 +263,7 @@ can die halfway, so after 150 ms the Screen lets go by itself.
 5. A program loses a way to save and restore the title itself, which the title
    stack gives it anyway. An attacker loses a way to choose words and have the
    terminal type them at the shell.
+6. It joins the clicked row with the rows it wrapped into, searches that text with
+   a pattern (scheme, then characters a URL can hold), and keeps the match covering
+   the clicked cell. A trailing =.= is trimmed because it usually ends the sentence,
+   not the URL.

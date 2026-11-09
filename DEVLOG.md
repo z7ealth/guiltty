@@ -1502,3 +1502,35 @@ loses its line breaks if the mode never comes.
 screen goes to an AI unless you select it. The key started as a joke, Ctrl+Shift+A+I,
 built as a sequence, A then I. It worked, and made every Ctrl+Shift+A wait 1.5 seconds
 to find out if an I was coming. So it's Ctrl+Shift+A now, and the sequences went with it.
+
+## 2026-11-09 — Clickable URLs (v0.22.0)
+
+_Draft: agent, awaiting user_
+
+**Tried.** `mix phx.server` printed `http://localhost:4000` and Ctrl+click did
+nothing. guiltty only opened links a program had marked with OSC 8, and almost
+nothing marks its links. Alacritty and Ghostty solve this the same way: run a pattern
+over the text under the pointer. Hold Ctrl and the URL is underlined; click and it
+opens. guiltty does that now. It's all Elixir, and the renderer and its protocol
+don't change: `OPEN_URL` was already there, and so was the underline bit.
+
+**Broke.** The first test said the URL started a column later than it did. I'd
+miscounted the columns in my own test. The code was right. The regex also cut itself
+short: `~r{...}` ends at the first `}`, and the pattern lists `{|}` as characters a
+URL can't hold. It uses `~r'...'` now.
+
+**Clicked.** Nothing about the URL is stored. The pointer's position is the only
+state; every update looks again at whatever text is there, so output that scrolls
+or redraws under the pointer can't leave a wrong underline behind. A URL that wraps
+is found because a row already knows it wrapped (the bit reflow added in 0.20.0), and
+a wide character before the URL stays right because cells are matched by byte
+offset, not by column.
+
+### Later
+
+- Show the underline as soon as Ctrl goes down, not on the next mouse move (the
+  renderer reports the mouse only when it moves; Ghostty also watches the modifiers).
+- A hand pointer over a link (`SDL_SetCursor`; a protocol message).
+- Alacritty's keyboard hints (Ctrl+Shift+O labels every URL on screen).
+- More schemes (`ssh:`, `git://`, `magnet:`) once there's a safe way to hand them to
+  the desktop.
