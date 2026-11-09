@@ -84,8 +84,12 @@ defmodule Guiltty.ProgramsTest do
     shows(id, "hello from guiltty")
 
     :ok = Session.resize(id, 100, 30)
-    Session.write(id, ":\x15echo &columns\r")
-    shows(id, ~r/^100\s/m)
+    # vim redraws on the resize, and that wipes a message shown before it finishes.
+    assert Enum.find_value(1..50, false, fn _ ->
+             Session.write(id, ":\x15echo &columns\r")
+             if eventually(fn -> Session.dump(id) =~ ~r/^100\s/m end, 25), do: true
+           end),
+           Session.dump(id)
 
     Session.write(id, ":wq\r")
     assert eventually(fn -> File.exists?(path) end)

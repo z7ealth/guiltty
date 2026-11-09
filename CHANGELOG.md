@@ -8,6 +8,12 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.20.1 — 2026-11-09 — Right click
+
+### Added
+- Right click with text selected copies it to the clipboard and pastes it at the
+  prompt under the pointer. Hold Shift to do this in a program that uses the mouse.
+
 ## 0.20.0 — 2026-11-09 — A terminal you can rely on
 
 ### Added

@@ -74,6 +74,68 @@ defmodule Guiltty.WindowTest do
     path
   end
 
+  # The real renderer acts on what it's told: a browser, the clipboard. This stops
+  # it, from inside the Window (the port's owner), and gives the Window a port
+  # that swallows everything and answers nothing, so no more frames come.
+  defp drain_renderer(window) do
+    :sys.replace_state(window, fn state ->
+      Port.close(state.port)
+      %{state | port: Port.open({:spawn, "sh -c 'cat >/dev/null'"}, [:binary, packet: 4])}
+    end)
+  end
+
+  describe "right click" do
+    defp right_click(window, col, row, mods \\ 0),
+      do: renderer(window, <<9, 0, 2, col::16, row::16, mods::16, 1>>)
+
+    # The real renderer would put it on a real clipboard: a drain, and the file.
+    defp watch_port(window) do
+      path = record_port(window)
+      drain_renderer(window)
+      path
+    end
+
+    defp select_word(id, word) do
+      row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 == word))
+      Screen.select(id, {:start, {row, 1}, 2})
+      Screen.select(id, :finish)
+    end
+
+    test "copies what's selected and pastes it at the prompt", %{id: id, window: window} do
+      path = watch_port(window)
+      Session.write(id, "echo SELECTME\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^SELECTME$/m end)
+      assert select_word(id, "SELECTME") == "SELECTME"
+
+      right_click(window, 0, 0)
+
+      assert eventually(fn -> Session.dump(id) =~ ~r/^\$ SELECTME$/m end), Session.dump(id)
+      assert eventually(fn -> File.read!(path) =~ <<18, 0, "SELECTME">> end)
+      # Pasted, not run: no Enter.
+      refute Session.dump(id) =~ "command not found"
+      assert Screen.selection_text(id) == nil
+    end
+
+    test "with nothing selected, does nothing", %{id: id, window: window} do
+      path = watch_port(window)
+      right_click(window, 0, 0)
+      Session.write(id, "echo STILL-HERE\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^STILL-HERE$/m end)
+      refute File.read!(path) =~ <<18, 0>>
+    end
+
+    test "in a program that asked for the mouse, it's the program's", %{id: id, window: window} do
+      Session.write(id, "echo KEEP; printf '\\033[?1000h\\033[?1006h'; cat -v\r")
+      assert eventually(fn -> :sys.get_state(window).pane_state[id][:input][:mouse] == 1000 end)
+      # Only now: the drain draws no frames, so the window stops taking updates.
+      path = watch_port(window)
+      select_word(id, "KEEP")
+      right_click(window, 2, 1)
+      assert eventually(fn -> Session.dump(id) =~ "^[[<2;3;2M" end), Session.dump(id)
+      refute File.read!(path) =~ <<18, 0, "KEEP">>
+    end
+  end
+
   describe "what programs can ask of the window" do
     test "focus events: CSI I and CSI O, once asked for", %{id: id, window: window} do
       renderer(window, <<26, 0>>)
@@ -123,8 +185,7 @@ defmodule Guiltty.WindowTest do
       path = record_port(window)
       # The real renderer really opens links, in your real browser. This test
       # only needs to see the message, so it goes down a drain instead.
-      drain = Port.open({:spawn, "sh -c 'cat >/dev/null'"}, [:binary, packet: 4])
-      :sys.replace_state(window, &%{&1 | port: drain})
+      drain_renderer(window)
 
       Session.write(
         id,

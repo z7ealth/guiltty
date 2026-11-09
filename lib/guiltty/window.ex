@@ -26,8 +26,9 @@ defmodule Guiltty.Window do
   Mouse events go to the program when it asked for them (mouse reporting
   modes), unless Shift is held. Otherwise guiltty uses them: the left
   button selects (double click: words, triple: lines) and copies the
-  selection to the primary selection, the middle button pastes it, and the
-  wheel scrolls back (or, on the alternate screen, sends arrow keys, so
+  selection to the primary selection, the middle button pastes it, the right
+  button copies what's selected to the clipboard and pastes it at the prompt
+  under the pointer, and the wheel scrolls back (or, on the alternate screen, sends arrow keys, so
   `less` and `man` scroll).
 
   ## Search
@@ -655,6 +656,21 @@ defmodule Guiltty.Window do
     state
   end
 
+  # Right click: what's selected goes on the clipboard and to the prompt of
+  # the pane under the pointer, wherever on the window it was selected. Nothing
+  # selected, nothing happens.
+  defp local_mouse({:mouse, :press, 2, _col, _row, _mods, _}, id, state) do
+    case selected_text(state, id) do
+      {pane, text} ->
+        send_port(state, Protocol.clipboard(:clipboard, text))
+        on_pane(pane, &Screen.clear_selection/1)
+        paste_to(state, id, Keymap.paste(text, pane_input(state, id)))
+
+      nil ->
+        state
+    end
+  end
+
   # On the alternate screen there's no scrollback: the wheel sends arrow
   # keys instead, so less, man and git log scroll (xterm's alternateScroll).
   defp local_mouse({:mouse, :wheel, dir, _col, _row, _mods, _}, id, state) do
@@ -694,6 +710,22 @@ defmodule Guiltty.Window do
       if id == state.active, do: %{state | view_moved: true}, else: state
     end
   end
+
+  # The pane under the pointer first, then the others shown.
+  defp selected_text(state, id) do
+    [id | Compose.ids(state.compose) -- [id]]
+    |> Enum.find_value(fn pane ->
+      case on_pane(pane, &Screen.selection_text/1) do
+        text when is_binary(text) and text != "" -> {pane, text}
+        _ -> nil
+      end
+    end)
+  end
+
+  # Typing in the focused pane may go to a broadcast group; another pane is
+  # just that pane.
+  defp paste_to(%{active: id} = state, id, bytes), do: input(state, bytes)
+  defp paste_to(state, id, bytes), do: write_to(state, id, bytes)
 
   ## Search mode
 

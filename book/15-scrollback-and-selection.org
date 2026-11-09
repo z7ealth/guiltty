@@ -199,6 +199,18 @@ A paste goes through =Keymap.paste/2= as before: line endings become CR,
 and in bracketed paste mode the text is wrapped (and cleaned of fake
 end markers).
 
+* Right click
+
+With text selected, a right click does what you'd do by hand next: it puts the text
+on the clipboard, pastes it at the prompt of the pane under the pointer, and clears
+the selection. The text can come from any pane of the tab, which makes it a quick way
+to take a path from one shell's output to another shell's prompt. It's a paste like
+any other: bracketed if the program asked (chapter 7), and it goes to the whole
+broadcast group if the focused pane is in one. With nothing selected, it does nothing.
+
+Like every local mouse action, it's for when the program didn't ask for the mouse;
+in one that did (=vim=, =htop=), hold Shift.
+
 * Loot
 
 - ICCCM, section 2: "Peer-to-Peer Communication by Means of Selections".

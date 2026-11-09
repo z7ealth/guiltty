@@ -234,7 +234,7 @@ tests fail on the checksum itself. It's there to look a sequence up in.
 ucs-detect's numbers need the same care:
 
 #+begin_example
-  ZWJ emoji 100%, flags 100%, narrow 99.9%, 78 of 85 languages
+  ZWJ emoji 100%, flags 100%, narrow 99.9%, 81 of 85 languages (78 on OTP 28)
   wide 31.5%, VS-16 50%, VS-15 0%
 #+end_example
 
@@ -284,10 +284,8 @@ marked) built a release that starts:
 
 | Elixir | Erlang/OTP | Tests            | Release |
 |--------+------------+------------------+---------|
-| 1.20.4 | 29         | 295, all passed  | yes     |
-| 1.19.7 | 28         | 295, all passed  | yes     |
-| 1.19.7 | 26         | 295, all passed  | -       |
-| 1.18.4 | 26         | 295, all passed  | yes     |
+| 1.20.5 | 29         | 599, all passed  | yes     |
+| 1.18.4 | 26         | 599, all passed  | yes     |
 
 =mix.exs= enforces the Elixir side (=elixir: "~> 1.18"=); nothing
 enforces the Erlang side, so the README states it.

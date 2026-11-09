@@ -64,6 +64,7 @@ defmodule Guiltty.Cheatsheet do
          {"Select", "drag"},
          {"Select word / line", "double / triple click"},
          {"Paste the selection", "middle click"},
+         {"Copy and paste it", "right click"},
          {"Select in vim, htop...", "hold Shift"}
        ]},
       {"Panes",

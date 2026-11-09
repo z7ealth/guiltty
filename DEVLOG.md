@@ -1461,6 +1461,13 @@ screens found one real gap (DECREQTPARM) and one small one (ISO Latin-1 as a
 character set). The rest was right, which after esctest is what you'd hope, but it's
 good to see it the way a person would.
 
+**Right click, and the old versions.** Right click with text selected now copies it
+and pastes it at the prompt. Writing its test showed the helper from the link test was
+wrong: it left the real renderer running behind a swapped port, whose next message
+crashed the Window. The suite passed anyway, because the crash came after the checks.
+It now stops the renderer from inside the Window. Elixir 1.18.4 on OTP 26 passed, apart
+from one race in a test: vim's redraw after a resize can wipe the answer it's waiting for.
+
 ### Later
 
 - Kitty keyboard flags 4 (alternate keys) and 16 (text as codepoints).
