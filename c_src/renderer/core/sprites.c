@@ -200,10 +200,46 @@ static void powerline(uint32_t cp, int w, int h, uint8_t *rgba, size_t stride) {
         }
 }
 
+// --- The password lock ---
+
+// A padlock: a U-shaped shackle over a solid body with a keyhole. Drawn
+// in place of the cursor while a program reads a password. Each pixel is
+// sampled 4 x 4 times, so the round parts come out smooth at any cell size.
+static bool in_lock(double x, double y, int w, int h, int thickness) {
+    double body_left = 0.14 * w, body_right = 0.86 * w;
+    double body_top = 0.48 * h, body_bottom = 0.86 * h;
+    double cx = 0.5 * w, r = 0.25 * w;
+    double t = fmax(thickness * 1.5, 0.12 * w); // the shackle's thickness
+    double arc_y = body_top - 0.07 * h; // where the shackle's legs start to bend
+    if (x >= body_left && x <= body_right && y >= body_top && y <= body_bottom) {
+        // The keyhole: a hole the background shows through.
+        double kx = (x - cx) / (0.09 * w), ky = (y - (body_top + 0.4 * (body_bottom - body_top))) / (0.09 * w);
+        return kx * kx + ky * ky > 1;
+    }
+    if (y < body_top && y >= arc_y) // the two legs
+        return fabs(fabs(x - cx) - r) <= t / 2;
+    if (y < arc_y) // the round top
+        return fabs(hypot(x - cx, y - arc_y) - r) <= t / 2;
+    return false;
+}
+
+static void lock(int w, int h, int thickness, uint8_t *rgba, size_t stride) {
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int hits = 0;
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++)
+                    hits += in_lock(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4, w, h, thickness);
+            if (hits)
+                put(rgba, stride, x, y, (uint8_t)(hits * 255 / 16));
+        }
+}
+
 bool sprite_has(uint32_t cp) {
     return (cp >= 0x2580 && cp <= 0x259F) ||
            (cp >= 0x2500 && cp <= 0x254B && box_arms[cp - 0x2500] != 0) ||
-           (cp >= 0x2574 && cp <= 0x257F) || (cp >= 0x256D && cp <= 0x2570) || is_powerline(cp);
+           (cp >= 0x2574 && cp <= 0x257F) || (cp >= 0x256D && cp <= 0x2570) || is_powerline(cp) ||
+           cp == sprite_lock;
 }
 
 bool sprite_render(uint32_t cp, int cell_w, int cell_h, int thickness, uint8_t *rgba, size_t stride) {
@@ -223,6 +259,10 @@ bool sprite_render(uint32_t cp, int cell_w, int cell_h, int thickness, uint8_t *
     }
     if (is_powerline(cp)) {
         powerline(cp, cell_w, cell_h, rgba, stride);
+        return true;
+    }
+    if (cp == sprite_lock) {
+        lock(cell_w, cell_h, thickness, rgba, stride);
         return true;
     }
     return false;

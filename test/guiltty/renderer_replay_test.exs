@@ -287,6 +287,64 @@ defmodule Guiltty.RendererReplayTest do
     assert_in_delta w, h * @red_w / @red_h, 1.5
   end
 
+  ## The password lock (book chapter 1)
+  #
+  # "Password: " with the cursor after it. Read with echo off, a lock
+  # shows there instead of the block: some of the cell in the cursor's
+  # color (the lock), not all of it (the block), and nothing else moves.
+
+  defp lock_msgs(dir, name, secret) do
+    alias Guiltty.{Grid, Parser, Terminal, Theme}
+    alias Guiltty.Window.Protocol
+
+    {_parser, commands} = Parser.feed(Parser.new(), "Password: ")
+    grid = Terminal.apply(Grid.new(20, 3), commands)
+    options = %{padding: 6, opacity: 1.0, bold_is_bright: true}
+
+    messages = [
+      Protocol.setup(20, 3, Theme.default(), %{family: "monospace", size: 20}, options),
+      Protocol.rows(%{
+        size: {20, 3},
+        rows: Grid.snapshot(grid),
+        cursor: Grid.cursor(grid),
+        cursor_visible: true,
+        cursor_secret: secret
+      })
+    ]
+
+    path = Path.join(dir, "#{name}.msgs")
+
+    File.write!(
+      path,
+      Enum.map(messages, fn m ->
+        bin = IO.iodata_to_binary(m)
+        [<<byte_size(bin)::32>>, bin]
+      end)
+    )
+
+    path
+  end
+
+  defp cursor_pixels({_w, _h, pixels}) do
+    {r, g, b} = Guiltty.Theme.default().cursor
+
+    pixels
+    |> :binary.bin_to_list()
+    |> Enum.chunk_every(3)
+    |> Enum.count(fn [pr, pg, pb] -> abs(pr - r) + abs(pg - g) + abs(pb - b) < 12 end)
+  end
+
+  for renderer <- ["guiltty_gl-dbg", "guiltty_vk-dbg"] do
+    @tag if(renderer =~ "vk", do: :vulkan, else: :gl)
+    test "#{renderer} draws a lock instead of the cursor while a password is read",
+         %{tmp_dir: dir} do
+      block = cursor_pixels(replay(unquote(renderer), dir, lock_msgs(dir, "block", false)))
+      lock = cursor_pixels(replay(unquote(renderer), dir, lock_msgs(dir, "lock", true)))
+      # The lock covers a good part of the cell, never all of it.
+      assert lock > block / 5 and lock < block * 3 / 4, "lock #{lock}, block #{block}"
+    end
+  end
+
   # Ligatures need a font that has them; JetBrains Mono does (its "NL"
   # builds don't). The messages are made here, as a Window would send them.
   @tag :ligature_font

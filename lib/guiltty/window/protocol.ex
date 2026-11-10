@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 13
+  @version 14
 
   @hello 1
   @setup 2
@@ -169,7 +169,8 @@ defmodule Guiltty.Window.Protocol do
 
   @doc """
   A screen update. After the cursor (position, visible, and a style byte:
-  bits 0-1 block, underline or bar, bit 2 blinking) come the clusters the
+  bits 0-1 block, underline or bar, bit 2 blinking, bit 3 a password is
+  being read: a lock instead of the cursor) come the clusters the
   renderer hasn't seen (u32 id, u8 length, UTF-8), then the rows, sent as the grid stores them: `cols`
   cells of 14 bytes each. The renderer drops updates whose size doesn't
   match its own (they were sent before a resize reached the screen).
@@ -178,6 +179,7 @@ defmodule Guiltty.Window.Protocol do
   def rows(%{size: {cols, rows}, rows: lines, cursor: {crow, ccol}, cursor_visible: visible} = u) do
     clusters = Map.get(u, :clusters, [])
     style = cursor_byte(Map.get(u, :cursor_style) || {:block, false})
+    style = if Map.get(u, :cursor_secret, false), do: style + 8, else: style
 
     [
       <<@rows, cols::16, rows::16, crow::16, ccol::16, bool(visible), style,
@@ -261,7 +263,8 @@ defmodule Guiltty.Window.Protocol do
   def decode(<<@tab_click, index>>), do: {:ok, {:tab_click, index}}
   def decode(other), do: {:error, {:bad_message, other}}
 
-  # Bits 0-1 the shape (0 block, 1 underline, 2 bar), bit 2 blinking.
+  # Bits 0-1 the shape (0 block, 1 underline, 2 bar), bit 2 blinking
+  # (bit 3, the password lock, is added by rows/1).
   defp cursor_byte({shape, blink}) do
     Map.fetch!(%{block: 0, underline: 1, bar: 2}, shape) + if(blink, do: 4, else: 0)
   end

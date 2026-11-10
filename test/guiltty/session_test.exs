@@ -77,6 +77,23 @@ defmodule Guiltty.SessionTest do
     assert Session.dump(id) =~ "$ echo $((6 * 7))"
   end
 
+  test "a password prompt marks the screen's input secret, until it's answered", %{id: id} do
+    alias Guiltty.Session.Screen
+    secret? = fn -> Screen.subscribe(id, self()) && Screen.take_update(id).secret_input end
+
+    assert eventually(fn -> Session.dump(id) =~ ~r/^\$/m end)
+    # At bash's prompt, readline has the terminal in raw mode: not a secret.
+    refute secret?.()
+
+    # read -s turns echo off and keeps line editing on, as sudo does.
+    Session.write(id, "read -s -p 'Password: ' pw; echo; echo got ${#pw}\r")
+    assert eventually(fn -> Session.dump(id) =~ "Password: " and secret?.() end)
+
+    Session.write(id, "hunter2\r")
+    assert eventually(fn -> Session.dump(id) =~ ~r/^got 7$/m and not secret?.() end)
+    refute Session.dump(id) =~ "hunter2"
+  end
+
   test "TERM is xterm-256color with truecolor", %{id: id} do
     Session.write(id, "echo $TERM $COLORTERM\r")
     assert eventually(fn -> Session.dump(id) =~ ~r/^xterm-256color truecolor$/m end)

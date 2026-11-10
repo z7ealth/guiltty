@@ -288,8 +288,11 @@ picks lavapipe (Mesa's software Vulkan).
 
 The user's machine is openSUSE (packages via `zypper`), with:
 
-- GCC 16, Elixir 1.20 on OTP 28 (system packages; no asdf right now, which the
-  run on Elixir 1.18.4 / OTP 26 before a tag needs: book chapter 10)
+- GCC 16. Elixir and Erlang come from asdf (`~/.asdf/shims`), with no
+  default version set, so pick one per command:
+  `ASDF_ELIXIR_VERSION=1.20.5-otp-29 ASDF_ERLANG_VERSION=29.1.2` for
+  everyday work, and `1.18.4-otp-26` / `26.2.5.21` for the run on the
+  oldest supported versions before a tag (book chapter 10)
 - FreeType, fontconfig, HarfBuzz, OpenGL and EGL development files present
 - Fonts: Source Code Pro (monospace), JetBrains Mono, Noto Color Emoji, Noto
   Sans CJK.

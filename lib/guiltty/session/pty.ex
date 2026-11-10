@@ -130,7 +130,9 @@ defmodule Guiltty.Session.Pty do
           # {cols, rows, xpixel, ypixel} the shell hasn't heard yet, and the
           # timer that will tell it
           unsaid_size: nil,
-          size_timer: nil
+          size_timer: nil,
+          # the program is reading a secret (see watch_echo/1)
+          secret: false
         }
 
         {:ok, state}
@@ -294,7 +296,8 @@ defmodule Guiltty.Session.Pty do
 
   @impl true
   def handle_cast({:write, bytes}, state) do
-    {:noreply, say_size(state) |> then(&flush(%{&1 | pending: &1.pending <> bytes}))}
+    state = say_size(state) |> then(&flush(%{&1 | pending: &1.pending <> bytes}))
+    {:noreply, watch_echo(state)}
   end
 
   def handle_cast({:answer, answers}, state) do
@@ -322,7 +325,10 @@ defmodule Guiltty.Session.Pty do
     state = %{state | armed: false}
 
     if state.parser do
-      drain(state, @max_reads)
+      case drain(state, @max_reads) do
+        {:noreply, state} -> {:noreply, watch_echo(state)}
+        stop -> stop
+      end
     else
       {:noreply, state}
     end
@@ -393,6 +399,20 @@ defmodule Guiltty.Session.Pty do
 
   defp set_size(state, {cols, rows, xpixel, ypixel}),
     do: PtyNif.resize(state.pty, cols, rows, xpixel, ypixel)
+
+  # A password prompt shows up as a change in the terminal's settings, not
+  # in its output: the program turns echo off (see PtyNif.echo_state/1).
+  # Asked after each batch of output, because a program prints its prompt
+  # after turning echo off, and after each keypress, for one that printed
+  # nothing. The screen hears only about changes.
+  defp watch_echo(state) do
+    secret = PtyNif.echo_state(state.pty) == :secret
+
+    if secret != state.secret,
+      do: Guiltty.Session.Screen.set_secret(state.id, secret)
+
+    %{state | secret: secret}
+  end
 
   defp drain(state, 0), do: {:noreply, arm(state)}
 

@@ -47,7 +47,7 @@ defmodule Guiltty.ConfigTest do
       """)
 
     assert {:ok, c} = Config.load(path)
-    assert c.cursor == %{style: :bar, blink: true}
+    assert c.cursor == %{style: :bar, blink: true, password_lock: true}
     assert c.window == %{padding: 10, columns: 120, rows: 40, opacity: 0.85}
     assert c.shell == %{command: "/bin/bash", args: ["-l"]}
     assert c.working_directory == Path.expand("~/src")
@@ -130,6 +130,16 @@ defmodule Guiltty.ConfigTest do
       path = write(dir, "#{name}.exs", "[#{name}: {:not, :valid}]")
       assert {:error, _} = Config.load(path), "#{name} accepted {:not, :valid}"
     end
+  end
+
+  test "the password lock is on unless turned off", %{tmp_dir: dir} do
+    assert {:ok, %{cursor: %{password_lock: true}}} = Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{cursor: %{password_lock: false, style: :block}}} =
+             Config.load(write(dir, "b.exs", "[cursor: [password_lock: false]]"))
+
+    assert {:error, "cursor password_lock" <> _} =
+             Config.load(write(dir, "c.exs", "[cursor: [password_lock: :yes]]"))
   end
 
   test "the AI tool: its command and where it opens", %{tmp_dir: dir} do

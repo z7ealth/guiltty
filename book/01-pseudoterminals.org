@@ -134,6 +134,85 @@ than returning 0. That's the =:eof= at the end of the output above.
   read(master) = -1 EIO   => done          read(master) waits forever
 #+end_example
 
+* Echo off: spotting a password prompt
+
+The line discipline has a settings struct, =termios=, and two of its flags
+decide what typing looks like:
+
+- =ICANON= (canonical mode): the kernel gathers a whole line and handles
+  backspace and Ctrl+U itself; the program only gets the line after Enter.
+- =ECHO=: the kernel sends each typed byte back out the master, so it
+  shows up on the screen.
+
+A program asking for a password (=sudo=, =ssh=, =passwd=, bash's =read -s=)
+calls =tcsetattr= to turn =ECHO= off and leaves =ICANON= on: line editing
+still works, nothing is shown. A full-screen program (vim, htop, even
+readline at bash's prompt) turns =ICANON= off as well, for raw mode. So:
+
+#+begin_example
+  ECHO   ICANON   what's going on
+  ----   ------   ----------------------------------------
+  on     on       plain line input (cat, a script's read)
+  off    off      raw mode: vim, htop, bash's own prompt
+  off    on       reading a secret          <- the one we want
+#+end_example
+
+The terminal is never told "this is a password". It has to look. The
+program sets termios on the *slave*, but =tcgetattr= on the *master* gives
+the same answer: for a PTY master, the kernel's =tty_mode_ioctl()= reads
+the termios of the other end (=tty->link=). =PtyNif.echo_state/1= is that
+one call, and returns =:secret= or =:normal=.
+
+Real bytes and the answer after each read (bash =--norc=, =PS1='$ '=):
+
+#+begin_example
+<- "$ "                                                     echo_state: normal
+-> read -s -p 'Password: ' pw; echo; echo got ${#pw}\r
+<- "read -s -p 'Password: ' pw; echo; echo got ${#pw}\r\nPassword: "   echo_state: secret
+-> hunter2\r
+<- "\r\ngot 7\r\n$ "                                         echo_state: normal
+#+end_example
+
+=hunter2= never comes back: with =ECHO= off the kernel doesn't send it out
+the master, so it never reaches the screen.
+
+There's no event when termios changes, so the =Pty= process asks after
+each batch of output (a program turns echo off, *then* prints its prompt)
+and after each keypress (for one that printed nothing). Only a change goes
+on to the =Screen=, which puts =secret_input: true= in its updates to the
+window.
+
+The Window, if =cursor: [password_lock: true]= (the default), sets bit 3
+of the cursor style in its next ROWS message (chapter 5), and the
+renderer draws a padlock in the cursor's color where the cursor would be
+(chapter 14). The cursor itself hides: the lock *is* the cursor.
+
+#+begin_example
+  Pty: read batch / keypress
+     |  PtyNif.echo_state(pty)  (tcgetattr on the master)
+     v
+  changed?  --no-->  nothing
+     | yes
+     v
+  Screen.set_secret(id, bool)  -->  update.secret_input
+     v
+  Window: password_lock on?  -->  ROWS, cursor style | 0x08
+     v
+  renderer: overlay_lock(): the cursor's cell shows U+10FFFF (the lock
+            sprite) for one frame, then gets its own glyph back
+
+  [sudo] password for you: 🔒      <- drawn by guiltty, not a font
+#+end_example
+
+guiltty can't show a =*= for each character typed instead, the way some
+programs do: the line discipline handles backspace, Ctrl+U and Ctrl+W,
+and the terminal can't see what's left in its buffer. sudo can do it
+itself, knowing exactly what's there: =Defaults pwfeedback= in sudoers.
+
+The code: [[file:../c_src/pty_nif.c::nif_echo_state][nif_echo_state]],
+[[file:../lib/guiltty/session/pty.ex::defp watch_echo][Pty.watch_echo/1]] and
+[[file:../c_src/renderer/core/main.c::overlay_lock][overlay_lock]].
+
 * Try it yourself
 
 In =iex -S mix=, talk to a PTY directly through the NIF:
@@ -158,7 +237,10 @@ Try ="dumb"= instead of ="xterm-256color"= and compare the prompt.
   =ptsname(3)= for the long route.
 - =setsid(2)=, =credentials(7)=: sessions and process groups.
 - =ioctl_tty(2)=: =TIOCSCTTY=, =TIOCSWINSZ=.
-- =termios(3)=: =ECHO=, =ICANON=, =ISIG=, =ICRNL=, =ONLCR=.
+- =termios(3)=: =ECHO=, =ICANON=, =ISIG=, =ICRNL=, =ONLCR=; "Canonical and
+  noncanonical mode" for what =ICANON= does.
+- =tcgetattr(3)=, and =drivers/tty/tty_ioctl.c= (=tty_mode_ioctl=) in the
+  kernel source, for why the master answers with the slave's settings.
 
 * Questions
 
@@ -167,6 +249,7 @@ Try ="dumb"= instead of ="xterm-256color"= and compare the prompt.
 3. Why does =echo hi= come back before its output?
 4. What happens on the master when bash exits if the parent kept its slave fd?
 5. Who turns the =\r= we write into the =\n= bash reads?
+6. Why does "echo off" alone not mean "password", and what else must hold?
 
 ** Answers
 :PROPERTIES:
@@ -183,3 +266,6 @@ Try ="dumb"= instead of ="xterm-256color"= and compare the prompt.
 4. Nothing: no EOF and no =POLLHUP=. The master ends only when the last slave
    fd closes.
 5. The line discipline, through the =ICRNL= flag in =termios=.
+6. Raw mode (vim, htop, readline at the prompt) turns echo off too. A
+   password prompt keeps =ICANON= on, so the kernel still edits the line;
+   raw mode turns it off.

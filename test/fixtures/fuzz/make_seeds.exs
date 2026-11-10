@@ -64,6 +64,8 @@ seeds = %{
     Protocol.clipboard(:clipboard, "copied"),
     Protocol.raise_window(),
     Protocol.font(%{font | size: 20}),
+    # A password being read: the lock in place of the cursor.
+    Protocol.rows(Map.put(screen.("[sudo] password: ", 30, 4), :cursor_secret, true)),
     Protocol.rows(screen.("after", 30, 4))
   ],
   # Images (Kitty graphics): each format, placements of every shape (own

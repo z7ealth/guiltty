@@ -151,6 +151,9 @@ tabs, except the ones you lock with Ctrl+Shift+L (they show a 🔒): those
 keep running, and the next `guiltty` brings that window back with them.
 guiltty stops after its last window.
 
+While a program asks for a password (`sudo`, `ssh`), a lock shows where
+the cursor is: nothing you type appears, but guiltty is listening.
+
 | Keys                          | Action                                   |
 |-------------------------------|------------------------------------------|
 | Ctrl+Shift+N                  | new window, with its own tabs            |

@@ -41,7 +41,9 @@
 
   # :block, :bar or :underline. Programs can change it while they run (vim
   # shows a bar in insert mode); it comes back when they're done.
-  cursor: [style: :block, blink: false],
+  # password_lock: a lock in place of the cursor while a program (sudo,
+  # ssh) reads a password with echo off.
+  cursor: [style: :block, blink: false, password_lock: true],
 
   window: [
     # Pixels around the text (more on a HiDPI screen).

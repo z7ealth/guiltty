@@ -1522,7 +1522,9 @@ defmodule Guiltty.Window do
         clusters: clusters,
         cursor: Compose.cursor(c, state.active, Map.get(p, :cursor, {0, 0})),
         cursor_visible: Map.get(p, :cursor_visible, false),
-        cursor_style: {shape, blink}
+        cursor_style: {shape, blink},
+        # The program reads a password: a lock where the cursor is.
+        cursor_secret: state.config.cursor.password_lock and Map.get(p, :secret_input, false)
       })
     )
 
@@ -1561,7 +1563,8 @@ defmodule Guiltty.Window do
       :cursor_visible,
       :cursor_style,
       :cursor_blink,
-      :cursor_color
+      :cursor_color,
+      :secret_input
     ])
   end
 

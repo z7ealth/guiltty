@@ -41,6 +41,13 @@ defmodule Guiltty.Session.PtyNif do
   @doc "The terminal's foreground process group: `{:ok, pgid}` (tcgetpgrp)."
   def foreground(_pty), do: :erlang.nif_error(:not_loaded)
 
+  @doc """
+  Whether the program is reading a secret, like a password: `:secret` when
+  the terminal has echo off and line editing on (tcgetattr), `:normal`
+  otherwise, or `{:error, reason}`.
+  """
+  def echo_state(_pty), do: :erlang.nif_error(:not_loaded)
+
   @doc "Closes the master, which hangs up the child's terminal."
   def close(_pty), do: :erlang.nif_error(:not_loaded)
 

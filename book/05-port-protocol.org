@@ -58,7 +58,7 @@ one byte.
 |-----+-------+------------------+---------------------------------------------------------------|
 |   1 | HELLO | renderer->Elixir | u16 version, u8 name length, name                             |
 |   2 | SETUP | Elixir->renderer | u16 cols, u16 rows, then 259 colors of 3 bytes: palette 0-255, fg, bg, cursor; the options (as in OPTIONS); u16 font size, family |
-|   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u8 cursor style, u16 cluster count, then per cluster: u32 id, u8 length, UTF-8; u16 row count, then per row: u16 index, cols x 14-byte cells |
+|   3 | ROWS  | Elixir->renderer | u16 cols, u16 rows, u16 cursor row, u16 cursor col, u8 cursor visible, u8 cursor style (bits 0-1 shape, bit 2 blinking, bit 3 password lock), u16 cluster count, then per cluster: u32 id, u8 length, UTF-8; u16 row count, then per row: u16 index, cols x 14-byte cells |
 |   4 | TEXT  | renderer->Elixir | UTF-8 text the user typed                                     |
 |   5 | KEY   | renderer->Elixir | u32 SDL keycode, u16 SDL modifier bits                        |
 |   6 | RESIZE| renderer->Elixir | u16 cols, u16 rows that fit the window now (each 1..4096), u16 cell width, u16 cell height in pixels (0: unknown; chapter 9) |
@@ -82,7 +82,9 @@ one byte.
 |  24 | IMAGE_DROP | Elixir->renderer | u64 uid: forget that image |
 |  25 | PLACEMENTS | Elixir->renderer | u16 cols, u16 rows (dropped if not the renderer's), u16 count, then 42 bytes each: u64 uid, i32 row, u16 col, u16 x and y offset, u32 source x, y, w, h, u16 cells wide and high, i32 z |
 
-This is version 13: FOCUS, and KEY with what the key types with Shift and whether
+This is version 14: bit 3 of ROWS' cursor style says a program is
+reading a password, and the renderer draws a lock instead of the cursor
+(chapter 1). Version 13 added FOCUS, and KEY with what the key types with Shift and whether
 it was pressed, repeated or released (chapter 7). Version 12 added IMAGE, IMAGE_DROP and PLACEMENTS, for pictures
 (chapter 26); messages can be 64 MB (and a bit) long, for a 4096 x 4096
 RGBA image.
@@ -100,7 +102,7 @@ live config, halo or frame reports; version 4 had ASCII-only cells;
 version 5 had no options or cursor styles; version 6 had the tab bar
 always at the top; version 7 had one style of status;
 version 8 had no ligatures; version 10's RESIZE had no cell size;
-version 11 had no images.
+version 11 had no images; version 13 had no password lock.
 
 ROWS carries the grid size it describes, so the renderer can drop updates
 sent before a resize reached the Screen ([[file:09-resize.org][the resize chapter]]). Rows are
@@ -173,6 +175,8 @@ test sends exactly that to the AddressSanitizer build.
 3. Why does the renderer reject messages over 1 MiB?
 4. How does the renderer learn that guiltty is shutting down?
 5. Why does the window come back after =kill -9= on the renderer?
+6. The password lock only needed one spare bit in a byte ROWS already
+   had. Why did the version still go from 13 to 14?
 
 ** Answers
 :PROPERTIES:
@@ -190,3 +194,6 @@ test sends exactly that to the AddressSanitizer build.
 5. Exit status 137 is abnormal, so the supervisor restarts Window. The new
    Window subscribes to the Screen, which still has the whole grid and sends
    every row.
+6. The size didn't change, but the meaning did. An old renderer would
+   read bit 3 as part of the shape and draw the wrong cursor, or none.
+   The version in HELLO lets the Window refuse it instead of guessing.

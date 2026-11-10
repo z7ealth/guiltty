@@ -76,6 +76,48 @@ defmodule Guiltty.Session.PtyNifTest do
     assert read_all(pty) =~ ~r/SigIgn:\s+0+\r\n/
   end
 
+  # Reads until `marker` has shown up, without waiting for the end.
+  defp read_until(pty, marker, acc \\ "") do
+    if String.contains?(acc, marker) do
+      acc
+    else
+      case PtyNif.read(pty) do
+        {:ok, bytes} ->
+          read_until(pty, marker, acc <> bytes)
+
+        :eagain ->
+          :ok = PtyNif.select_read(pty)
+          assert_receive {:select, ^pty, :undefined, :ready_input}, 5000
+          read_until(pty, marker, acc)
+      end
+    end
+  end
+
+  test "echo_state sees the program turn echo off to read a secret" do
+    script = "stty -echo; echo hidden; read x; stty echo; echo back; read y"
+    {:ok, pty, _} = PtyNif.open("/bin/sh", ["sh", "-c", script], [], 80, 24, 0, 0, "")
+
+    # Printed after stty: echo is off by now.
+    read_until(pty, "hidden")
+    # Asked of the master, answered with the settings sh set on the slave.
+    assert PtyNif.echo_state(pty) == :secret
+
+    {:ok, _} = PtyNif.write(pty, "hunter2\r")
+    output = read_until(pty, "back")
+    # Typed with echo off: the password never comes back to the terminal.
+    refute output =~ "hunter2"
+    assert PtyNif.echo_state(pty) == :normal
+    assert PtyNif.close(pty) == :ok
+  end
+
+  test "raw mode (echo and line editing off) isn't a secret" do
+    script = "stty -echo -icanon; echo raw; read y"
+    {:ok, pty, _} = PtyNif.open("/bin/sh", ["sh", "-c", script], [], 80, 24, 0, 0, "")
+    read_until(pty, "raw")
+    assert PtyNif.echo_state(pty) == :normal
+    assert PtyNif.close(pty) == :ok
+  end
+
   test "bad arguments raise" do
     assert_raise ArgumentError, fn -> PtyNif.open("/bin/echo", ["a\0b"], [], 80, 24, 0, 0, "") end
     assert_raise ArgumentError, fn -> PtyNif.open("/bin/echo", ["echo"], [], 0, 24, 0, 0, "") end

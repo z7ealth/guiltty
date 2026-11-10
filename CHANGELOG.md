@@ -8,6 +8,20 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.23.0 — 2026-11-10 — The password lock
+
+### Added
+- While a program reads a password (`sudo`, `ssh`, `passwd`, `read -s`),
+  a lock shows in place of the cursor, so you can tell guiltty is
+  listening even though nothing you type appears. guiltty spots it the
+  way Ghostty does: the program has turned echo off but kept line
+  editing on. Turn it off with `cursor: [password_lock: false]`.
+
+### Changed
+- The renderer protocol is version 14. A renderer from an older guiltty
+  won't start with this one: install both together, as `./install.sh`
+  does.
+
 ## 0.22.2 — 2026-11-10 — The laptop AI key, and more themes
 
 ### Added

@@ -18,7 +18,8 @@ defmodule Guiltty.Session.Screen do
   An update is a map with `:graphics` (the images that show, or `:same`;
   see `Guiltty.Graphics.view/4`), `:size` (`{cols, rows}`), `:rows` (`[{index, row}]`),
   `:clusters` (`[{id, text}]`, the clusters the viewer hasn't seen yet),
-  `:cursor` (`{row, col}`), `:cursor_visible`, `:title`, `:input` (the
+  `:cursor` (`{row, col}`), `:cursor_visible`, `:secret_input` (the
+  program is reading a password: see `set_secret/2`), `:title`, `:input` (the
   modes that change what keys, paste and the mouse send), `:scroll` and
   `:scrollback` (how far back the view is, and how far it could go).
 
@@ -138,6 +139,13 @@ defmodule Guiltty.Session.Screen do
 
   def end_search(id), do: GenServer.call(Session.via(id, :screen), :end_search)
 
+  @doc """
+  The program is (or stopped) reading a secret, like a password, with echo
+  off. The `Pty` tells, since it's a setting of the terminal, not output.
+  """
+  def set_secret(id, secret?),
+    do: GenServer.cast(Session.via(id, :screen), {:secret, secret?})
+
   @doc "Drops the scrollback (as `ESC [ 3 J` does) and goes back to the live screen."
   def clear_scrollback(id), do: GenServer.call(Session.via(id, :screen), :clear_scrollback)
 
@@ -175,6 +183,8 @@ defmodule Guiltty.Session.Screen do
        # cluster ids below this one were sent to the viewer
        sent_clusters: 0,
        title: "",
+       # the program reads a password (see set_secret/2)
+       secret: false,
        scroll: 0,
        selection: nil,
        # the text it held when the mouse let go: if the text under it
@@ -409,6 +419,9 @@ defmodule Guiltty.Session.Screen do
   end
 
   @impl true
+  def handle_cast({:secret, secret}, state), do: {:noreply, notify(%{state | secret: secret})}
+
+  @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{viewer_ref: ref} = state) do
     {:noreply, %{state | viewer: nil, viewer_ref: nil, notified: false}}
   end
@@ -581,7 +594,7 @@ defmodule Guiltty.Session.Screen do
   defp viewer_state(state, grid) do
     {Grid.cursor(grid), grid.cursor_visible, grid.cursor_style, grid.title, grid.input, grid.alt?,
      state.scroll, state.selection, state.search, state.hover, Grid.scrollback_size(grid),
-     Grid.graphics_version(grid), grid.cursor_blink, grid.cursor_color}
+     Grid.graphics_version(grid), grid.cursor_blink, grid.cursor_color, state.secret}
   end
 
   # The images to show ({placements, images}, see Guiltty.Graphics.view/4),
@@ -606,6 +619,7 @@ defmodule Guiltty.Session.Screen do
       cursor_style: grid.cursor_style,
       cursor_blink: grid.cursor_blink,
       cursor_color: grid.cursor_color,
+      secret_input: state.secret,
       title: grid.title,
       input: grid.input,
       alt_screen: grid.alt?,

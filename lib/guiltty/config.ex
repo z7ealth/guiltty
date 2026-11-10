@@ -20,8 +20,10 @@ defmodule Guiltty.Config do
     * `:keys` - `%{action => [key]}`, see `Guiltty.Keymap.parse_key/1`
     * `:scrollback` - rows each tab keeps (applies to tabs opened after a
       change)
-    * `:cursor` - `%{style: :block | :bar | :underline, blink: boolean}`
-      (programs can change it while they run, as vim does in insert mode)
+    * `:cursor` - `%{style: :block | :bar | :underline, blink: boolean,
+      password_lock: boolean}` (programs can change the style while they
+      run, as vim does in insert mode; `password_lock` shows a lock in
+      place of the cursor while a program reads a password)
     * `:window` - `%{padding: px, columns: n, rows: n, opacity: 0.1..1.0}`;
       `columns` and `rows` are the size of a new window, `opacity` the
       background's (it needs a compositor, and applies to windows opened
@@ -130,7 +132,7 @@ defmodule Guiltty.Config do
       font: %{family: "monospace", size: 18},
       keys: @default_keys,
       scrollback: 10_000,
-      cursor: %{style: :block, blink: false},
+      cursor: %{style: :block, blink: false, password_lock: true},
       window: %{padding: 6, columns: 80, rows: 24, opacity: 1.0},
       shell: %{command: nil, args: []},
       working_directory: :inherit,
@@ -429,8 +431,14 @@ defmodule Guiltty.Config do
     with {:ok, style} <-
            one_of(:"cursor style", Keyword.get(opts, :style, d.style), [:block, :bar, :underline]),
          {:ok, blink} <-
-           one_of(:"cursor blink", Keyword.get(opts, :blink, d.blink), [true, false]) do
-      {:ok, %{style: style, blink: blink}}
+           one_of(:"cursor blink", Keyword.get(opts, :blink, d.blink), [true, false]),
+         {:ok, lock} <-
+           one_of(
+             :"cursor password_lock",
+             Keyword.get(opts, :password_lock, d.password_lock),
+             [true, false]
+           ) do
+      {:ok, %{style: style, blink: blink, password_lock: lock}}
     end
   end
 

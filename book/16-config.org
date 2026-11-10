@@ -139,6 +139,7 @@ the renderer, some reach the shell's process:
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |
 | =renderer= (=:vulkan=, =:gl=)  | Window          | windows opened after a change (chapter 19); =GUILTTY_RENDERER= wins over it |
 | =cursor=                       | Window, per ROWS | live                         |
+| =cursor: password_lock=        | Window, per ROWS | live: a lock in place of the cursor while a password is read (chapter 1) |
 | =shell=, =working_directory=   | Tabs -> Pty     | tabs opened after a change    |
 | =scrollback=                   | Screen          | tabs opened after a change    |
 | =copy_on_select=, =wheel_lines= | Window         | live                          |

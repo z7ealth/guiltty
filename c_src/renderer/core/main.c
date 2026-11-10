@@ -1408,10 +1408,39 @@ static int overlay_preedit(struct renderer *r, struct cell *saved, uint32_t *sav
     return row;
 }
 
+// While a program reads a password (sudo, ssh: echo off, see
+// pty_nif.c's echo_state), a lock shows where the cursor is, in the
+// cursor's color, and the cursor itself doesn't: Elixir sets cursor_secret
+// in the ROWS message. Like the preedit, it's drawn over the cell for one
+// frame and the cell is put back after. Returns the cell's index, or -1.
+static ptrdiff_t overlay_lock(struct renderer *r, struct cell *saved, uint32_t *saved_glyph) {
+    if (!(r->cursor_style & cursor_secret) || !r->cursor_visible || r->fonts.count == 0)
+        return -1;
+    int row = r->cursor_row + 1;
+    size_t at = grid_index(r, r->cursor_row, r->cursor_col);
+    // A wide character's half: leave it, the plain cursor shows instead.
+    if (r->cells[at].attrs & (ATTR_WIDE | ATTR_SPACER))
+        return -1;
+    *saved = r->cells[at];
+    *saved_glyph = r->glyphs[at];
+    struct cell look = {.attrs = 0};
+    memcpy(look.fg, r->theme.cursor, 3);
+    memcpy(look.bg, saved->bg, sizeof look.bg);
+    r->cells[at] = look;
+    r->glyphs[at] = sprite_lock;
+    find_slot(r, at);
+    mark_row(r, row);
+    return (ptrdiff_t)at;
+}
+
 static void draw(struct renderer *r) {
     struct cell saved[max_grid];
     uint32_t saved_glyphs[max_grid];
     int preedit_row = overlay_preedit(r, saved, saved_glyphs);
+    // Typing into an input method shows its text, not the lock.
+    struct cell lock_saved;
+    uint32_t lock_glyph = 0;
+    ptrdiff_t lock_at = preedit_row < 0 ? overlay_lock(r, &lock_saved, &lock_glyph) : -1;
     refill_atlas(r);
     if (!renderer_backend.upload_atlas(r->backend, &r->atlas))
         fprintf(stderr, "renderer: atlas upload failed\n");
@@ -1426,7 +1455,7 @@ static void draw(struct renderer *r) {
         .dirty_last = r->dirty_last,
         .cursor_row = (uint16_t)(r->cursor_row + 1),
         .cursor_col = r->cursor_col,
-        .cursor_visible = r->cursor_visible && preedit_row < 0 && !r->blink_off,
+        .cursor_visible = r->cursor_visible && preedit_row < 0 && lock_at < 0 && !r->blink_off,
         // Without the focus, a hollow block: typing wouldn't go here.
         .cursor_shape = r->focused ? (uint8_t)(r->cursor_style & 0x3) : CURSOR_HOLLOW,
         .opacity = r->transparent ? (float)r->opacity / 100.0f : 1.0f,
@@ -1474,6 +1503,13 @@ static void draw(struct renderer *r) {
     r->dirty_first = INT_MAX;
     r->dirty_last = -1;
 
+    if (lock_at >= 0) {
+        r->cells[lock_at] = lock_saved;
+        r->glyphs[lock_at] = lock_glyph;
+        // Its slot again: the atlas may have been refilled since it was saved.
+        find_slot(r, (size_t)lock_at);
+        mark_row(r, r->cursor_row + 1);
+    }
     if (preedit_row >= 0) {
         size_t first = (size_t)preedit_row * r->cols;
         memcpy(r->cells + first, saved, r->cols * sizeof *saved);

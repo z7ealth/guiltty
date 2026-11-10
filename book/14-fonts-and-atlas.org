@@ -202,6 +202,11 @@ it doesn't know.
   25) join colored blocks with them. They're in the private use area like
   Nerd Font icons, but they're never widened (below): =sprite_has= says
   they're guiltty's, so they stay exactly one cell.
+- *The password lock*, a padlock drawn in place of the cursor while a
+  program reads a password (chapter 1). It has no character of its own,
+  so it borrows U+10FFFF, the last codepoint there is, a noncharacter
+  that text never needs. A shackle (a half circle on two legs) over a
+  body with a keyhole, each pixel sampled 4 x 4 times for smooth curves.
 
 =╭= at 11x23 pixels, alpha per pixel, rows 11 to 18 (=─= runs on row 11,
 =│= on column 5):

@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 13;
+constexpr uint16_t protocol_version = 14;
 
 // Largest message we accept; anything bigger is a protocol error. An IMAGE
 // can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
@@ -28,7 +28,8 @@ enum msg_tag : uint8_t {
     MSG_SETUP = 2,
     // Elixir -> renderer: u16 cols, u16 rows (the grid this describes),
     // u16 cursor_row, u16 cursor_col, u8 cursor_visible, u8 cursor_style
-    // (bits 0-1: enum cursor_shape, bit 2: blinking); u16 nclusters, then
+    // (bits 0-1: enum cursor_shape, bit 2: blinking, bit 3: a program is
+    // reading a password, draw a lock instead); u16 nclusters, then
     // nclusters times: u32 id, u8 len, len bytes of UTF-8 (the clusters
     // these rows use that weren't sent before); u16 count, then count
     // times: u16 row, then cols cells of wire_cell_size bytes.
@@ -112,6 +113,7 @@ static_assert(image_header_size == 18);
 static_assert(placement_wire_size == 42);
 enum cursor_shape : uint8_t { CURSOR_BLOCK = 0, CURSOR_UNDERLINE = 1, CURSOR_BAR = 2, CURSOR_HOLLOW = 3 };
 constexpr uint8_t cursor_blinks = 0x04;
+constexpr uint8_t cursor_secret = 0x08;
 enum option_flag : uint8_t {
     OPTION_BOLD_IS_BRIGHT = 0x01,
     OPTION_TAB_BAR_BOTTOM = 0x02,

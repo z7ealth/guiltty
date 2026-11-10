@@ -20,6 +20,7 @@
 #include <sys/ioctl.h>
 #include <sys/pidfd.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 // waitid(2)'s "the id is a pidfd" (Linux 5.4). The kernel has it; glibc's
@@ -57,6 +58,8 @@ static ERL_NIF_TERM atom_exited;
 static ERL_NIF_TERM atom_signaled;
 static ERL_NIF_TERM atom_gone;
 static ERL_NIF_TERM atom_undefined;
+static ERL_NIF_TERM atom_secret;
+static ERL_NIF_TERM atom_normal;
 
 // {:error, :eio} style errors, from errno's symbolic name.
 static ERL_NIF_TERM make_errno_error(ErlNifEnv *env, int err) {
@@ -111,6 +114,8 @@ static int load(ErlNifEnv *env, void **, ERL_NIF_TERM) {
     atom_signaled = enif_make_atom(env, "signaled");
     atom_gone = enif_make_atom(env, "gone");
     atom_undefined = enif_make_atom(env, "undefined");
+    atom_secret = enif_make_atom(env, "secret");
+    atom_normal = enif_make_atom(env, "normal");
     return 0;
 }
 
@@ -458,6 +463,31 @@ static ERL_NIF_TERM nif_foreground(ErlNifEnv *env, int, const ERL_NIF_TERM argv[
     return enif_make_tuple2(env, atom_ok, enif_make_int(env, pgrp));
 }
 
+// echo_state(pty) -> :secret | :normal | {:error, reason}
+// Whether the program reading the terminal is asking for a secret. sudo,
+// ssh and passwd read a password with ECHO off but ICANON on: the line
+// discipline still gathers a whole line (backspace works), it just doesn't
+// show it. Full-screen programs turn ICANON off too (raw mode), so they
+// don't count. See termios(3), "Canonical and noncanonical mode".
+//
+// tcgetattr(3) is asked of the master, yet answers with the slave's
+// settings, the ones the program set: for a PTY master, the kernel's
+// tty_mode_ioctl() reads the termios of the other end (tty->link).
+static ERL_NIF_TERM nif_echo_state(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
+    struct pty *pty;
+    if (!get_pty(env, argv[0], &pty))
+        return enif_make_badarg(env);
+    struct termios t;
+    enif_mutex_lock(pty->lock);
+    int rc = pty->fd < 0 ? -1 : tcgetattr(pty->fd, &t);
+    int err = pty->fd < 0 ? EBADF : errno;
+    enif_mutex_unlock(pty->lock);
+    if (rc < 0)
+        return make_errno_error(env, err);
+    bool secret = (t.c_lflag & ECHO) == 0 && (t.c_lflag & ICANON) != 0;
+    return secret ? atom_secret : atom_normal;
+}
+
 // close(pty) -> :ok. Closing the master hangs up the terminal: the kernel
 // sends SIGHUP to the session, which is how bash learns the window is gone.
 static ERL_NIF_TERM nif_close(ErlNifEnv *env, int, const ERL_NIF_TERM argv[]) {
@@ -538,6 +568,7 @@ static ErlNifFunc funcs[] = {
     {"resize", 5, nif_resize, 0},
     {"winch", 1, nif_winch, 0},
     {"foreground", 1, nif_foreground, 0},
+    {"echo_state", 1, nif_echo_state, 0},
     {"close", 1, nif_close, 0},
     {"wait", 1, nif_wait, 0},
     {"kill", 2, nif_kill, 0},

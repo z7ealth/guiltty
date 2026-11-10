@@ -1594,3 +1594,36 @@ stays as a named theme. Two tests had quietly assumed that the default left
 the tab and border colors to the renderer. They now say what the default
 sets. The example config starts on `guiltty` too: Ctrl+, creates your config
 from it, and opening the config shouldn't change how the window looks.
+
+## 2026-11-10 — The password lock (v0.23.0)
+
+_Draft: agent, awaiting user_
+
+**Tried.** Ghostty shows a little lock where you type a sudo password, so you
+know the terminal is listening even though nothing appears. guiltty wanted the
+same. The surprise is that nobody ever tells the terminal "this is a password".
+It has to work it out from the line discipline's settings: a program reading a
+secret turns `ECHO` off and leaves `ICANON` (line editing) on. Full-screen
+programs, and readline at bash's own prompt, turn both off, so that one pair of
+flags tells them apart. A single `tcgetattr` on the master reads it, and the
+`Pty` asks after every batch of output and every keypress. Only a change
+travels on: Screen, Window, then one spare bit in the cursor byte of ROWS
+(protocol 14), and the renderer draws a padlock over the cursor's cell for
+that frame.
+
+Showing a `*` per character was the other idea. It was dropped because the
+terminal can't see the kernel's line buffer: backspace, Ctrl+U and Ctrl+W would
+make the stars lie. sudo can already do it properly, with `Defaults pwfeedback`.
+
+**Broke.** The first screenshot of the lock came out empty: the test grid was
+two rows, and the renderer's window was three, so it dropped the update as
+"meant for an old size". Nothing was wrong with the lock; the test had asked
+for a window size the renderer couldn't make.
+
+**Clicked.** You ask the *master* for its settings and the kernel answers with
+the *slave's*, the ones sudo set: for a PTY master, `tty_mode_ioctl()` looks
+at the other end. A test proves it rather than trusting the comment: after
+`stty -echo` the answer is `:secret`, and the typed `hunter2` never comes back
+out of the master. The lock is a sprite like the box lines, and it needed a
+character to be looked up by, so it borrows U+10FFFF, the last codepoint
+there is, which text never uses.
