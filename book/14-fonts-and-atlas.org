@@ -207,6 +207,9 @@ it doesn't know.
   so it borrows U+10FFFF, the last codepoint there is, a noncharacter
   that text never needs. A shackle (a half circle on two legs) over a
   body with a keyhole, each pixel sampled 4 x 4 times for smooth curves.
+  Its sizes come from the cell's width, not its height: a cell is about
+  twice as tall as it's wide, so sizing by height drew a tall, narrow
+  lock. Sized by width, it's about square.
 
 =╭= at 11x23 pixels, alpha per pixel, rows 11 to 18 (=─= runs on row 11,
 =│= on column 5):

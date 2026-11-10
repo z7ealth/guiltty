@@ -340,8 +340,10 @@ defmodule Guiltty.RendererReplayTest do
          %{tmp_dir: dir} do
       block = cursor_pixels(replay(unquote(renderer), dir, lock_msgs(dir, "block", false)))
       lock = cursor_pixels(replay(unquote(renderer), dir, lock_msgs(dir, "lock", true)))
-      # The lock covers a good part of the cell, never all of it.
-      assert lock > block / 5 and lock < block * 3 / 4, "lock #{lock}, block #{block}"
+      # The lock covers part of the cell, never all of it. It's about
+      # square, as wide as the cell, so in a cell twice as tall as it's
+      # wide it covers well under half.
+      assert lock > block / 10 and lock < block / 2, "lock #{lock}, block #{block}"
     end
   end
 

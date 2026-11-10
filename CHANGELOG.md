@@ -8,6 +8,11 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.23.1 — 2026-11-10 — A square password lock
+
+### Fixed
+- The password lock is about square now, instead of tall and narrow.
+
 ## 0.23.0 — 2026-11-10 — The password lock
 
 ### Added
