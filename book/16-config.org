@@ -61,6 +61,12 @@ be written in a key name, it joins the parts. =space= names the space bar
 doesn't fit your layout, name the key you press as your layout types it
 unshifted (LatAm's =' ?= key: ="ctrl+shift+'"=).
 
+The modifiers are =ctrl=, =shift=, =alt= and =super= (the Windows key),
+and a binding matches only with exactly those held: Super+Ctrl+Shift+T
+doesn't open a tab. The function keys go up to =f24=, because the AI
+key on newer laptops sends Super+Shift+F23 (chapter 27): that's the
+second default for =ai=.
+
 * When the file is broken
 
 A typo shouldn't leave you wondering why nothing changed. When the file
@@ -166,9 +172,15 @@ be translucent has to be decided at creation.
 
 A theme is the default foreground, background and cursor colors plus the
 16 ANSI colors; the other 240 of the 256-color palette are xterm's fixed
-cube and grays ([[file:08-colors.org][chapter 8]]). Five come built in, from their published
-palettes: =tomorrow-night= (the default), =dracula=, =gruvbox-dark=,
-=solarized-dark=, =catppuccin-mocha= ([[file:../lib/guiltty/theme.ex][Guiltty.Theme]]). A theme can be a
+cube and grays ([[file:08-colors.org][chapter 8]]). Ten come built in. Nine are from their published
+palettes: =tomorrow-night=, =dracula=, =gruvbox-dark=,
+=solarized-dark=, =catppuccin-mocha=, =catppuccin-latte= (the one light
+theme), =nord=, =tokyo-night= and =one-dark=
+([[file:../lib/guiltty/theme.ex][Guiltty.Theme]]). The tenth, =guiltty=, is
+guiltty's own and the default: the icon's near-black =#0d1117= behind its light gray, and
+the icon's lavender =#9184d9= as the cursor, magenta, the tab accent and
+the focused pane's border. A named theme may set tab and border colors
+like that; your own colors still win over them. A theme can be a
 name, a list of colors, or both: =[name: "dracula", bg: "#000000"]= is
 Dracula on pure black. An unknown name is an error that lists the known
 ones.

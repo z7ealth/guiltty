@@ -8,6 +8,27 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.22.2 — 2026-11-10 — The laptop AI key, and more themes
+
+### Added
+- Five more themes: `nord`, `tokyo-night`, `one-dark`, `catppuccin-latte`
+  (the first light one) and `guiltty`, guiltty's own: the icon's lavender
+  on near-black, with lavender for the cursor, the tab accent and the
+  focused pane's border. `theme: "guiltty"`.
+- The AI key on newer laptops opens the AI tool, like Ctrl+Shift+Space.
+  The key sends Super+Shift+F23, which is now in the default `ai:` list.
+- Key names in `keys:` can use `super` (the Windows key) and the
+  function keys F13 to F24.
+
+### Changed
+- The default theme is `guiltty` now, not Tomorrow Night. To keep the old
+  look, set `theme: "tomorrow-night"`. A theme given as a list of colors
+  with no `name:` starts from `guiltty` too.
+- A key with Super held no longer triggers a binding that doesn't name
+  `super`: Super+Ctrl+Shift+T doesn't open a tab. A config that sets
+  `ai:` under `keys:` keeps its own keys; add `"super+shift+f23"` to it
+  for the laptop key.
+
 ## 0.22.1 — 2026-11-09 — Select all
 
 ### Added

@@ -246,6 +246,7 @@ defmodule Guiltty.Cheatsheet do
     "ctrl" => "Ctrl",
     "shift" => "Shift",
     "alt" => "Alt",
+    "super" => "Super",
     "page_up" => "PgUp",
     "page_down" => "PgDn",
     "escape" => "Esc",
@@ -264,7 +265,12 @@ defmodule Guiltty.Cheatsheet do
     "space" => "Space"
   }
 
+  # A chord the keyboard sends for one key reads as that key.
+  @chords %{"super+shift+f23" => "AI key"}
+
   @doc false
+  def pretty(name) when is_map_key(@chords, name), do: @chords[name]
+
   def pretty(name) do
     name
     |> String.split("+")

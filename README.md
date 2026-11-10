@@ -191,8 +191,9 @@ your shell's rc file. Saving applies most changes to the
 open window. Mistakes show in red in the tab bar, so they don't go
 unnoticed.
 
-Among the settings: themes (Catppuccin, Dracula, Gruvbox, Solarized,
-Tomorrow Night, or your own colors), font and size, cursor, padding,
+Among the settings: themes (Catppuccin Mocha and Latte, Dracula, Gruvbox,
+Nord, One Dark, Solarized, Tokyo Night, Tomorrow Night, guiltty's own
+lavender, or your own colors), font and size, cursor, padding,
 opacity, the tab bar at the bottom (the default) or top, the tab style
 (flat, powerline, rounded, minimal or separators) and the tab bar's
 colors, ligatures, the shell, scrollback, and every key.

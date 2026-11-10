@@ -6,6 +6,7 @@ defmodule Guiltty.KeymapTest do
   @shift 0x0001
   @ctrl 0x0040
   @alt 0x0100
+  @lgui 0x0400
 
   @normal %{
     cursor_keys: :normal,
@@ -247,6 +248,30 @@ defmodule Guiltty.KeymapTest do
       input = %{@normal | mouse: 1000}
       assert mouse(:press, 0, input) == <<"\e[M", 32, 37, 35>>
       assert mouse(:release, 0, input) == <<"\e[M", 35, 37, 35>>
+    end
+  end
+
+  describe "bindings" do
+    # SDLK_F23: F13-F24 sit apart from F1-F12 in SDL's numbering.
+    @f23 0x40000072
+
+    test "the laptop AI key: Left Shift, Left Super and F23 at once" do
+      assert {:ok, binding} = Keymap.parse_key("super+shift+f23")
+      assert binding == {@f23, MapSet.new([:super, :shift])}
+      assert Keymap.matches?({:key, @f23, @lgui ||| @shift}, binding)
+      refute Keymap.matches?({:key, @f23, @shift}, binding)
+    end
+
+    test "F13 to F24 have names" do
+      assert Keymap.parse_key("f13") == {:ok, {0x40000068, MapSet.new()}}
+      assert Keymap.parse_key("f24") == {:ok, {0x40000073, MapSet.new()}}
+      assert Keymap.parse_key("f25") == :error
+    end
+
+    test "Super held is part of the chord" do
+      {:ok, new_tab} = Keymap.parse_key("ctrl+shift+t")
+      assert Keymap.matches?({:key, ?t, @ctrl ||| @shift}, new_tab)
+      refute Keymap.matches?({:key, ?t, @ctrl ||| @shift ||| @lgui}, new_tab)
     end
   end
 

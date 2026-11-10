@@ -98,7 +98,9 @@ defmodule Guiltty.Config do
     cheatsheet: ["ctrl+shift+h", "ctrl+shift+/"],
     lock_tab: ["ctrl+shift+l"],
     broadcast: ["ctrl+shift+b"],
-    ai: ["ctrl+shift+space"],
+    # Super+Shift+F23 is what the AI key on newer laptops sends: the
+    # keyboard presses those three keys for you.
+    ai: ["ctrl+shift+space", "super+shift+f23"],
     split_right: ["ctrl+shift+o"],
     split_down: ["ctrl+shift+e"],
     focus_left: ["ctrl+shift+left"],

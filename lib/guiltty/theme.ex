@@ -10,8 +10,9 @@ defmodule Guiltty.Theme do
     * 16-231: a 6x6x6 color cube
     * 232-255: a ramp of 24 grays
 
-  Besides the default, a few well-known themes come built in by name (see
-  `named/1`); the config can start from one and change single colors.
+  The default is guiltty's own theme (the icon's lavender on near-black).
+  It and several well-known themes come built in by name (see `named/1`);
+  the config can start from one and change single colors.
 
   The tab bar's colors (`tab_bar`, `tab_text`, `tab_active`,
   `tab_active_text`, `tab_accent`) are nil unless the config sets them:
@@ -47,39 +48,20 @@ defmodule Guiltty.Theme do
   @doc "The split panes' border colors."
   def pane_colors, do: @pane_colors
 
-  @doc "Tomorrow Night, a calm dark theme."
+  @doc "guiltty's own theme, what guiltty uses without a config."
   @spec default() :: t()
   def default do
-    %__MODULE__{
-      fg: {0xC5, 0xC8, 0xC6},
-      bg: {0x1D, 0x1F, 0x21},
-      cursor: {0xC5, 0xC8, 0xC6},
-      ansi: [
-        # black, red, green, yellow, blue, magenta, cyan, white
-        {0x1D, 0x1F, 0x21},
-        {0xCC, 0x66, 0x66},
-        {0xB5, 0xBD, 0x68},
-        {0xF0, 0xC6, 0x74},
-        {0x81, 0xA2, 0xBE},
-        {0xB2, 0x94, 0xBB},
-        {0x8A, 0xBE, 0xB7},
-        {0xC5, 0xC8, 0xC6},
-        # the bright versions
-        {0x96, 0x98, 0x96},
-        {0xD5, 0x4E, 0x53},
-        {0xB9, 0xCA, 0x4A},
-        {0xE7, 0xC5, 0x47},
-        {0x7A, 0xA6, 0xDA},
-        {0xC3, 0x97, 0xD8},
-        {0x70, 0xC0, 0xB1},
-        {0xEA, 0xEA, 0xEA}
-      ]
-    }
+    {:ok, theme} = named("guiltty")
+    theme
   end
 
   # The published terminal palettes of each theme: fg, bg, cursor, then the
   # 16 ANSI colors (8 normal, 8 bright).
   @named %{
+    "tomorrow-night" =>
+      {"#c5c8c6", "#1d1f21", "#c5c8c6",
+       ~w(#1d1f21 #cc6666 #b5bd68 #f0c674 #81a2be #b294bb #8abeb7 #c5c8c6
+          #969896 #d54e53 #b9ca4a #e7c547 #7aa6da #c397d8 #70c0b1 #eaeaea)},
     "dracula" =>
       {"#f8f8f2", "#282a36", "#f8f8f2",
        ~w(#21222c #ff5555 #50fa7b #f1fa8c #bd93f9 #ff79c6 #8be9fd #f8f8f2
@@ -95,20 +77,56 @@ defmodule Guiltty.Theme do
     "catppuccin-mocha" =>
       {"#cdd6f4", "#1e1e2e", "#f5e0dc",
        ~w(#45475a #f38ba8 #a6e3a1 #f9e2af #89b4fa #f5c2e7 #94e2d5 #bac2de
-          #585b70 #f38ba8 #a6e3a1 #f9e2af #89b4fa #f5c2e7 #94e2d5 #a6adc8)}
+          #585b70 #f38ba8 #a6e3a1 #f9e2af #89b4fa #f5c2e7 #94e2d5 #a6adc8)},
+    "catppuccin-latte" =>
+      {"#4c4f69", "#eff1f5", "#dc8a78",
+       ~w(#5c5f77 #d20f39 #40a02b #df8e1d #1e66f5 #ea76cb #179299 #acb0be
+          #6c6f85 #d20f39 #40a02b #df8e1d #1e66f5 #ea76cb #179299 #bcc0cc)},
+    "nord" =>
+      {"#d8dee9", "#2e3440", "#d8dee9",
+       ~w(#3b4252 #bf616a #a3be8c #ebcb8b #81a1c1 #b48ead #88c0d0 #e5e9f0
+          #4c566a #bf616a #a3be8c #ebcb8b #81a1c1 #b48ead #8fbcbb #eceff4)},
+    "one-dark" =>
+      {"#abb2bf", "#282c34", "#528bff",
+       ~w(#1e2127 #e06c75 #98c379 #d19a66 #61afef #c678dd #56b6c2 #abb2bf
+          #5c6370 #e06c75 #98c379 #d19a66 #61afef #c678dd #56b6c2 #ffffff)},
+    "tokyo-night" =>
+      {"#c0caf5", "#1a1b26", "#c0caf5",
+       ~w(#15161e #f7768e #9ece6a #e0af68 #7aa2f7 #bb9af7 #7dcfff #a9b1d6
+          #414868 #f7768e #9ece6a #e0af68 #7aa2f7 #bb9af7 #7dcfff #c0caf5)},
+    # guiltty's own: the icon's near-black (#0d1117) and lavender (#9184d9),
+    # with its light gray (#e9e9ed) as bright white. Magenta is the lavender,
+    # and the other hues are softened to sit beside it.
+    "guiltty" =>
+      {"#d9d9e3", "#0d1117", "#9184d9",
+       ~w(#161b22 #e0707e #8fcf9a #e6c27a #7aa2e8 #9184d9 #79c7d1 #c9cad6
+          #5b5f73 #f08a96 #a9e0b2 #f0d595 #9bbcf2 #b0a6ec #99dbe3 #e9e9ed)}
+  }
+
+  # Tab bar and pane border colors a named theme sets itself, where the
+  # renderer's derived ones (the palette's blue) wouldn't fit it.
+  @named_extras %{
+    "guiltty" => [
+      tab_accent: "#9184d9",
+      pane_border: "#30363d",
+      pane_border_active: "#9184d9"
+    ]
   }
 
   @doc "The names `named/1` knows."
-  def names, do: ["tomorrow-night" | Map.keys(@named)] |> Enum.sort()
+  def names, do: @named |> Map.keys() |> Enum.sort()
 
   @doc "A built-in theme by name, or `:error`."
   @spec named(binary()) :: {:ok, t()} | :error
-  def named("tomorrow-night"), do: {:ok, default()}
-
   def named(name) do
     with {:ok, {fg, bg, cursor, ansi}} <- Map.fetch(@named, name) do
+      extras = for {key, hex} <- Map.get(@named_extras, name, []), do: {key, rgb(hex)}
+
       {:ok,
-       %__MODULE__{fg: rgb(fg), bg: rgb(bg), cursor: rgb(cursor), ansi: Enum.map(ansi, &rgb/1)}}
+       struct(
+         %__MODULE__{fg: rgb(fg), bg: rgb(bg), cursor: rgb(cursor), ansi: Enum.map(ansi, &rgb/1)},
+         extras
+       )}
     end
   end
 

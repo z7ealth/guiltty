@@ -64,6 +64,8 @@ defmodule Guiltty.Keymap do
   @kp_enter 0x40000058
   @f1 0x4000003A
   @f12 0x40000045
+  # F13-F24 aren't next to F1-F12 in SDL's numbering (USB HID usage 0x68 on).
+  @f13 0x40000068
   @insert 0x40000049
   @home 0x4000004A
   @page_up 0x4000004B
@@ -325,21 +327,24 @@ defmodule Guiltty.Keymap do
                  "plus" => ?+,
                  "space" => ?\s
                },
-               Map.new(1..12, fn n -> {"f#{n}", @f1 + n - 1} end)
+               Map.merge(
+                 Map.new(1..12, fn n -> {"f#{n}", @f1 + n - 1} end),
+                 Map.new(13..24, fn n -> {"f#{n}", @f13 + n - 13} end)
+               )
              )
 
   @doc """
   Parses a key name like `"ctrl+shift+t"` into `{keycode, modifiers}`,
-  where modifiers is a set of `:ctrl`, `:shift` and `:alt`. Single letters,
+  where modifiers is a set of `:ctrl`, `:shift`, `:alt` and `:super`. Single letters,
   digits and punctuation (`"ctrl+="`) are their own keycode: the key that
   types that character *without* Shift in the current layout. `"plus"` is
-  the `+` key.
+  the `+` key; `"f1"` to `"f24"` are the function keys.
   """
   @spec parse_key(binary()) :: {:ok, {non_neg_integer(), MapSet.t()}} | :error
   def parse_key(name) do
     {mods, [key]} = name |> String.downcase() |> String.split("+") |> Enum.split(-1)
 
-    with true <- Enum.all?(mods, &(&1 in ~w(ctrl shift alt))),
+    with true <- Enum.all?(mods, &(&1 in ~w(ctrl shift alt super))),
          {:ok, code} <- keycode(key) do
       {:ok, {code, MapSet.new(mods, &String.to_existing_atom/1)}}
     else
@@ -363,7 +368,7 @@ defmodule Guiltty.Keymap do
   def matches?(_event, _binding), do: false
 
   defp modifier_set(mods) do
-    [ctrl: @kmod_ctrl, shift: @kmod_shift, alt: @kmod_alt]
+    [ctrl: @kmod_ctrl, shift: @kmod_shift, alt: @kmod_alt, super: @kmod_gui]
     |> Enum.filter(fn {_name, mask} -> (mods &&& mask) != 0 end)
     |> MapSet.new(fn {name, _mask} -> name end)
   end

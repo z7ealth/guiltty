@@ -1556,3 +1556,41 @@ helper that joins rows with `\r\n` where the selection gives `\n`.
 **Clicked.** The end of "all" isn't the bottom of the screen. A shell leaves empty
 rows under its prompt, and taking them puts blank lines at the end of every paste,
 so the selection stops at the last row with text.
+
+## 2026-11-10 — The laptop AI key, and more themes (v0.22.2)
+
+_Draft: agent, awaiting user_
+
+**Tried.** A friend pointed out that new laptops come with an AI key of their
+own, so it should open guiltty's AI pane too. The key turns out to be a trick:
+no key code existed for it, so the keyboard presses three old keys at once,
+Left Shift, Left Super and F23. Almost no keyboard has an F23, so nothing else
+sends that chord. guiltty's key names knew neither Super nor anything past F12,
+so the parser gained `super` and F13 to F24, and `"super+shift+f23"` joined the
+default `ai` list. The cheatsheet shows it as "AI key", not as a chord nobody
+would recognize.
+
+**Broke.** Nothing in the code. F13 to F24 aren't numbered after F12 in SDL
+(they follow USB's order), so they need their own starting point. Once Super
+is a modifier that bindings check, Super+Ctrl+Shift+T stops opening a tab,
+which is the right behavior, but it is a change. One run of the suite had a
+failure that the next two runs didn't repeat, and its name wasn't captured.
+
+**Clicked.** The renderer already sent every modifier bit, Super included, so
+no C changed: the key reached Elixir all along, and only the names were missing.
+
+**Themes.** Five more joined the five built in: Nord, Tokyo Night, One Dark,
+Catppuccin Latte (the first light one, to see that the tab bar holds up when
+the background is the bright side; it does, because its colors are mixed from
+the theme's own text and background) and one of guiltty's own. That one starts
+from the icon: its near-black, its lavender and its light gray. The lavender
+became magenta, the cursor, the tab accent and the focused pane's border, and
+the other hues were softened to sit beside it. Until now, a named theme could
+only give the 16 colors; now one can also set its tab and border colors, and
+a config's own colors still win.
+
+Then `guiltty` became the default, taking over from Tomorrow Night, which
+stays as a named theme. Two tests had quietly assumed that the default left
+the tab and border colors to the renderer. They now say what the default
+sets. The example config starts on `guiltty` too: Ctrl+, creates your config
+from it, and opening the config shouldn't change how the window looks.

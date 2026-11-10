@@ -49,4 +49,9 @@ defmodule Guiltty.CheatsheetTest do
     # The help text only shows where it fits next to the title.
     refute sheet =~ "arrows scrol\n"
   end
+
+  test "the laptop AI key's chord reads as that key" do
+    assert Guiltty.Cheatsheet.pretty("super+shift+f23") == "AI key"
+    assert Guiltty.Cheatsheet.pretty("super+shift+f22") == "Super+Shift+F22"
+  end
 end

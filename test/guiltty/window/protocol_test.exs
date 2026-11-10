@@ -9,7 +9,7 @@ defmodule Guiltty.Window.ProtocolTest do
   test "setup carries the size, 259 colors, the options and the font" do
     bin =
       IO.iodata_to_binary(
-        Protocol.setup(80, 24, Theme.default(), %{family: "monospace", size: 18}, @options)
+        Protocol.setup(80, 24, tomorrow_night(), %{family: "monospace", size: 18}, @options)
       )
 
     assert <<2, 80::16, 24::16, colors::binary-size(777), 6::16, 90, 1, 18::16, "monospace">> =
@@ -97,7 +97,8 @@ defmodule Guiltty.Window.ProtocolTest do
   end
 
   test "encodes the tab style: which colors are set, and those colors" do
-    theme = Guiltty.Theme.default()
+    # A theme that leaves every tab color to the renderer.
+    theme = tomorrow_night()
 
     assert IO.iodata_to_binary(Protocol.tab_style(:flat, theme)) ==
              <<22, 0, 0, 0::size(15 * 8)>>
@@ -143,5 +144,10 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Enum.at(palette, 231) == {255, 255, 255}
     assert Enum.at(palette, 232) == {8, 8, 8}
     assert Enum.at(palette, 255) == {238, 238, 238}
+  end
+
+  defp tomorrow_night do
+    {:ok, theme} = Theme.named("tomorrow-night")
+    theme
   end
 end

@@ -218,6 +218,25 @@ ai: [command: "your-ai-tool", position: :right]    # or :down, or :tab
 No command is set by default: guiltty doesn't pick a company for you, or run
 something you didn't ask for.
 
+** The laptop key
+
+Many newer laptops have an AI key, usually right of the space bar. It
+isn't a new key at all. When it was added, no key code existed for it,
+so the keyboard's firmware presses three old ones for you: Left Shift,
+Left Super (the Windows key) and F23. Hardly any keyboard has an F23, so
+the chord can't be mistaken for anything you typed. Linux passes the
+three presses on as they are, and SDL hands guiltty F23 with Shift and
+Super held, so the default =ai= list has a second entry:
+
+#+begin_src elixir
+ai: ["ctrl+shift+space", "super+shift+f23"]
+#+end_src
+
+The cheatsheet shows that chord as "AI key". On a keyboard without
+one, nothing ever sends it, so the entry costs nothing. To see what your
+own key sends, run =wev= (Wayland) or =xev= (X11) and press it, or
+=sudo evtest= for what the kernel sees.
+
 *Only what you select goes to it.* A terminal shows passwords, tokens and =.env= files,
 and sending your screen to a company's servers has to be something you chose. So with
 text selected, the key pastes that, and nothing else leaves. It's a paste with no
@@ -237,6 +256,9 @@ program without bracketed paste a line break is the same as pressing Enter.
   managers (i3, sway).
 - ioctl_tty(2) =TIOCSWINSZ=: each pane's own size, and its =SIGWINCH=.
 - Unicode box drawing, U+2500 to U+257F.
+- The laptop AI key: =evtest(1)= shows =KEY_LEFTSHIFT=, =KEY_LEFTMETA=,
+  =KEY_F23=; SDL3 wiki, =SDL_Keycode= (=SDLK_F23=) and =SDL_Keymod=
+  (=SDL_KMOD_GUI=).
 
 * Questions
 

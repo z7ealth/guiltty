@@ -8,13 +8,14 @@
 [
   font: [family: "monospace", size: 18],
 
-  # A built-in theme by name: "catppuccin-mocha", "tomorrow-night" (what
-  # guiltty uses without a config), "dracula", "gruvbox-dark" or
-  # "solarized-dark".
-  theme: "catppuccin-mocha",
+  # A built-in theme by name: "guiltty" (the icon's lavender on
+  # near-black, what guiltty uses without a config), "tomorrow-night",
+  # "catppuccin-mocha", "dracula", "gruvbox-dark", "solarized-dark",
+  # "nord", "tokyo-night", "one-dark" or "catppuccin-latte" (light).
+  theme: "guiltty",
 
   # Or your own colors. Any you leave out come from `name:` (or from
-  # tomorrow-night without one):
+  # guiltty without one):
   #
   # theme: [
   #   name: "catppuccin-mocha",
@@ -159,8 +160,10 @@
     lock_tab: ["ctrl+shift+l"],
     # Puts the tab in the broadcast group, or takes it out: all its panes.
     broadcast: ["ctrl+shift+b"],
-    # Opens the AI tool set below, and goes back.
-    ai: ["ctrl+shift+space"],
+    # Opens the AI tool set below, and goes back. Many newer laptops have
+    # an AI key, usually right of the space bar: it sends Super+Shift+F23, so it
+    # works here too.
+    ai: ["ctrl+shift+space", "super+shift+f23"],
     # Split panes: a new pane right of the focused one, or below it, with
     # half its room.
     split_right: ["ctrl+shift+o"],

@@ -68,6 +68,32 @@ defmodule Guiltty.ConfigTest do
     assert msg =~ "gruvbox-dark"
   end
 
+  test "every built-in theme loads, with 16 colors" do
+    assert length(Guiltty.Theme.names()) == 10
+
+    for name <- Guiltty.Theme.names() do
+      assert {:ok, theme} = Guiltty.Theme.named(name)
+      assert length(theme.ansi) == 16, name
+    end
+  end
+
+  test "the guiltty theme brings its own accent, and yours wins", %{tmp_dir: dir} do
+    lavender = {0x91, 0x84, 0xD9}
+    assert {:ok, %{theme: theme}} = Config.load(write(dir, "a.exs", ~s([theme: "guiltty"])))
+    assert theme.bg == {0x0D, 0x11, 0x17}
+    assert theme.tab_accent == lavender and theme.pane_border_active == lavender
+    # Other themes leave them to the renderer.
+    assert {:ok, nord} = Guiltty.Theme.named("nord")
+    assert nord.tab_accent == nil
+
+    assert {:ok, %{theme: mine}} =
+             Config.load(
+               write(dir, "b.exs", ~s([theme: [name: "guiltty", tab_accent: "#ff0000"]]))
+             )
+
+    assert mine.tab_accent == {0xFF, 0, 0} and mine.pane_border_active == lavender
+  end
+
   test "bad values in the new settings are reported", %{tmp_dir: dir} do
     for bad <- [
           "[cursor: [style: :beam]]",
@@ -121,7 +147,8 @@ defmodule Guiltty.ConfigTest do
   end
 
   test "tab styles, and tab colors in the theme, also from a named one", %{tmp_dir: dir} do
-    assert {:ok, %{tab_style: :flat, theme: %{tab_accent: nil}}} =
+    # The default (guiltty) sets its accent, and leaves the bar to the renderer.
+    assert {:ok, %{tab_style: :flat, theme: %{tab_accent: {0x91, 0x84, 0xD9}, tab_bar: nil}}} =
              Config.load(write(dir, "a.exs", "[]"))
 
     assert {:ok, %{tab_style: :powerline, theme: theme}} =
@@ -146,7 +173,12 @@ defmodule Guiltty.ConfigTest do
   end
 
   test "pane borders: style, thickness, and their colors in the theme", %{tmp_dir: dir} do
-    assert {:ok, %{pane_border: %{style: :solid, thickness: :thin}, theme: %{pane_border: nil}}} =
+    # The default (guiltty) sets its own border colors.
+    assert {:ok,
+            %{
+              pane_border: %{style: :solid, thickness: :thin},
+              theme: %{pane_border: {0x30, 0x36, 0x3D}}
+            }} =
              Config.load(write(dir, "a.exs", "[]"))
 
     assert {:ok, %{pane_border: %{style: :double, thickness: :thick}, theme: theme}} =
@@ -175,7 +207,8 @@ defmodule Guiltty.ConfigTest do
     assert "ctrl+plus" in keys.zoom_in
     assert Guiltty.Keymap.parse_key("ctrl+plus") == {:ok, {?+, MapSet.new([:ctrl])}}
     # "space" names the space bar: " " can't be written in a key name.
-    assert keys.ai == ["ctrl+shift+space"]
+    # The laptop AI key sends Super+Shift+F23.
+    assert keys.ai == ["ctrl+shift+space", "super+shift+f23"]
 
     assert Guiltty.Keymap.parse_key("ctrl+shift+space") ==
              {:ok, {?\s, MapSet.new([:ctrl, :shift])}}
