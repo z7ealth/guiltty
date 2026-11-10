@@ -1627,3 +1627,17 @@ at the other end. A test proves it rather than trusting the comment: after
 out of the master. The lock is a sprite like the box lines, and it needed a
 character to be looked up by, so it borrows U+10FFFF, the last codepoint
 there is, which text never uses.
+
+## 2026-11-10 — A purple version (v0.23.2)
+
+_Draft: agent, awaiting user_
+
+**Tried.** `guiltty version` printed plain text, while the logo writes "guil"
+in white and "tty" in purple. The answer doesn't come from Elixir or the C
+client: the client hands `version` to the release's start script, which echoes
+it. That script sources `env.sh` first, so `env.sh` answers `version` itself
+and exits before the script's own plain answer.
+
+**Clicked.** A colour belongs on a terminal and nowhere else. `[ -t 1 ]` asks
+whether standard output is one, so `guiltty version | cut -d' ' -f2` still gets
+a clean number, and `NO_COLOR` turns it off for anyone who'd rather not.

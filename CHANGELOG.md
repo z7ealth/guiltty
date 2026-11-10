@@ -8,6 +8,12 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.23.2 — 2026-11-10 — A purple version
+
+### Changed
+- `guiltty version` prints "tty" in the logo's purple, on a terminal.
+  Into a pipe, or with `NO_COLOR` set, it stays plain `guiltty 0.23.2`.
+
 ## 0.23.1 — 2026-11-10 — A square password lock
 
 ### Fixed
