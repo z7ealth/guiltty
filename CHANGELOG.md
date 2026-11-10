@@ -8,6 +8,12 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.23.3 — 2026-11-10 — A v in the version
+
+### Fixed
+- `guiltty version` prints the version with its "v", like the tags:
+  `guiltty v0.23.3`, in colour or plain.
+
 ## 0.23.2 — 2026-11-10 — A purple version
 
 ### Changed

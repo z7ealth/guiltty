@@ -1641,3 +1641,12 @@ and exits before the script's own plain answer.
 **Clicked.** A colour belongs on a terminal and nowhere else. `[ -t 1 ]` asks
 whether standard output is one, so `guiltty version | cut -d' ' -f2` still gets
 a clean number, and `NO_COLOR` turns it off for anyone who'd rather not.
+
+## 2026-11-10 — A v in the version (v0.23.3)
+
+_Draft: agent, awaiting user_
+
+**Broke.** `guiltty version` said `guiltty 0.23.2`, while every tag and commit
+says `v0.23.2`. The release only knows the bare number (`RELEASE_VSN`, from
+`mix.exs`), so the "v" is added where `env.sh` prints it, in both the purple
+and the plain answer, so a pipe and a terminal agree.

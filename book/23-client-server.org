@@ -61,7 +61,7 @@ client's job is to find that BEAM, or start it.
    version= is answered by [[file:../rel/env.sh.eex][rel/env.sh.eex]], which that script sources
    first: "guil" plain and "tty" in the logo's purple, as a 24-bit colour
    (=ESC [38;2;145;132;217m=). Into a pipe, or with =NO_COLOR= set, it's
-   plain =guiltty 0.23.2=.
+   plain =guiltty v0.23.3=, with the "v" the tags have.
 2. Otherwise it builds the request: the first line, then each display
    variable it has (=DISPLAY=, =WAYLAND_DISPLAY=, =XAUTHORITY=,
    =XDG_RUNTIME_DIR=), leaving out any too long or with a line break in
