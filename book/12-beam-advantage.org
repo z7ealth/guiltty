@@ -87,6 +87,76 @@ registered with its desk's id as the Registry /value/, so the new =Tabs=
 asks for the ={id, :supervisor}= keys whose value is its desk, and adopts
 those: another window's tabs stay where they are.
 
+** Keeping the layout: an ETS table with an heir
+
+Taking the sessions back used to be all: each came back as a tab of its
+own, and the splits, names, locks and marks died with the old =Tabs=. Now
+they're kept in an ETS table, and the table outlives the process.
+
+An ETS table belongs to the process that created it, and is deleted when
+that process dies. Unless the table names an /heir/: then the BEAM gives
+it to the heir instead, with an ='ETS-TRANSFER'= message. Each desk has
+a tiny =Guiltty.Tabs.Keeper= for that job
+([[file:../lib/guiltty/tabs/keeper.ex][keeper.ex]]):
+
+#+begin_example
+  Desk (rest_for_one)
+  ├── Keeper    creates the table (heir: itself), gives it to Tabs
+  ├── Tabs      owns it; on every change, :ets.insert(table, {:saved, layout})
+  └── Window
+
+  Tabs crashes
+    BEAM:    the table's owner died, it has an heir -> Keeper owns it now
+    Supervisor: starts a new Tabs (and, rest_for_one, a new Window)
+    new Tabs:   Keeper.take(keeper) -> :ets.give_away(table, new_tabs, :taken)
+                reads {:saved, layout}, keeps the panes whose sessions are alive
+#+end_example
+
+Why a table and not the Keeper's own state? Writing is a local
+=:ets.insert/2= in =Tabs=: no message, no waiting on another process. The
+table is =:protected=, so only its owner can write it, and the Keeper
+holds it only in between. There's one race worth knowing: the supervisor
+can start the new =Tabs= before the transfer message reaches the Keeper,
+so =take/1= waits up to a second for it (=await_owner/1=).
+
+The broadcast group isn't kept on purpose. Joining checks what each pane
+is running (chapter 18); after a crash you join again, rather than have
+your keystrokes fan out to servers without having asked.
+
+* Idle tabs give memory back
+
+A process's heap grows to hold its busiest moment, and stays that size
+until it's collected. A tab that ran a build and has been idle since keeps
+that heap. =Screen= and =Parser= start with =hibernate_after: 5_000=: after
+five seconds with no message, =gen_server= hibernates the process, which
+does a full garbage collection and shrinks the heap to what's live. The
+next message wakes it, at the cost of one more collection.
+
+Measured on a tab that printed 300,000 lines and then sat idle
+(=Process.info(pid, [:memory, :binary])=):
+
+| process | heap after the flood | after 8 s idle |
+|---------+----------------------+----------------|
+| Screen  | 161 KB               | 39 KB          |
+| Parser  | 278 KB               | 1 KB           |
+
+The rows themselves (1.5 MB of scrollback, as refcounted binaries) don't
+move: they're live. Two other flags were tried and left out, because
+measuring showed nothing to fix: =fullsweep_after= (no dead row binaries
+were piling up) and =message_queue_data: :off_heap= (backpressure keeps
+each queue at one chunk, so there's no long queue to move off the heap).
+
+* The watchdog
+
+=Guiltty.Watchdog= ([[file:../lib/guiltty/watchdog.ex][watchdog.ex]]) asks the BEAM, with
+=:erlang.system_monitor/2=, to report any process whose garbage
+collection takes over 100 ms (a tab that stutters) or whose heap passes
+256 MB (a tab heading for the 2 GB limit). It logs a warning naming the
+process by its Registry key, ={7, :screen}= for tab 7's screen, at most
+once a minute per process, and sends the same as telemetry. A node has
+only one system monitor: if you attach =recon= or another tool that sets
+one, the watchdog goes quiet.
+
 * Detach and reattach
 
 This is per tab: lock the ones you want to keep with Ctrl+Shift+L (they
@@ -197,6 +267,8 @@ reaches the shell or the pixels, is in [[file:16-config.org][the configuration c
 | =[:guiltty, :parser, :parse]=            | =duration=, =bytes=   |
 | =[:guiltty, :renderer, :frame]=          | =duration= (µs)       |
 | =[:guiltty, :session, :parser_restarted]= | (none)               |
+| =[:guiltty, :watchdog, :long_gc]=        | =ms=, =heap_mb=       |
+| =[:guiltty, :watchdog, :large_heap]=     | =ms=, =heap_mb=       |
 
 Attach a handler from =guiltty remote= (or any connected node) to watch
 guiltty work.
@@ -226,6 +298,11 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
   when the last reference is gone (chapter 2).
 - Backpressure: credits, pull, and the kernel's PTY buffer.
 - =:telemetry=.
+- =ets:new/2=, the =heir= option; =ets:give_away/3=.
+- =gen_server= =hibernate_after=; =erlang:hibernate/3=.
+- =erlang:system_monitor/2=: =long_gc=, =large_heap=.
+- The Erlang Efficiency Guide, "Binaries" (refcounted binaries and the
+  heap) and "Processes".
 - Mix releases: =env.sh=, =daemon=, =rpc=; chapter 23 for the =guiltty=
   command.
 
@@ -236,6 +313,8 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
 3. What makes =cat= slow down when guiltty can't keep up?
 4. Why does the Window wait for a FRAME before taking the next update?
 5. Why evaluate the config in a monitored, unlinked process?
+6. Why does the Keeper exist? Couldn't =Tabs= keep its table by itself?
+7. Hibernating an idle Screen freed its heap but not its rows. Why?
 
 ** Answers
 :PROPERTIES:
@@ -254,3 +333,8 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
    reports the death, so a config that raises can't crash guiltty. (A
    config is still code that runs as you: one that calls =System.halt/0=
    does stop guiltty.)
+6. A table dies with its owner unless it has an heir, and the heir has to
+   be a process that outlives the owner. The Keeper is that process; it
+   holds the table only while no =Tabs= does.
+7. The rows are refcounted binaries outside the heap, and they're live:
+   they are the scrollback. Hibernating frees only what's garbage.

@@ -57,6 +57,42 @@ defmodule Guiltty.Url do
     end
   end
 
+  @doc """
+  Every URL that shows in rows `first` to `last` (row numbers), in reading
+  order, each with the cells it takes: what the keyboard hints label. A
+  URL that wrapped in from above the first row counts too.
+  """
+  @spec visible(map(), integer(), integer()) :: [{binary(), [span()]}]
+  def visible(grid, first, last) do
+    first
+    |> Stream.unfold(fn
+      n when n > last ->
+        nil
+
+      n ->
+        rows = logical_rows(grid, n)
+        {rows, rows.last + 1}
+    end)
+    |> Enum.flat_map(fn rows ->
+      cells =
+        rows
+        |> Enum.filter(&Grid.line(grid, &1))
+        |> Enum.flat_map(&cells(grid, &1))
+        |> with_offsets()
+
+      text = Enum.map_join(cells, & &1.text)
+
+      for [{start, len}] <- Regex.scan(@pattern, text, return: :index),
+          url = trim(binary_part(text, start, len)),
+          not bare?(url),
+          spans = spans(cells, start, start + byte_size(url)),
+          Enum.any?(spans, fn {n, _, _} -> n in first..last//1 end),
+          do: {url, spans}
+    end)
+    # A logical line longer than @max_rows can be met twice.
+    |> Enum.uniq()
+  end
+
   # The rows of the logical line through row n: up while the row above
   # wrapped, down while this one did.
   defp logical_rows(grid, n) do

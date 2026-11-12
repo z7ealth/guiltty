@@ -89,6 +89,9 @@ defmodule Guiltty.Config do
     prev_prompt: ["ctrl+shift+z"],
     next_prompt: ["ctrl+shift+x"],
     copy: ["ctrl+shift+c"],
+    copy_output: ["ctrl+shift+g"],
+    # J for jump: Ctrl+Shift+O (Kitty's and Alacritty's) splits here.
+    hints: ["ctrl+shift+j"],
     select_all: ["ctrl+shift+a"],
     # Ctrl and the + key on US layouts (= and Shift+=) and on those where
     # + has a key of its own (Latin American, Spanish, German).

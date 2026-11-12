@@ -14,6 +14,7 @@ defmodule Guiltty.Application do
   #   |-- Guiltty.Lifeline      watches the desks (significant)
   #   |-- Guiltty.Distribution  takes the node's name once it's free (releases)
   #   |-- Guiltty.Launcher      the socket the `guiltty` command asks for windows
+  #   |-- Guiltty.Watchdog      warns of long garbage collections and huge heaps
   #   `-- (a Task)              opens the first window at boot
   #
   # rest_for_one: each child depends on the ones before it. Lifeline is
@@ -32,6 +33,7 @@ defmodule Guiltty.Application do
             Supervisor.child_spec(Guiltty.Lifeline, significant: true),
             Guiltty.Distribution,
             Guiltty.Launcher,
+            Guiltty.Watchdog,
             {Task, fn -> Guiltty.open_window() end}
           ]
         else

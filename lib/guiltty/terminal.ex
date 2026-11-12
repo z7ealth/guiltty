@@ -60,6 +60,7 @@ defmodule Guiltty.Terminal do
   | `OSC 8;;uri`             |             | hyperlink; empty `uri` ends it          |
   | `OSC 52;c;base64`        |             | put text on the clipboard (never read)  |
   | `OSC 133;A`              |             | a prompt starts here                    |
+  | `OSC 133;C`, `OSC 133;D` |             | a command's output starts; it ended     |
 
   Anything else is ignored. Some sequences are refused on purpose, because a
   program may not be who you think it is (a server at the other end of ssh, or
@@ -730,10 +731,24 @@ defmodule Guiltty.Terminal do
   defp osc("111" <> _, grid), do: Grid.set_dynamic_color(grid, :bg_color, nil)
   defp osc("112" <> _, grid), do: Grid.set_dynamic_color(grid, :cursor_color, nil)
 
-  # A prompt starts here. C, D and the rest say where a command's output is;
-  # guiltty only needs the prompts.
-  defp osc("133;A" <> _, grid), do: Grid.mark_prompt(grid)
+  # Shell integration (FinalTerm's marks): A, a prompt starts here; C, the
+  # command's output starts here (Enter was pressed); D, it ended. A also
+  # ends output, for shells that send no D. B (where you type) isn't needed.
+  defp osc("133;A" <> _, grid), do: grid |> Grid.mark_output_end() |> Grid.mark_prompt()
+  defp osc("133;C" <> _, grid), do: Grid.mark_output_start(grid)
+  defp osc("133;D" <> rest, grid), do: Grid.command_ended(grid, exit_code(rest))
   defp osc(_data, grid), do: grid
+
+  # "133;D;2" ended with 2; more options (";aid=...") may follow; "133;D"
+  # alone says nothing.
+  defp exit_code(";" <> rest) do
+    case Integer.parse(rest) do
+      {code, _} when code >= 0 -> code
+      _ -> nil
+    end
+  end
+
+  defp exit_code(_), do: nil
 
   defp set_link(uri, grid) do
     if byte_size(uri) <= @max_uri and String.printable?(uri),

@@ -151,9 +151,35 @@ Shift held forces a selection even in vim or htop, as in xterm.
 A selection is an anchor and a head (row numbers and columns) and a mode
 from the click count SDL reports: one click selects by character, a
 double click by word, a triple click whole rows. A press and release on
-the same cell is just a click: it clears the selection. Selected text has
-trailing spaces removed per row, rows joined by newlines, and never half
-a wide character ([[file:../lib/guiltty/selection.ex][Guiltty.Selection]]).
+the same cell is just a click: it clears the selection. Selected text never
+has half a wide character, and rows are joined as the next section says
+([[file:../lib/guiltty/selection.ex::def text][Guiltty.Selection.text/2]]).
+
+** Lines that only wrapped
+
+A row of the grid isn't a line of text. A compiler error 150 characters
+long, on an 80-column screen, takes two rows, but the program printed one
+line. The grid knows the difference: when text runs past the last column,
+the last cell of the row gets a =wrapped= bit (the same bit reflow uses,
+see chapter 9).
+
+So copying joins rows the way they were printed:
+
+#+begin_example
+  printed: "error: expected ';' after expression at src/main.c:42:17\n" on 30 columns
+
+  row 0  |error: expected ';' after expr|>    wrapped (bit on the last cell)
+  row 1  |ession at src/main.c:42:17    |     ended with Enter
+
+  copied before v0.24:  "error: expected ';' after expr\nession at src/main.c:42:17"
+  copied now:           "error: expected ';' after expression at src/main.c:42:17"
+#+end_example
+
+A wrapped row keeps its trailing spaces: the space in "hello wor ld",
+when it lands exactly on the last column, is text, not padding. Other
+rows lose them, since there a space is just an empty cell. The wrap only
+counts when the selection reaches the end of the row: stop halfway
+along a wrapped row and the text after it starts a new line.
 
 ** Select all
 
@@ -190,6 +216,102 @@ The Window then treats the text as the end of a drag: =copy_selected/2=
 sends it to PRIMARY (and to CLIPBOARD too with =copy_on_select:
 :clipboard=), so the mouse and the key share one rule.
 
+** The last command's output
+
+Ctrl+Shift+G (=copy_output=) copies what the last command printed,
+and only that: not the prompt, and not the command line. A terminal
+can't tell any of that from the text alone, because to the grid a
+prompt is characters like any others. The shell has to say where
+things are, and shells that support it use *shell integration* marks,
+FinalTerm's OSC 133:
+
+#+begin_example
+  ESC ] 133 ; A BEL    a prompt starts here           (precmd, before PS1)
+  ESC ] 133 ; B BEL    you type the command here      (end of PS1; unused)
+  ESC ] 133 ; C BEL    Enter: the output starts here   (preexec)
+  ESC ] 133 ; D ; 0 BEL  the command ended, status 0   (precmd, next time)
+#+end_example
+
+guiltty used A since v0.20 to jump between prompts (Ctrl+Shift+Z / X).
+Now C and D matter too. On C, the grid remembers the cursor's row number
+as where output starts. On D, it remembers where the output ended: the
+row after the last one with output. That's the cursor's row if the
+cursor is at column 0 (the output ended with a newline), or the row after
+it if not ([[file:../lib/guiltty/grid.ex::def mark_output_start][Grid.mark_output_start/1]]). A shell that never sends D
+still sends A for its next prompt, so A ends any output that's still open.
+
+Here is a real grid, two commands on a 20x8 screen, from iex:
+
+#+begin_example
+  bytes: A "$ ls\r\n" C "a.txt\r\nb.txt\r\n" D  A "$ echo hi\r\n" C "hi\r\n" D  A "$ "
+
+  row 0   $ ls        <- A
+  row 1   a.txt       <- C         output_marks: [{4, 5}, {1, 3}]
+  row 2   b.txt                    (newest first: {first row, row after the last})
+  row 3   $ echo hi   <- D, A      prompt_marks: [5, 3, 0]
+  row 4   hi          <- C
+  row 5   $ _         <- D, A      Grid.last_output -> {4, 4}
+
+  Ctrl+Shift+G copies "hi"
+#+end_example
+
+The marks are row *numbers*, the same ones the scrollback counts with
+(see "Numbering" above), so output longer than the screen is still found
+in the scrollback. They follow their rows through a reflow, as the prompt
+marks and links do. If the start of the output has scrolled out of the
+scrollback, you get what's left; if all of it has, there's nothing to copy.
+A command that's still running counts too: you get what it has printed so
+far, down to the cursor. On the alternate screen (vim, htop) marks are
+ignored, since those rows aren't your shell's history.
+
+The Window asks the Screen to select those rows, as if you had dragged
+over them, so you see what was copied, and puts the text on the
+CLIPBOARD (like Ctrl+Shift+C, not PRIMARY: you asked for a copy). The
+status says what happened: copied, "the last command printed nothing",
+or that the shell doesn't mark its commands.
+
+*** Shells that mark only prompts
+
+Some setups send A and nothing else. Then guiltty can still guess: the
+output of the last command is everything between the last two prompts,
+less the command line. The command line starts on the prompt's row and
+goes on over any rows it wrapped into, so a long command is left out
+whole ([[file:../lib/guiltty/grid.ex::defp command_end][command_end/2]]):
+
+#+begin_example
+  row 0   $ ls        <- A (the older prompt)
+  row 1   a           <- the guess starts on the row after the command line
+  row 2   b
+  row 3   $ _         <- A (the newest)        Grid.last_output -> {:guess, {1, 2}}
+#+end_example
+
+It's a guess because a prompt of two lines (a path above, =$= below)
+makes it start one row early. So the status says "copied a guess", and
+points to the book for the real marks.
+
+*** Turning the marks on
+
+Most shells don't send them by default. Some ways to get them:
+
+- *zsh with powerlevel10k*: =typeset -g POWERLEVEL9K_TERM_SHELL_INTEGRATION=true=
+  in =~/.p10k.zsh=.
+- *fish* 4 sends them by itself.
+- *zsh*, by hand, in =~/.zshrc=:
+
+#+begin_src sh
+  _mark_prompt() { print -n '\e]133;D;'$?'\a\e]133;A\a' }
+  _mark_output() { print -n '\e]133;C\a' }
+  precmd_functions+=(_mark_prompt)
+  preexec_functions+=(_mark_output)
+#+end_src
+
+- *bash*: =PS0= runs when you press Enter, and =PROMPT_COMMAND= before each prompt:
+
+#+begin_src sh
+  PS0='\[\e]133;C\a\]'
+  PROMPT_COMMAND='printf "\e]133;D;%s\a\e]133;A\a" $?'
+#+end_src
+
 ** When the text under it changes
 
 Because a selection holds row numbers, it follows its text as output
@@ -202,6 +324,44 @@ same text, the selection stays; different, it goes, and every row is sent
 again without the highlight. Comparing the text, not "did those rows
 change", is what lets a selection survive scrolling, which changes every
 row on screen but not the text it points at.
+
+* Links from the keyboard
+
+Ctrl+click opens a link (chapter 20), but that needs the mouse. Ctrl+Shift+J
+(=hints=) labels every link on screen with letters, as Vimium does in a
+browser and Kitty and Alacritty do in a terminal; type a label, and that link
+opens:
+
+#+begin_example
+  before                                   after Ctrl+Shift+J
+  $ mix phx.server                         $ mix phx.server
+  Access at http://localhost:4000          Access at [a]tp://localhost:4000
+  docs: https://hexdocs.pm/phoenix         docs: [s]tps://hexdocs.pm/phoenix
+
+  typing s opens https://hexdocs.pm/phoenix; Escape, or a letter no label
+  starts with, ends it
+#+end_example
+
+The pieces are ones guiltty already had:
+
+- *Finding the links.* =Url.visible/3= runs the same pattern as Ctrl+click
+  ([[file:../lib/guiltty/url.ex::def visible][Guiltty.Url]]) over every
+  logical line in view, so a URL that wrapped is one link, with a span on
+  each row it takes.
+- *Labels.* The home row first: =a s d f g h j k l=, then the rest of the
+  alphabet. With more than 26 links every label is two letters. No label
+  is the start of another, so a label opens the moment it's complete, with
+  no waiting to see whether more letters follow.
+- *Drawing them.* Nothing new in the renderer. The Screen already sends
+  decorated rows for search matches and the selection (=View.rows/5=);
+  =View.hints/3= adds an underline under each link and writes its label
+  over the link's first cells in reverse video. As you type, labels that
+  no longer match go away, and the letters you've typed drop off the rest.
+- *Opening.* The same =open_link/2= as Ctrl+click: only =http=, =https=,
+  =mailto= and =file= open, and the status shows where the link goes.
+
+Only links in plain text get labels for now: OSC 8 links (a program
+saying "this text links there") are for Ctrl+click.
 
 * Two clipboards (on X11)
 
@@ -255,6 +415,13 @@ in one that did (=vim=, =htop=), hold Shift.
 - xterm ctlseqs: =CSI 3 J= (erase the scrollback), mouse tracking modes,
   =alternateScroll=.
 - Erlang: =binary_part/3= and sub-binaries, =:binary.longest_common_suffix/1=.
+- Elixir: =Regex.scan/3= with =return: :index= (byte offsets, not characters).
+- Vimium's link hints: the idea behind Ctrl+Shift+J.
+- Shell integration: the FinalTerm marks (OSC 133 A, B, C, D), as
+  written up in the "semantic prompts" proposal by Per Bothner
+  (gitlab.freedesktop.org/Per_Bothner/specifications, =proposals/semantic-prompts.md=).
+- =zshmisc(1)=: "Hook Functions" (=precmd=, =preexec=); =bash(1)=: =PS0=,
+  =PROMPT_COMMAND=.
 
 * Questions
 
@@ -267,6 +434,11 @@ in one that did (=vim=, =htop=), hold Shift.
 6. Why does sealing 256 rows at a time make guiltty faster?
 7. Why does guiltty compare the selected text instead of checking whether
    the selected rows changed?
+8. Why can't guiltty find the last command's output by itself, without
+   OSC 133? And why does an A mark end the output, as well as D?
+9. Why does a wrapped row keep its trailing spaces when copied, when
+   other rows lose them?
+10. Why are hint labels either all one letter or all two, never mixed?
 
 ** Answers
 :PROPERTIES:
@@ -288,3 +460,14 @@ in one that did (=vim=, =htop=), hold Shift.
 7. Scrolling changes every row on the screen but not the text a selection
    points at (its row numbers move with it). Only a change to that text
    should drop the selection.
+8. To the grid, a prompt is just characters: =$ =, a powerline arrow, two
+   lines with a clock. Only the shell knows where its prompt ends and a
+   program's output starts, so it has to say so. A ends output too because
+   some shells and setups send no D, and a new prompt means the command
+   before it is certainly done.
+9. On a wrapped row, the text went on past the edge: a space in the last
+   column is part of what was printed ("wor ld"). On a row that ended
+   with Enter, cells after the text are just empty cells.
+10. So no label is the start of another. With "a" and "as" both labels,
+    typing =a= couldn't open anything until guiltty knew whether =s= was
+    coming.

@@ -93,6 +93,33 @@ defmodule Guiltty.DeskTest do
     assert ids(b) == b_ids
   end
 
+  test "a crashed Tabs puts the tabs back as they were: splits, names, locks" do
+    desk = open_desk()
+    tabs = Desk.tabs(desk)
+    [first] = ids(desk)
+    {:ok, second} = Tabs.new_tab(tabs)
+    {:ok, pane} = Tabs.split(tabs, :right)
+    :ok = Tabs.rename(tabs, first, "logs")
+    :ok = Tabs.toggle_lock(tabs, second)
+    :ok = Tabs.switch(tabs, 0)
+    before = :sys.get_state(tabs)
+
+    old = GenServer.whereis(tabs)
+    Process.exit(old, :kill)
+
+    assert eventually(fn ->
+             new = GenServer.whereis(tabs)
+             new not in [nil, old] and ids(desk) == [first, second]
+           end)
+
+    now = :sys.get_state(tabs)
+    assert now.layouts == before.layouts
+    assert Guiltty.Layout.panes(now.layouts[second]) == [second, pane]
+    assert now.names == %{first => "logs"}
+    assert MapSet.to_list(now.locked) == [second]
+    assert now.active == first
+  end
+
   defp window(desk) do
     Supervisor.which_children(Desk.name(desk))
     |> Enum.find_value(fn

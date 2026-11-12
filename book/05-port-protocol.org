@@ -81,6 +81,7 @@ one byte.
 |  23 | IMAGE | Elixir->renderer | u64 uid, u8 format (0 RGB, 1 RGBA, 2 PNG), u32 width, u32 height, then the data (chapter 26) |
 |  24 | IMAGE_DROP | Elixir->renderer | u64 uid: forget that image |
 |  25 | PLACEMENTS | Elixir->renderer | u16 cols, u16 rows (dropped if not the renderer's), u16 count, then 42 bytes each: u64 uid, i32 row, u16 col, u16 x and y offset, u32 source x, y, w, h, u16 cells wide and high, i32 z |
+|  26 | FOCUS | renderer->Elixir | u8: the window gained (1) or lost (0) the keyboard |
 
 This is version 14: bit 3 of ROWS' cursor style says a program is
 reading a password, and the renderer draws a lock instead of the cursor

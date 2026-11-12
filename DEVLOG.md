@@ -1650,3 +1650,59 @@ _Draft: agent, awaiting user_
 says `v0.23.2`. The release only knows the bare number (`RELEASE_VSN`, from
 `mix.exs`), so the "v" is added where `env.sh` prints it, in both the purple
 and the plain answer, so a pipe and a terminal agree.
+
+## 2026-11-11 — Copy the last output (v0.24.0)
+
+_Draft: agent, awaiting user_
+
+**Tried.** Two things from the "Later" lists, both about not losing work.
+Ctrl+Shift+G copies the last command's output. guiltty already used the
+shell's OSC 133 A marks to jump between prompts; now C ("Enter was pressed")
+and D ("it ended") give each command's output a first and last row. The other
+one, asking before the close button closes a window with a busy tab (a new
+CLOSE message, protocol 15), was built and then rolled back: it didn't feel
+right in use, so the close button still closes at once and the protocol stays
+at 14.
+
+**Clicked.** Output marks are row numbers like everything else in the
+scrollback, so reflow and old output that scrolls away were already handled
+the way they are for prompts.
+
+**Later the same day.** A rewind (scrub a tab back through time) was
+weighed and dropped: even with snapshots that share unchanged rows, a busy
+full-screen tab would fill any memory budget in a minute. A list of
+smaller things went in instead, and three came out once measured:
+
+- Copies join rows where a line only wrapped, so Ctrl+Shift+G gives a
+  long compiler error back as one line. One existing test had pinned the
+  old newline; it now checks the copy is the same at any width.
+- Ctrl+Shift+G guesses when the shell marks only prompts, and says it's a
+  guess.
+- A Keeper process per desk holds the tab layout in an ETS table with an
+  heir, so a crashed Tabs comes back with its splits, names and locks. The
+  first try crashed on the `ETS-TRANSFER` message that arrives with the
+  table: Tabs had no clause for it.
+- ✓ and ✗ on background tabs, from OSC 133 D's exit status.
+- Ctrl+Shift+J, link hints. Ctrl+Shift+O was taken (split right), so J,
+  for jump. The first test expected two links and found four: echoing a
+  URL prints it twice, once on the command line.
+- Idle Screen and Parser processes hibernate after 5 s: 161 KB to 39 KB
+  and 278 KB to 1 KB of heap on a tab that had printed 300,000 lines.
+- A watchdog on `:erlang.system_monitor/2`.
+
+What measuring removed: `fullsweep_after` (no dead binaries piling up),
+`off_heap` message queues (backpressure keeps every queue at one chunk),
+and a faster scratch buffer in the text NIF (the whole NIF is 8% of the
+non-ASCII path; the buffer could save 1 to 2% at most). "Only redraw dirty
+rows" in an old Later list turned out to be done already, in both backends.
+
+### Later
+
+- Ask the desktop for attention when a long command finishes in a window
+  that isn't focused (`SDL_FlashWindow`; a new renderer message, so a
+  protocol bump). The `{:command_ended, ...}` message already reaches the
+  Window.
+- A hand pointer over links (`SDL_SetCursor`; also a protocol message).
+- Hints for OSC 8 links, not only URLs in plain text.
+- Two-line prompts still fool the guess in Ctrl+Shift+G; a B mark (end of
+  prompt) would fix it for shells that send B.

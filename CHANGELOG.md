@@ -8,6 +8,31 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.24.0 — 2026-11-11 — Copy the last output
+
+### Added
+- Ctrl+Shift+G copies what the last command printed to the clipboard, and
+  selects it so you see what was copied (`copy_output` in `keys:`). The
+  shell has to mark its commands (OSC 133 C and D): fish does by itself;
+  powerlevel10k does with `POWERLEVEL9K_TERM_SHELL_INTEGRATION=true`;
+  for plain zsh or bash, see chapter 15 of the book. A shell that marks
+  only its prompts gets a guess, and the tab bar says it's one.
+- Ctrl+Shift+J labels every link on screen with a letter or two; type a
+  label to open that link, Escape to stop (`hints` in `keys:`).
+- A tab you're not looking at shows ✓ when a command in it finished, and
+  ✗ when one failed (shells that mark their commands, as above).
+
+### Changed
+- Copying text that wrapped onto several rows gives the line as it was
+  printed, without a newline at each row's edge.
+- If the part of guiltty that keeps a window's tabs crashes, the tabs now
+  come back as they were: splits, names, locks and marks. Only the
+  broadcast group has to be joined again.
+- Tabs that have been idle for a few seconds give back the memory their
+  busiest moment needed.
+- guiltty logs a warning when a tab pauses long to collect garbage or
+  grows past 256 MB, well before the 2 GB limit closes it.
+
 ## 0.23.3 — 2026-11-10 — A v in the version
 
 ### Fixed

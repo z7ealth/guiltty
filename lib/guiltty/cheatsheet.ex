@@ -61,6 +61,8 @@ defmodule Guiltty.Cheatsheet do
        [
          {"Copy", k.(:copy)},
          {"Select all", k.(:select_all)},
+         {"Copy the last command's output", k.(:copy_output)},
+         {"Open a link from the keyboard", k.(:hints)},
          {"Paste", "Ctrl+Shift+V / Shift+Ins"},
          {"Select", "drag"},
          {"Select word / line", "double / triple click"},

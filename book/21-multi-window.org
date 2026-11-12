@@ -31,12 +31,17 @@ The heart of it is one small supervisor per window, a *desk*
   |-- Guiltty.Sessions          every tab's session, of every window
   |-- Guiltty.Desks             DynamicSupervisor
   |   |-- Desk 1                rest_for_one, auto_shutdown: any_significant
+  |   |   |-- Keeper            keeps the tab layout through a Tabs crash (chapter 12)
   |   |   |-- Tabs              significant: its last tab closing ends the desk
   |   |   `-- Window            the renderer
   |   `-- Desk 3
+  |       |-- Keeper
   |       |-- Tabs
   |       `-- Window
   |-- Guiltty.Lifeline          significant: the last desk ending stops guiltty
+  |-- Guiltty.Distribution
+  |-- Guiltty.Launcher
+  |-- Guiltty.Watchdog          warns of long collections and huge heaps (chapter 12)
   `-- (a Task)                  the first window, at boot
 #+end_example
 

@@ -145,6 +145,10 @@
     clear_scrollback: ["ctrl+shift+k"],
     search: ["ctrl+shift+f"],
     copy: ["ctrl+shift+c"],
+    # Copies what the last command printed (the shell must mark it: OSC 133).
+    copy_output: ["ctrl+shift+g"],
+    # Labels every link on screen; type a label to open that link.
+    hints: ["ctrl+shift+j"],
     # Selects everything: the scrollback and the screen, as in an editor.
     select_all: ["ctrl+shift+a"],
     # Ctrl and the + key: "plus" names the key that types + without Shift

@@ -118,7 +118,7 @@ The whole screen in reverse video (=CSI ? 5 h=, the visible bell) works the same
 | 7    | "I'm in this folder": a =file://= URI | a new tab starts there, if it's on this machine |
 | 8    | "this text links to..."               | Ctrl+click opens it                  |
 | 52   | "put this on the clipboard"           | yes, from the focused pane; never read |
-| 133  | "a prompt starts here"                | Ctrl+Shift+Z and X jump between them |
+| 133  | A "a prompt starts here", C "output starts", D "it ended" | Ctrl+Shift+Z and X jump between prompts; Ctrl+Shift+G copies the last output (chapter 15) |
 
 A cell has no room for a link: its 16 attribute bits are all taken now. So a cell
 only has one bit saying it's part of a link, and the grid keeps a list of where

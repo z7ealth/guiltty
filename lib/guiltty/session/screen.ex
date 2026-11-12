@@ -45,6 +45,13 @@ defmodule Guiltty.Session.Screen do
   (BEL) as `{:mark, id, :bell}`, so the tab bar can show which tabs have
   something new. Output in the first second after a resize doesn't count:
   every shell redraws its prompt then, and every tab would light up.
+
+  A shell that marks its commands (OSC 133 C and D, with the exit code)
+  also gives `{:mark, id, :done}` or `{:mark, id, :failed}` when one ends.
+  Only the more important news goes out: activity, then done, then failed,
+  then the bell. And whether the tab is viewed or not, the owner hears
+  `{:command_ended, id, exit_code, ms}`, so a window that isn't focused
+  can ask for attention after a long command.
   """
 
   use GenServer
@@ -56,7 +63,11 @@ defmodule Guiltty.Session.Screen do
   @sync_limit_ms 150
 
   def start_link(opts) do
-    Session.start_named(opts[:id], :screen, &GenServer.start_link(__MODULE__, opts, name: &1))
+    Session.start_named(
+      opts[:id],
+      :screen,
+      &GenServer.start_link(__MODULE__, opts, name: &1, hibernate_after: 5_000)
+    )
   end
 
   @doc "Applies commands. Returns once they're on the screen (the parser waits on it)."
@@ -99,7 +110,10 @@ defmodule Guiltty.Session.Screen do
   (1 = by character, 2 = by word, 3 = by line), `{:extend, pos}`, or
   `:finish`, which returns the selected text (nil for a plain click, which
   clears the selection instead). `:all` selects the scrollback and the
-  screen, and returns the text.
+  screen, and returns the text. `:last_output` selects what the last
+  command printed (OSC 133) and returns it, or `:empty` if it printed
+  nothing, `{:guess, text}` if the shell marks only its prompts, or nil
+  if it marks nothing.
   """
   def select(id, action), do: GenServer.call(Session.via(id, :screen), {:select, action})
 
@@ -121,6 +135,17 @@ defmodule Guiltty.Session.Screen do
   """
   def hover(id, pos, urls? \\ false),
     do: GenServer.call(Session.via(id, :screen), {:hover, pos, urls?})
+
+  @doc """
+  Keyboard hints: every URL in view gets a label of letters to type.
+
+    * `:start` labels them and returns how many there are (0: no hints)
+    * `{:type, letters}` returns `{:open, url}` when the letters are a
+      label, `:more` while they could still become one, or `:none` (and the
+      hints end) when they can't
+    * `:stop` takes the labels away
+  """
+  def hints(id, action), do: GenServer.call(Session.via(id, :screen), {:hints, action})
 
   @doc "Scrolls to the prompt before (`:older`) or after (`:newer`) the view's top (OSC 133)."
   def jump_prompt(id, direction),
@@ -203,7 +228,11 @@ defmodule Guiltty.Session.Screen do
        mark: nil,
        # output before this is a resize's redraw, not activity (monotonic
        # time, which can be negative: start from now, not 0)
-       quiet_until: System.monotonic_time(:millisecond)
+       quiet_until: System.monotonic_time(:millisecond),
+       # when the running command started (OSC 133 C), monotonic ms, or nil
+       command_started: nil,
+       # keyboard hints: %{list: [{label, url, spans}], typed: binary}, or nil
+       hints: nil
      }}
   end
 
@@ -248,7 +277,7 @@ defmodule Guiltty.Session.Screen do
 
     decorated =
       View.decorated?(state.scroll, state.selection, state.search) or underline != [] or
-        state.grid.reverse_video
+        state.grid.reverse_video or state.hints != nil
 
     grid =
       if state.decorated and not decorated, do: Grid.mark_all_dirty(state.grid), else: state.grid
@@ -257,7 +286,10 @@ defmodule Guiltty.Session.Screen do
 
     rows =
       if decorated,
-        do: View.rows(grid, state.scroll, state.selection, state.search, underline),
+        do:
+          grid
+          |> View.rows(state.scroll, state.selection, state.search, underline)
+          |> View.hints(View.top(grid, state.scroll), shown_hints(state)),
         else: rows
 
     rows =
@@ -315,6 +347,38 @@ defmodule Guiltty.Session.Screen do
 
   def handle_call(:cwd_uri, _from, state), do: {:reply, state.grid.cwd_uri, state}
 
+  def handle_call({:hints, :start}, _from, state) do
+    top = View.top(state.grid, state.scroll)
+    urls = Url.visible(state.grid, top, top + state.grid.rows - 1)
+
+    hints =
+      Enum.zip_with(hint_labels(length(urls)), urls, fn label, {url, spans} ->
+        {label, url, spans}
+      end)
+
+    state = %{state | hints: if(hints != [], do: %{list: hints, typed: ""})}
+    {:reply, length(hints), notify(state)}
+  end
+
+  def handle_call({:hints, {:type, _}}, _from, %{hints: nil} = state),
+    do: {:reply, :none, state}
+
+  def handle_call({:hints, {:type, typed}}, _from, state) do
+    case Enum.filter(state.hints.list, fn {label, _, _} -> String.starts_with?(label, typed) end) do
+      [{^typed, url, _spans}] ->
+        {:reply, {:open, url}, notify(%{state | hints: nil})}
+
+      [] ->
+        {:reply, :none, notify(%{state | hints: nil})}
+
+      _more ->
+        {:reply, :more, notify(put_in(state.hints.typed, typed))}
+    end
+  end
+
+  def handle_call({:hints, :stop}, _from, state),
+    do: {:reply, :ok, if(state.hints, do: notify(%{state | hints: nil}), else: state)}
+
   def handle_call({:jump_prompt, direction}, _from, state) do
     top = View.top(state.grid, state.scroll)
 
@@ -352,6 +416,22 @@ defmodule Guiltty.Session.Screen do
     selection = Selection.all(state.grid)
     text = Selection.text(state.grid, selection)
     {:reply, text, notify(%{state | selection: selection, selected_text: text})}
+  end
+
+  # The last command's output, selected so you see what was copied.
+  def handle_call({:select, :last_output}, _from, state) do
+    case Grid.last_output(state.grid) do
+      {:guess, rows} ->
+        {text, state} = select_rows(state, rows)
+        {:reply, {:guess, text}, state}
+
+      {_first, _last} = rows ->
+        {text, state} = select_rows(state, rows)
+        {:reply, text, state}
+
+      other ->
+        {:reply, other, state}
+    end
   end
 
   def handle_call({:select, {:extend, pos}}, _from, %{selection: %Selection{} = sel} = state) do
@@ -444,11 +524,13 @@ defmodule Guiltty.Session.Screen do
   # after activity, never activity after a bell.
   defp report_mark(state) do
     {rang, grid} = Grid.take_bell(state.grid)
-    state = %{state | grid: grid}
+    {commands, grid} = Grid.take_commands(grid)
+    {ended, state} = commands_ended(%{state | grid: grid}, commands)
 
     mark =
       cond do
         rang -> :bell
+        ended != nil -> ended
         System.monotonic_time(:millisecond) >= state.quiet_until -> :activity
         true -> nil
       end
@@ -464,7 +546,55 @@ defmodule Guiltty.Session.Screen do
 
   defp rank(nil), do: 0
   defp rank(:activity), do: 1
-  defp rank(:bell), do: 2
+  defp rank(:done), do: 2
+  defp rank(:failed), do: 3
+  defp rank(:bell), do: 4
+
+  # Times each command and tells the owner when one ends. Returns the mark
+  # the last one deserves (nil if none ended, or the shell gave no code).
+  defp commands_ended(state, commands) do
+    now = System.monotonic_time(:millisecond)
+
+    Enum.reduce(commands, {nil, state}, fn
+      :started, {mark, state} ->
+        {mark, %{state | command_started: now}}
+
+      {:ended, code}, {mark, state} ->
+        ms = if state.command_started, do: now - state.command_started
+        if state.owner, do: send(state.owner, {:command_ended, state.id, code, ms})
+
+        mark =
+          case code do
+            0 -> max_mark(mark, :done)
+            nil -> mark
+            _ -> max_mark(mark, :failed)
+          end
+
+        {mark, %{state | command_started: nil}}
+    end)
+  end
+
+  defp max_mark(a, b), do: if(rank(a) >= rank(b), do: a, else: b)
+
+  # The home row first: one letter each while there are few enough, two
+  # when there are more (no label is the start of another, so typing one
+  # never has to wait to see if more letters follow).
+  @hint_letters ~w(a s d f g h j k l q w e r t y u i o p z x c v b n m)
+
+  defp hint_labels(n) when n <= length(@hint_letters), do: Enum.take(@hint_letters, n)
+
+  defp hint_labels(n),
+    do: Enum.take(for(a <- @hint_letters, b <- @hint_letters, do: a <> b), n)
+
+  # The labels still possible after what was typed: the letters typed so
+  # far are dropped from the label, so you see what's left to type.
+  defp shown_hints(%{hints: nil}), do: []
+
+  defp shown_hints(%{hints: %{list: list, typed: typed}}) do
+    for {label, _url, spans} <- list,
+        String.starts_with?(label, typed),
+        do: {String.replace_prefix(label, typed, ""), spans}
+  end
 
   # Scrolled back, new rows entering the scrollback would move the text up
   # under the viewer: scroll back as many rows to stay on the same text.
@@ -555,6 +685,12 @@ defmodule Guiltty.Session.Screen do
   # redrawing), highlighting whatever is there now would be wrong: the
   # selection goes, as in other terminals. Comparing the text, not "did
   # these rows change", keeps a selection that merely scrolled.
+  defp select_rows(state, {first, last}) do
+    selection = %Selection{anchor: {first, 0}, head: {last, state.grid.cols - 1}}
+    text = Selection.text(state.grid, selection)
+    {text, notify(%{state | selection: selection, selected_text: text})}
+  end
+
   defp drop_stale_selection(%{selection: %Selection{} = sel, selected_text: text} = state)
        when is_binary(text) do
     if Selection.text(state.grid, sel) == text,

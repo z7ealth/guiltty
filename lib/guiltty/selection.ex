@@ -78,23 +78,31 @@ defmodule Guiltty.Selection do
   end
 
   @doc """
-  The selected text. Each row's trailing spaces are dropped and rows are
-  joined with newlines.
+  The selected text. Rows are joined with newlines, except where a long
+  line only wrapped: there the text goes on as it was printed, spaces and
+  all. Other rows lose their trailing spaces.
   """
   def text(grid, sel) do
     {{r1, _}, {r2, _}} = range(grid, sel)
 
     r1..r2
-    |> Enum.map(fn n ->
+    |> Enum.map_join(fn n ->
       case {Grid.line(grid, n), cols_in_row(grid, sel, n)} do
         {nil, _} ->
-          ""
+          if n < r2, do: "\n", else: ""
 
         {line, from..to//_} ->
-          grid |> Grid.line_text(cells(line, from, to)) |> String.trim_trailing()
+          text = Grid.line_text(grid, cells(line, from, to))
+
+          # The wrap mark is on the row's last cell, so it only counts when
+          # the selection reaches the end of the row.
+          cond do
+            n < r2 and to == grid.cols - 1 and Grid.wrapped?(line) -> text
+            n < r2 -> String.trim_trailing(text) <> "\n"
+            true -> String.trim_trailing(text)
+          end
       end
     end)
-    |> Enum.join("\n")
   end
 
   defp cells(line, from, to) do

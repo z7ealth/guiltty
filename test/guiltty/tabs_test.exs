@@ -378,6 +378,22 @@ defmodule Guiltty.TabsTest do
     assert marks() == %{}
   end
 
+  test "a command ending marks the tab: done, then failed; activity doesn't undo it" do
+    {:ok, second} = Tabs.new_tab(@tabs)
+    look_at(second, 1)
+
+    # What a shell with integration sends around a command, by hand.
+    Session.write(second, "printf '\\e]133;C\\a'; true; printf '\\e]133;D;0\\a'\r")
+    assert eventually(fn -> marks() == %{second => :done} end)
+
+    Session.write(second, "echo more\r")
+    Process.sleep(100)
+    assert marks() == %{second => :done}
+
+    Session.write(second, "printf '\\e]133;C\\a'; printf '\\e]133;D;2\\a'\r")
+    assert eventually(fn -> marks() == %{second => :failed} end)
+  end
+
   test "output right after a resize isn't activity: shells redraw their prompt" do
     {:ok, second} = Tabs.new_tab(@tabs)
     look_at(second, 1)

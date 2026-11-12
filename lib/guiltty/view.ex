@@ -95,6 +95,59 @@ defmodule Guiltty.View do
     if row + scroll < grid.rows, do: {row + scroll, col}
   end
 
+  @doc """
+  The keyboard hints over `rows` (from `rows/5`, whose first row is row
+  number `top`): each `{label, spans}` underlines its link and writes its
+  label over the link's first cells, in reverse video so it stands out
+  from any text.
+  """
+  def hints(rows, _top, []), do: rows
+
+  def hints(rows, top, hints) do
+    marks = Grid.attr(:inverse) ||| Grid.attr(:bold)
+
+    Enum.reduce(hints, Map.new(rows), fn {label, spans}, rows ->
+      in_view = Enum.filter(spans, fn {n, _, _} -> Map.has_key?(rows, n - top) end)
+
+      rows =
+        Enum.reduce(in_view, rows, fn {n, c1, c2}, rows ->
+          Map.update!(
+            rows,
+            n - top,
+            &update_attrs(&1, c1..c2, fn a -> a ||| Grid.attr(:underline) end)
+          )
+        end)
+
+      case in_view do
+        [{n, c1, _} | _] -> Map.update!(rows, n - top, &put_label(&1, c1, label, marks))
+        [] -> rows
+      end
+    end)
+    |> Enum.sort()
+  end
+
+  # The label's letters over the cells from col on, as far as the row goes.
+  defp put_label(line, col, label, marks) do
+    size = Grid.cell_size()
+    cols = div(byte_size(line), size)
+
+    label
+    |> String.to_charlist()
+    |> Enum.with_index(col)
+    |> Enum.filter(fn {_char, c} -> c < cols end)
+    |> Enum.reduce(line, fn {char, c}, line ->
+      offset = c * size
+
+      <<before::binary-size(^offset), _glyph::32, attrs::16, colors::binary-size(8),
+        after_::binary>> = line
+
+      # The label replaces the whole cell, so a wide character under it
+      # loses its wide and spacer marks.
+      attrs = (attrs &&& bnot(Grid.attr(:wide) ||| Grid.attr(:spacer))) ||| marks
+      <<before::binary, char::32, attrs::16, colors::binary, after_::binary>>
+    end)
+  end
+
   defp mark_matches(line, _grid, _n, nil), do: line
 
   defp mark_matches(line, grid, n, %{query: query, match: current}) do

@@ -169,6 +169,8 @@ the cursor is: nothing you type appears, but guiltty is listening.
 | Ctrl+Shift+F                  | search; Enter older, Shift+Enter newer, Escape ends |
 | select with the mouse         | copies to the primary selection          |
 | Ctrl+Shift+A                  | select all: the scrollback and the screen |
+| Ctrl+Shift+G                  | copy the last command's output (the shell must mark it: OSC 133) |
+| Ctrl+Shift+J                  | label every link on screen; type a label to open it, Escape ends |
 | Ctrl+Shift+C, Ctrl+Shift+V    | copy, paste (middle click pastes the selection) |
 | Ctrl+= (or Ctrl and the + key), Ctrl+-, Ctrl+0 | zoom in, out, reset |
 | Ctrl+,                        | open the config file in your editor      |

@@ -5,6 +5,7 @@ defmodule Guiltty.Desk do
   broadcast group) and its own `Guiltty.Window` (the renderer).
 
       Desk (rest_for_one, auto_shutdown: any_significant)
+      ├── Keeper   holds the tab layout while Tabs restarts (Guiltty.Tabs.Keeper)
       ├── Tabs     significant: when its last tab closes, the desk ends
       └── Window
 
@@ -39,6 +40,9 @@ defmodule Guiltty.Desk do
 
   @doc "The desk's Tabs, for the `Guiltty.Tabs` functions."
   def tabs(desk), do: {:via, Registry, {Guiltty.Registry, {:desk, desk, :tabs}}}
+
+  @doc "The desk's `Guiltty.Tabs.Keeper`."
+  def keeper(desk), do: {:via, Registry, {Guiltty.Registry, {:desk, desk, :keeper}}}
 
   @doc "The ids of the running desks."
   def all do
@@ -95,9 +99,16 @@ defmodule Guiltty.Desk do
       |> Keyword.get(:session_opts, [])
       |> Keyword.update(:env, display, &Map.merge(display, &1))
 
-    tabs_opts = [desk: desk, name: tabs(desk), cwd: opts[:cwd], session_opts: session_opts]
+    tabs_opts = [
+      desk: desk,
+      name: tabs(desk),
+      keeper: keeper(desk),
+      cwd: opts[:cwd],
+      session_opts: session_opts
+    ]
 
     children = [
+      {Guiltty.Tabs.Keeper, name: keeper(desk)},
       Supervisor.child_spec({Tabs, tabs_opts}, significant: true),
       {Window, window_opts}
     ]

@@ -17,8 +17,12 @@ defmodule Guiltty.Tabs do
   pane closes.
 
   Sessions are registered with their desk's id, so if this process
-  crashes, the new one takes back its own sessions, and only those, each
-  as a tab of its own: the layouts are lost with the crash.
+  crashes, the new one takes back its own sessions, and only those. With
+  a `Guiltty.Tabs.Keeper` (every desk has one), they come back as they
+  were: the same tabs, splits, names, locks and marks. The broadcast group
+  doesn't: joining it checks what each pane runs, so after a crash you
+  join again on purpose. Without a keeper, each session comes back as a
+  tab of its own.
 
   A window registers with `attach_window/2` and then gets `{:tabs, info}`
   whenever something changes. `info` is a map:
@@ -34,8 +38,9 @@ defmodule Guiltty.Tabs do
     * `:group` - the broadcast group, `%{session => host}`, or `:local` for
       a local pane (`toggle_broadcast/3`)
     * `:lost` - group panes whose connection is gone (broadcast is paused)
-    * `:marks` - `%{tab => :activity | :bell}`: tabs that printed something,
-      or rang the bell, since you last looked at them (see
+    * `:marks` - `%{tab => :activity | :done | :failed | :bell}`: tabs that
+      printed something, finished a command (with or without an error), or
+      rang the bell, since you last looked at them (see
       `Guiltty.Session.Screen`, "Marks")
 
   ## Broadcast
@@ -74,7 +79,7 @@ defmodule Guiltty.Tabs do
 
   @doc """
   Options: `:desk` (the desk's id; its sessions are registered with it),
-  `:name`, `:cwd` (where the first tab starts, when the config's
+  `:name`, `:keeper` (a `Guiltty.Tabs.Keeper`, to survive a crash), `:cwd` (where the first tab starts, when the config's
   `working_directory` is `:inherit`: the folder `guiltty` was run in) and
   `:session_opts` (merged into every session's, for tests).
   """
@@ -200,7 +205,9 @@ defmodule Guiltty.Tabs do
       # monitor ref => session id
       monitors: %{},
       session_opts: Keyword.get(opts, :session_opts, []),
-      first_cwd: Keyword.get(opts, :cwd)
+      first_cwd: Keyword.get(opts, :cwd),
+      # the Keeper's ETS table this process owns, or nil
+      table: take_table(opts[:keeper])
     }
 
     {:ok, state, {:continue, :first_tab}}
@@ -217,8 +224,94 @@ defmodule Guiltty.Tabs do
 
       found ->
         Logger.info("tabs: took back #{length(found)} running sessions")
-        {:noreply, Enum.reduce(found, state, &adopt/2)}
+        state = state |> restore(saved(state), found) |> save()
+        {:noreply, state}
     end
+  end
+
+  ## Surviving a crash
+
+  defp take_table(nil), do: nil
+
+  defp take_table(keeper) do
+    case Guiltty.Tabs.Keeper.take(keeper) do
+      {:error, _} -> nil
+      table -> table
+    end
+  end
+
+  defp saved(%{table: nil}), do: nil
+
+  defp saved(%{table: table}) do
+    case :ets.lookup(table, :saved) do
+      [{:saved, saved}] -> saved
+      [] -> nil
+    end
+  end
+
+  # What a new Tabs needs to put the window back as it was. Written on every
+  # change, which is when windows are told (notify_windows/1).
+  defp save(%{table: nil} = state), do: state
+
+  defp save(state) do
+    saved = Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :marks, :active])
+    :ets.insert(state.table, {:saved, saved})
+    state
+  end
+
+  # The saved tabs, less the panes whose sessions ended meanwhile; a session
+  # the saved layout doesn't know (opened just before the crash) gets a tab
+  # of its own.
+  defp restore(state, nil, found), do: Enum.reduce(found, state, &adopt/2)
+
+  defp restore(state, saved, found) do
+    alive = Map.new(found)
+
+    layouts =
+      for tab <- saved.tabs,
+          layout = prune(saved.layouts[tab], alive),
+          layout != nil,
+          into: %{},
+          do: {tab, layout}
+
+    tabs = Enum.filter(saved.tabs, &Map.has_key?(layouts, &1))
+
+    focus =
+      Map.new(tabs, fn tab ->
+        panes = Layout.panes(layouts[tab])
+        {tab, if(saved.focus[tab] in panes, do: saved.focus[tab], else: hd(panes))}
+      end)
+
+    state = %{
+      state
+      | tabs: tabs,
+        layouts: layouts,
+        focus: focus,
+        names: Map.take(saved.names, tabs),
+        locked: MapSet.filter(saved.locked, &(&1 in tabs)),
+        marks: Map.take(saved.marks, tabs),
+        active: if(saved.active in tabs, do: saved.active, else: List.first(tabs))
+    }
+
+    panes = Enum.flat_map(tabs, &Layout.panes(layouts[&1]))
+
+    state =
+      Enum.reduce(panes, state, fn id, state ->
+        title = try do: Session.Screen.title(id), catch: (:exit, _ -> "")
+        %{state | titles: Map.put(state.titles, id, title)} |> monitor_session(id, alive[id])
+      end)
+
+    state = Enum.reduce(tabs, state, &resize_tab(&2, &1))
+    found |> Enum.reject(fn {id, _} -> id in panes end) |> Enum.reduce(state, &adopt/2)
+  end
+
+  defp prune(nil, _alive), do: nil
+
+  defp prune(layout, alive) do
+    layout
+    |> Layout.panes()
+    |> Enum.reject(&Map.has_key?(alive, &1))
+    |> Enum.reduce(layout, fn id, layout -> layout && Layout.remove(layout, id) end)
   end
 
   # This desk's sessions that are already running (this process restarted):
@@ -427,6 +520,9 @@ defmodule Guiltty.Tabs do
   end
 
   @impl true
+  # The Keeper's table arriving (take_table/1): already in hand.
+  def handle_info({:"ETS-TRANSFER", _table, _from, :taken}, state), do: {:noreply, state}
+
   def handle_info({:title, id, title}, state) do
     {:noreply, %{state | titles: Map.put(state.titles, id, title)} |> notify_windows()}
   end
@@ -436,9 +532,17 @@ defmodule Guiltty.Tabs do
   def handle_info({:mark, id, mark}, state) do
     tab = tab_of(state, id)
 
-    if tab != nil and tab != state.active and Map.get(state.marks, tab) != :bell,
+    if tab != nil and tab != state.active and rank(mark) > rank(state.marks[tab]),
       do: {:noreply, notify_windows(%{state | marks: Map.put(state.marks, tab, mark)})},
       else: {:noreply, state}
+  end
+
+  # A command ended in one of this desk's panes: the windows decide whether
+  # it's worth asking for attention.
+  def handle_info({:command_ended, id, code, ms}, state) do
+    message = {:command_ended, id, code, ms}
+    Enum.each(state.windows, &send(&1, message))
+    {:noreply, state}
   end
 
   # A session supervisor went down. If it shut down normally the shell
@@ -682,6 +786,13 @@ defmodule Guiltty.Tabs do
     seen(%{state | active: Enum.at(state.tabs, target)})
   end
 
+  # A tab of several panes keeps the most important mark of any of them.
+  defp rank(nil), do: 0
+  defp rank(:activity), do: 1
+  defp rank(:done), do: 2
+  defp rank(:failed), do: 3
+  defp rank(:bell), do: 4
+
   # The active tab is the one you're looking at: nothing new in it.
   defp seen(state), do: %{state | marks: Map.delete(state.marks, state.active)}
 
@@ -851,6 +962,6 @@ defmodule Guiltty.Tabs do
   defp notify_windows(state) do
     message = {:tabs, info(state)}
     Enum.each(state.windows, &send(&1, message))
-    state
+    save(state)
   end
 end

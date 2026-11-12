@@ -221,6 +221,9 @@ defmodule Guiltty.Grid do
     links: [],
     # OSC 133: row numbers where prompts start, newest first
     prompt_marks: [],
+    # OSC 133 C and D: where each command's output starts and the row after
+    # its last one ({first, stop}, stop nil until it ends), newest first
+    output_marks: [],
     # how many rows above the cursor were taken for the prompt, by a resize
     # the shell hasn't answered yet
     prompt_rows: nil,
@@ -233,6 +236,9 @@ defmodule Guiltty.Grid do
     responses: [],
     # BEL arrived since the last take_bell/1
     bell: false,
+    # commands that started (OSC 133 C) or ended (D) since the last
+    # take_commands/1, newest first: :started | {:ended, exit_code | nil}
+    commands: [],
     # the rows changed since the last take_dirty/1: a MapSet of row
     # numbers, or :all (a scroll moves every row; building a set of all of
     # them on every line feed was a fifth of the time spent printing)
@@ -338,6 +344,10 @@ defmodule Guiltty.Grid do
 
   @doc "Whether the bell rang since the last call, and the grid without it."
   def take_bell(grid), do: {grid.bell, %{grid | bell: false}}
+
+  @doc "Commands started and ended since the last call, oldest first, and the grid without them."
+  def take_commands(%{commands: []} = grid), do: {[], grid}
+  def take_commands(grid), do: {Enum.reverse(grid.commands), %{grid | commands: []}}
 
   @doc "All rows as `[{row_index, row}]`, for a full redraw."
   def snapshot(grid), do: grid.lines |> Tuple.to_list() |> Enum.with_index(fn l, i -> {i, l} end)
@@ -1484,7 +1494,8 @@ defmodule Guiltty.Grid do
         scrollback_first: grid.history,
         graphics: Graphics.clear_scrollback(grid.graphics),
         links: Enum.filter(grid.links, fn {n, _, _, _} -> n >= grid.history end),
-        prompt_marks: Enum.filter(grid.prompt_marks, &(&1 >= grid.history))
+        prompt_marks: Enum.filter(grid.prompt_marks, &(&1 >= grid.history)),
+        output_marks: Enum.filter(grid.output_marks, &(elem(&1, 0) >= grid.history))
     }
   end
 
@@ -1791,6 +1802,88 @@ defmodule Guiltty.Grid do
     grid.prompt_marks |> Enum.reverse() |> Enum.find(&(&1 > n))
   end
 
+  @doc """
+  A command's output starts on the cursor's row (OSC 133;C, sent by the
+  shell when you press Enter). The one before it ends here if it hadn't.
+  """
+  def mark_output_start(%{alt?: true} = grid), do: grid
+
+  def mark_output_start(grid) do
+    grid = mark_output_end(grid)
+    n = grid.history + grid.row
+
+    %{
+      grid
+      | output_marks: Enum.take([{n, nil} | grid.output_marks], @max_marks),
+        commands: Enum.take([:started | grid.commands], @max_marks)
+    }
+  end
+
+  @doc """
+  The running command ended (OSC 133;D) with this exit code, or nil if the
+  shell didn't say. A D with no command running (some shells send one
+  before their first prompt) is ignored.
+  """
+  def command_ended(%{alt?: false, output_marks: [{_first, nil} | _]} = grid, code) do
+    %{grid | commands: Enum.take([{:ended, code} | grid.commands], @max_marks)}
+    |> mark_output_end()
+  end
+
+  def command_ended(grid, _code), do: mark_output_end(grid)
+
+  @doc """
+  The command's output ends at the cursor (OSC 133;D, when it exits, or the
+  next prompt, for shells that don't send D): its last row is the one before
+  the cursor's, or the cursor's own if something is printed on it.
+  """
+  def mark_output_end(%{alt?: false, output_marks: [{first, nil} | older]} = grid) do
+    stop = grid.history + grid.row + if(grid.col > 0, do: 1, else: 0)
+    %{grid | output_marks: [{first, max(stop, first)} | older]}
+  end
+
+  def mark_output_end(grid), do: grid
+
+  @doc """
+  The rows the last command printed, as `{first, last}` row numbers, or
+  `:empty` if it printed nothing, or nil if no shell said where it was (or
+  it has scrolled out of the scrollback). A command still running counts:
+  its output so far, down to the cursor. A shell that marks only prompts
+  gets `{:guess, {first, last}}`: the rows between its last two prompts,
+  less the command line.
+  """
+  def last_output(%{output_marks: [], prompt_marks: [prompt, previous | _]} = grid) do
+    case output_rows(grid, command_end(grid, previous), prompt) do
+      {first, last} -> {:guess, {first, last}}
+      other -> other
+    end
+  end
+
+  def last_output(%{output_marks: []}), do: nil
+
+  def last_output(%{output_marks: [{first, stop} | _]} = grid) do
+    stop = stop || grid.history + grid.row + if(grid.col > 0, do: 1, else: 0)
+    output_rows(grid, first, stop)
+  end
+
+  defp output_rows(grid, first, stop) do
+    cond do
+      stop <= first -> :empty
+      stop <= grid.scrollback_first -> nil
+      true -> {max(first, grid.scrollback_first), stop - 1}
+    end
+  end
+
+  # A shell that marks only its prompts (A): the output is guessed to start
+  # on the row after the command line, which starts on the prompt's row and
+  # goes on over the rows it wrapped into. A prompt of two lines makes the
+  # guess one row early, which is why it's reported as a guess.
+  defp command_end(grid, n) do
+    case line(grid, n) do
+      nil -> n + 1
+      row -> if row_wrapped?(row), do: command_end(grid, n + 1), else: n + 1
+    end
+  end
+
   ## Mode 2026
 
   @doc "Whether viewers should wait: the program is in the middle of drawing."
@@ -1877,7 +1970,7 @@ defmodule Guiltty.Grid do
         grid,
         [:scrollback, :recent, :scrollback_first, :history, :scrollback_max] ++
           [:clusters, :cluster_ids, :next_cluster, :cell_pixels, :theme, :screen_reports] ++
-          [:prompt_marks, :links]
+          [:prompt_marks, :output_marks, :links]
       )
 
     grid.cols |> new(grid.rows) |> Map.merge(keep)
@@ -2124,7 +2217,8 @@ defmodule Guiltty.Grid do
           scrollback_first: 0,
           history: 0,
           links: moved_links(grid.links, positions, cols),
-          prompt_marks: moved_marks(grid.prompt_marks, positions, grid.scrollback_first)
+          prompt_marks: moved_marks(grid.prompt_marks, positions, grid.scrollback_first),
+          output_marks: moved_outputs(grid.output_marks, positions, grid.scrollback_first)
       }
       |> save_lines(saved)
 
@@ -2308,6 +2402,23 @@ defmodule Guiltty.Grid do
           [row]
 
         _ ->
+          []
+      end
+    end)
+  end
+
+  # Where each command's output is after a reflow. Both ends start a row
+  # (output starts after Enter, and ends before the next prompt), so they
+  # move like prompt marks. An end that wasn't on the reflowed rows (one past
+  # the cursor) becomes open again: the output then runs to the cursor.
+  defp moved_outputs(marks, positions, first) do
+    Enum.flat_map(marks, fn {start, stop} ->
+      case moved_marks([start], positions, first) do
+        [new_start] ->
+          new_stop = if stop, do: List.first(moved_marks([stop], positions, first))
+          [{new_start, new_stop && max(new_stop, new_start)}]
+
+        [] ->
           []
       end
     end)

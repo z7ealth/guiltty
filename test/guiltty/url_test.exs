@@ -108,5 +108,44 @@ defmodule Guiltty.UrlTest do
     end
   end
 
+  describe "every URL in view (keyboard hints)" do
+    test "in reading order, a wrapped one once, with its cells" do
+      grid =
+        run(
+          "see https://a.example and mailto:x@y.z\r\nnone here\r\nhttps://long.example/path",
+          20,
+          5
+        )
+
+      assert Url.visible(grid, 0, 4) == [
+               {"https://a.example", [{0, 4, 19}, {1, 0, 0}]},
+               {"mailto:x@y.z", [{1, 6, 17}]},
+               {"https://long.example/path", [{3, 0, 19}, {4, 0, 4}]}
+             ]
+    end
+
+    test "a URL that wrapped in from above the view counts; one wholly above doesn't" do
+      grid = run("https://one.example\r\nhttps://two.example/abcdefghij", 20, 5)
+      assert [{"https://two.example/abcdefghij", _}] = Url.visible(grid, 2, 2)
+      assert Url.visible(grid, 3, 4) == []
+    end
+  end
+
+  test "hints write their label over the link, in reverse, and underline it" do
+    grid = run("go to https://x.example now")
+    [{url, spans}] = Url.visible(grid, 0, 4)
+    assert url == "https://x.example"
+
+    [{0, row} | _] = grid |> View.rows(0, nil, nil) |> View.hints(0, [{"as", spans}])
+    [a, s, t | _] = row |> cells() |> Enum.drop(6)
+    assert <<?a::32, attrs::16, _::binary>> = a
+    assert <<?s::32, _::binary>> = s
+    assert <<?t::32, plain::16, _::binary>> = t
+
+    assert (attrs &&& Grid.attr(:inverse)) != 0
+    assert (plain &&& Grid.attr(:inverse)) == 0
+    assert (plain &&& Grid.attr(:underline)) != 0
+  end
+
   defp cells(row), do: for(<<cell::binary-size(14) <- row>>, do: cell)
 end

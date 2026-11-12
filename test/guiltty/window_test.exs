@@ -983,6 +983,70 @@ defmodule Guiltty.WindowTest do
     assert eventually(fn -> ids() == [id] end)
   end
 
+  describe "Ctrl+Shift+G" do
+    test "copies the last command's output, and selects it", %{id: id, window: window} do
+      path = record_port(window)
+
+      Session.write(
+        id,
+        "printf '\\033]133;C\\a'; printf 'OUT1\\nOUT2\\n'; printf '\\033]133;D;0\\a'\r"
+      )
+
+      assert eventually(fn -> Session.dump(id) =~ ~r/^OUT2$/m end)
+      key(window, ?g, @ctrl ||| @shift)
+      assert eventually(fn -> File.read!(path) =~ <<18, 0, "OUT1\nOUT2">> end)
+      assert Screen.selection_text(id) == "OUT1\nOUT2"
+      assert :sys.get_state(window).flash == "copied the last command's output"
+    end
+
+    test "says so when the shell doesn't mark its commands", %{window: window} do
+      key(window, ?g, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "OSC 133" end)
+    end
+
+    test "guesses, and says so, when the shell marks only prompts", %{id: id, window: window} do
+      path = record_port(window)
+      # A prompt that marks itself (A) and nothing else.
+      Session.write(id, "PS1='\\[\\033]133;A\\a\\]$ '\r")
+      Session.write(id, "echo GUESSED\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^GUESSED\n\$/m end)
+      key(window, ?g, @ctrl ||| @shift)
+      assert eventually(fn -> (:sys.get_state(window).flash || "") =~ "copied a guess" end)
+      assert File.read!(path) =~ <<18, 0, "GUESSED">>
+    end
+  end
+
+  describe "Ctrl+Shift+J" do
+    test "labels the links on screen; typing a label opens that one", %{id: id, window: window} do
+      path = record_port(window)
+      Session.write(id, "echo https://one.example; echo https://two.example\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^https:\/\/two.example$/m end)
+
+      key(window, ?j, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).hints == "" end)
+      # The command line's two, then the output's.
+      assert screen_state(id).hints.list |> Enum.map(&elem(&1, 0)) == ["a", "s", "d", "f"]
+
+      renderer(window, <<4, "f">>)
+      assert eventually(fn -> File.read!(path) =~ <<21, "https://two.example">> end)
+      assert :sys.get_state(window).hints == nil
+      assert screen_state(id).hints == nil
+    end
+
+    test "Escape ends it; with no links it says so", %{id: id, window: window} do
+      key(window, ?j, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).flash == "no links on screen" end)
+
+      Session.write(id, "echo https://x.example\r")
+      assert eventually(fn -> Session.dump(id) =~ ~r/^https:\/\/x.example$/m end)
+      key(window, ?j, @ctrl ||| @shift)
+      assert eventually(fn -> :sys.get_state(window).hints == "" end)
+      key(window, 27, 0)
+      assert eventually(fn -> :sys.get_state(window).hints == nil end)
+      assert screen_state(id).hints == nil
+    end
+  end
+
   test "Ctrl+Shift+R renames the tab: typing edits the name, Enter sets it", %{
     id: id,
     window: window

@@ -183,6 +183,8 @@ defmodule Guiltty.Window do
       hover: nil,
       # search mode: %{query: binary, found: boolean}
       search: nil,
+      # hints mode: the letters typed so far, or nil (see "Hints mode")
+      hints: nil,
       alt_screen: false,
       # the view's scroll as of the last update, and whether this window
       # moved it since (the update saying so may not have arrived yet)
@@ -353,6 +355,9 @@ defmodule Guiltty.Window do
 
   def handle_info({:tabs, info}, state), do: {:noreply, show_tabs(state, info)}
 
+  # A command ended in some tab. The ✓ or ✗ on the tab comes with {:tabs, _}.
+  def handle_info({:command_ended, _session, _code, _ms}, state), do: {:noreply, state}
+
   def handle_info(:flash_over, state),
     do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil, confirm_close: nil})}
 
@@ -451,7 +456,8 @@ defmodule Guiltty.Window do
       MapSet.member?(state.bound_keys, key) ->
         {:noreply, %{state | bound_keys: MapSet.delete(state.bound_keys, key)}}
 
-      state.cheatsheet != nil or state.rename != nil or state.search != nil ->
+      state.cheatsheet != nil or state.rename != nil or state.search != nil or
+          state.hints != nil ->
         {:noreply, state}
 
       true ->
@@ -528,6 +534,9 @@ defmodule Guiltty.Window do
       nil when state.search != nil ->
         {:noreply, search_key(event, state)}
 
+      nil when state.hints != nil ->
+        {:noreply, hints_key(event, state)}
+
       nil ->
         type(event, state)
     end
@@ -538,6 +547,9 @@ defmodule Guiltty.Window do
 
   defp handle_event({:text, text}, %{search: %{}} = state),
     do: {:noreply, search_for(state, state.search.query <> text, :start)}
+
+  defp handle_event({:text, text}, %{hints: typed} = state) when is_binary(typed),
+    do: {:noreply, hint_typed(state, typed <> String.downcase(text))}
 
   # A key already sent as an escape code (Kitty's "every key" flag) also types
   # its text: that copy stays here. Composed text, like é, isn't that key.
@@ -812,6 +824,35 @@ defmodule Guiltty.Window do
     })
   end
 
+  ## Hints mode
+  #
+  # Every link on screen gets a label (Screen.hints/2). Typing a label opens
+  # its link, through the same check as Ctrl+click (open_link/2). Escape, or
+  # letters no label starts with, end it.
+
+  defp hints_key({:key, key, _mods}, state) do
+    cond do
+      key == Keymap.key(:escape) -> end_hints(state)
+      key == Keymap.key(:backspace) -> hint_typed(state, String.slice(state.hints, 0..-2//1))
+      true -> state
+    end
+  end
+
+  defp hint_typed(state, typed) do
+    case on_screen(state, &Screen.hints(&1, {:type, typed})) do
+      {:open, url} -> open_link(update_status(%{state | hints: nil}), url)
+      :more -> update_status(%{state | hints: typed})
+      _ -> update_status(%{state | hints: nil})
+    end
+  end
+
+  defp end_hints(%{hints: nil} = state), do: state
+
+  defp end_hints(state) do
+    on_screen(state, &Screen.hints(&1, :stop))
+    update_status(%{state | hints: nil})
+  end
+
   ## Rename mode
 
   @max_name 40
@@ -939,6 +980,16 @@ defmodule Guiltty.Window do
 
   defp run(:search, state), do: state
 
+  defp run(:hints, %{hints: nil} = state) do
+    case on_screen(state, &Screen.hints(&1, :start)) do
+      n when is_integer(n) and n > 0 -> update_status(%{state | hints: ""})
+      _ -> flash(state, "no links on screen")
+    end
+  end
+
+  # The key again: end it, as Escape does.
+  defp run(:hints, state), do: end_hints(state)
+
   defp run(:copy, state) do
     case on_screen(state, &Screen.selection_text/1) do
       text when is_binary(text) and text != "" ->
@@ -955,6 +1006,26 @@ defmodule Guiltty.Window do
   defp run(:select_all, state) do
     copy_selected(state, on_screen(state, &Screen.select(&1, :all)))
     state
+  end
+
+  # What the last command printed, to the clipboard: like Ctrl+Shift+C on
+  # a selection, so it goes where a paste with Ctrl+Shift+V finds it.
+  defp run(:copy_output, state) do
+    case on_screen(state, &Screen.select(&1, :last_output)) do
+      text when is_binary(text) ->
+        send_port(state, Protocol.clipboard(:clipboard, text))
+        flash(state, "copied the last command's output")
+
+      {:guess, text} ->
+        send_port(state, Protocol.clipboard(:clipboard, text))
+        flash(state, "copied a guess: the shell marks prompts, not output (see the book)")
+
+      :empty ->
+        flash(state, "the last command printed nothing")
+
+      _ ->
+        flash(state, "no command output marked: the shell needs OSC 133 (see the book)")
+    end
   end
 
   # Open the config file, creating it from the example first: in a new
@@ -1291,6 +1362,8 @@ defmodule Guiltty.Window do
 
         case marks[id] do
           :bell -> "🔔 " <> title
+          :failed -> "✗ " <> title
+          :done -> "✓ " <> title
           :activity -> "● " <> title
           nil -> title
         end
@@ -1360,6 +1433,7 @@ defmodule Guiltty.Window do
 
   defp refocus(state, panes) do
     if state.search, do: on_screen(state, &Screen.end_search/1)
+    state = end_hints(state)
     compose = Compose.refocus(state.compose, panes.focus, panes.separators)
 
     if state.focused do
@@ -1376,7 +1450,7 @@ defmodule Guiltty.Window do
   # cheatsheet) ends, and its panes are no longer viewed.
   defp leave_tab(state) do
     if state.search, do: on_screen(state, &Screen.end_search/1)
-    state = unhover(state)
+    state = state |> end_hints() |> unhover()
 
     %{
       unview_all(state)
@@ -1619,6 +1693,9 @@ defmodule Guiltty.Window do
   end
 
   defp status_text(%{rename: %{text: text}}), do: {:normal, "rename tab: #{text}"}
+
+  defp status_text(%{hints: typed}) when is_binary(typed),
+    do: {:normal, "open link: type its label" <> if(typed == "", do: "", else: " (#{typed})")}
 
   defp status_text(%{search: %{query: query, found: found}}),
     do: {:normal, "find: #{query}" <> if(found, do: "", else: "  (not found)")}

@@ -109,6 +109,32 @@ Tabs keeps =marks= and sends them to the windows with the rest of the
 tab info; the Window puts ● or 🔔 before the title. Switching to a tab
 clears its mark.
 
+** A command finished: ✓ and ✗
+
+A shell that marks its commands (OSC 133, chapter 15) says when one
+starts (C) and when it ends (=D;status=). The grid records both
+(=Grid.command_ended/2=); the Screen times the command, and two more
+marks join the order, between activity and the bell:
+
+#+begin_example
+  rank   mark        tab bar   when
+  1      :activity   ●         output
+  2      :done       ✓         a command ended with status 0
+  3      :failed     ✗         a command ended with any other status
+  4      :bell       🔔        BEL
+#+end_example
+
+So a background build shows ● while it prints, and ✓ or ✗ when it's
+done, and later output doesn't hide the result. A D with no status
+(=ESC ] 133 ; D BEL=) says the command ended but not how: no mark for
+that. A tab of several panes shows its most important mark; =Tabs= ranks
+them the same way.
+
+The Screen also tells its owner ={:command_ended, id, status, ms}=
+whether or not the tab is viewed, which =Tabs= passes on to its windows.
+The Window does nothing with it yet: asking the desktop for attention
+after a long command needs a new renderer message.
+
 ** The bell is a byte
 
 BEL is byte 7, a C0 control like CR and LF (=ascii(7)=). The parser used
@@ -197,6 +223,7 @@ GUILTTY_RENDERER=gl guiltty
 - Erlang's "Time and Time Correction" guide: =monotonic_time= and why it
   can be negative.
 - XTerm control sequences: =CSI 3 J= (erase saved lines).
+- The semantic prompts proposal (OSC 133): =D= and its exit status.
 
 * Questions
 
@@ -210,6 +237,8 @@ GUILTTY_RENDERER=gl guiltty
 5. Why is comparing =System.monotonic_time/1= with 0 a bug?
 6. Why does a tab's name win over the title its program sets?
 7. Why can't guiltty ask before closing the *window* with a busy tab?
+8. A background build fails, then prints a summary. Why does its tab
+   still show ✗, not ●?
 
 ** Answers
 :PROPERTIES:
@@ -236,3 +265,5 @@ GUILTTY_RENDERER=gl guiltty
 7. The window manager closes the window, and the renderer just exits.
    By then the window is gone, so there's no window left to ask in.
    Locking a tab (Ctrl+Shift+L) keeps it alive instead.
+8. Marks only go up in rank until you look at the tab: ✗ (failed, 3)
+   outranks ● (activity, 1), so the output after it isn't news.
