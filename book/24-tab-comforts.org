@@ -130,10 +130,29 @@ done, and later output doesn't hide the result. A D with no status
 that. A tab of several panes shows its most important mark; =Tabs= ranks
 them the same way.
 
-The Screen also tells its owner ={:command_ended, id, status, ms}=
-whether or not the tab is viewed, which =Tabs= passes on to its windows.
-The Window does nothing with it yet: asking the desktop for attention
-after a long command needs a new renderer message.
+** A long command finished while you were elsewhere
+
+The Screen also tells its owner ={:command_ended, id, status, ms}=,
+whether or not the tab is viewed, and =Tabs= passes it on to its windows.
+A Window that isn't focused (it knows from FOCUS, chapter 7), hearing of
+a command that ran at least =attention_after= seconds (10 by default),
+sends the renderer ATTENTION, and the renderer calls
+=SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED)=:
+
+#+begin_example
+  t=0      you start "make", switch to the browser
+  t=94s    D;0 -> Screen: {:command_ended, 2, 0, 94_012}
+                  Tabs -> Window (not focused, 94 s >= 10 s)
+                  Window -> renderer: ATTENTION (one byte, 27)
+                  renderer: SDL_FlashWindow -> the desktop
+  GNOME:   "guiltty is ready" (Wayland: xdg-activation)
+  X11:     the window's urgency hint: its taskbar entry flashes
+  you click it: focused, and it stops
+#+end_example
+
+What the desktop does with the request is up to it; a desktop that can't
+do anything says so, and the renderer only logs it. Short commands don't
+ask: =ls= in a tab you aren't looking at isn't news worth an interruption.
 
 ** The bell is a byte
 
@@ -224,6 +243,8 @@ GUILTTY_RENDERER=gl guiltty
   can be negative.
 - XTerm control sequences: =CSI 3 J= (erase saved lines).
 - The semantic prompts proposal (OSC 133): =D= and its exit status.
+- SDL3 wiki: =SDL_FlashWindow=; the =xdg-activation-v1= Wayland protocol;
+  ICCCM 4.1.2.4, the =UrgencyHint= of =WM_HINTS=.
 
 * Questions
 

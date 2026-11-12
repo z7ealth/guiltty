@@ -363,6 +363,17 @@ The pieces are ones guiltty already had:
 Only links in plain text get labels for now: OSC 8 links (a program
 saying "this text links there") are for Ctrl+click.
 
+** The hand over a link
+
+With Ctrl held, moving over a link underlines it, and the pointer turns
+into a hand, as it does in a browser. The Screen answers =hover/3= with
+whether there's a link under the pointer, and the Window tells the
+renderer only when the shape changes: POINTER 1 for the hand, POINTER 0
+for the default (protocol version 15). The renderer makes the hand with
+=SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER)= the first time it's
+needed and keeps it; if the cursor theme has no hand, the pointer just
+stays as it is.
+
 * Two clipboards (on X11)
 
 X11 has several *selections*; two matter:
@@ -417,6 +428,7 @@ in one that did (=vim=, =htop=), hold Shift.
 - Erlang: =binary_part/3= and sub-binaries, =:binary.longest_common_suffix/1=.
 - Elixir: =Regex.scan/3= with =return: :index= (byte offsets, not characters).
 - Vimium's link hints: the idea behind Ctrl+Shift+J.
+- SDL3 wiki: =SDL_CreateSystemCursor=, =SDL_SetCursor=.
 - Shell integration: the FinalTerm marks (OSC 133 A, B, C, D), as
   written up in the "semantic prompts" proposal by Per Bothner
   (gitlab.freedesktop.org/Per_Bothner/specifications, =proposals/semantic-prompts.md=).

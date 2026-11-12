@@ -82,8 +82,12 @@ one byte.
 |  24 | IMAGE_DROP | Elixir->renderer | u64 uid: forget that image |
 |  25 | PLACEMENTS | Elixir->renderer | u16 cols, u16 rows (dropped if not the renderer's), u16 count, then 42 bytes each: u64 uid, i32 row, u16 col, u16 x and y offset, u32 source x, y, w, h, u16 cells wide and high, i32 z |
 |  26 | FOCUS | renderer->Elixir | u8: the window gained (1) or lost (0) the keyboard |
+|  27 | ATTENTION | Elixir->renderer | (empty): ask the desktop to show the window wants you, until it's focused (chapter 24) |
+|  28 | POINTER | Elixir->renderer | u8: the mouse pointer's shape, 0 the default, 1 a hand over a link (chapter 15) |
 
-This is version 14: bit 3 of ROWS' cursor style says a program is
+This is version 15: ATTENTION, so a long command that finishes while
+you're in another window can say so, and POINTER, a hand over a link.
+Version 14: bit 3 of ROWS' cursor style says a program is
 reading a password, and the renderer draws a lock instead of the cursor
 (chapter 1). Version 13 added FOCUS, and KEY with what the key types with Shift and whether
 it was pressed, repeated or released (chapter 7). Version 12 added IMAGE, IMAGE_DROP and PLACEMENTS, for pictures

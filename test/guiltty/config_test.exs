@@ -103,10 +103,22 @@ defmodule Guiltty.ConfigTest do
           "[working_directory: \"relative\"]",
           "[wheel_lines: 0]",
           "[copy_on_select: :maybe]",
-          "[tab_bar: :left]"
+          "[tab_bar: :left]",
+          "[attention_after: -1]",
+          "[attention_after: 5.5]"
         ] do
       assert {:error, _} = Config.load(write(dir, "bad.exs", bad)), bad
     end
+  end
+
+  test "attention_after: 10 seconds, any number of seconds, or nil", %{tmp_dir: dir} do
+    assert {:ok, %{attention_after: 10}} = Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{attention_after: 30}} =
+             Config.load(write(dir, "b.exs", "[attention_after: 30]"))
+
+    assert {:ok, %{attention_after: nil}} =
+             Config.load(write(dir, "c.exs", "[attention_after: nil]"))
   end
 
   test "a misspelled name is reported, with a suggestion", %{tmp_dir: dir} do

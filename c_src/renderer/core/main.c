@@ -139,6 +139,7 @@ struct renderer {
     char preedit[max_short_text]; // text being composed in an input method
     uint8_t halo_rgb[3];
     Uint64 halo_until; // SDL ticks (ms); 0 = no halo
+    SDL_Cursor *link_cursor; // the hand over a link, made on first use
     int mouse_col, mouse_row; // the cell the pointer was last reported in
     uint8_t buttons_held; // bit n = mouse button n (0 left, 1 middle, 2 right)
     uint32_t port_event; // SDL user event type for port messages
@@ -1260,6 +1261,26 @@ static void read_placements(struct renderer *r, struct reader *rd) {
     case MSG_RAISE:
         SDL_RaiseWindow(r->window);
         return true;
+    case MSG_ATTENTION:
+        // Wayland: an xdg-activation request (GNOME shows "is ready");
+        // X11: the urgency hint. Either way it stops once the window is
+        // focused. Failing is fine: not every desktop can.
+        if (!SDL_FlashWindow(r->window, SDL_FLASH_UNTIL_FOCUSED))
+            SDL_Log("renderer: can't ask for attention: %s", SDL_GetError());
+        return true;
+    case MSG_POINTER: {
+        uint8_t shape;
+        if (!rd_u8(&rd, &shape) || shape >= pointer_shape_count)
+            return false;
+        if (shape == POINTER_LINK && r->link_cursor == nullptr)
+            r->link_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
+        // No hand cursor in this theme: keep the default rather than fail.
+        SDL_Cursor *cursor = shape == POINTER_LINK && r->link_cursor != nullptr
+                                 ? r->link_cursor
+                                 : SDL_GetDefaultCursor();
+        SDL_SetCursor(cursor);
+        return true;
+    }
     case MSG_HELLO:
     case MSG_SETUP:
     case MSG_TEXT:
@@ -1970,6 +1991,8 @@ out_backend:
         renderer_backend.image_destroy(r.backend, r.images[i].texture);
     renderer_backend.shutdown(r.backend);
 out_window:
+    if (r.link_cursor != nullptr)
+        SDL_DestroyCursor(r.link_cursor);
     SDL_DestroyWindow(r.window);
 out_font:
     atlas_free(&r.atlas);

@@ -135,6 +135,9 @@ defmodule Guiltty.Window.ProtocolTest do
 
     assert Protocol.halo({1, 2, 3}, 400) == <<13, 1, 2, 3, 400::16>>
     assert Protocol.raise_window() == <<14>>
+    assert Protocol.attention() == <<27>>
+    assert Protocol.pointer(:default) == <<28, 0>>
+    assert Protocol.pointer(:link) == <<28, 1>>
   end
 
   test "the palette is xterm's layout" do

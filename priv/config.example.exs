@@ -71,6 +71,12 @@
   # Rows the mouse wheel scrolls per step.
   wheel_lines: 3,
 
+  # When a command that ran at least this many seconds ends while you're in
+  # another window, guiltty asks the desktop for attention (GNOME shows
+  # "guiltty is ready"). Needs a shell that marks its commands (OSC 133);
+  # nil never asks.
+  attention_after: 10,
+
   # Bold text in the 8 basic colors uses their bright versions, as xterm
   # does.
   bold_is_bright: true,

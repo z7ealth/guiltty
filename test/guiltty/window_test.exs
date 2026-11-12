@@ -345,11 +345,18 @@ defmodule Guiltty.WindowTest do
       row = Session.dump(id) |> String.split("\n") |> Enum.find_index(&(&1 =~ ~r/^at http/))
       mouse = fn kind, button, col, mods -> <<9, kind, button, col::16, row::16, mods::16, 1>> end
 
-      # Moving over it with Ctrl held: underlined. Without Ctrl: not.
+      # Moving over it with Ctrl held: underlined, and a hand. Without Ctrl: not.
       renderer(window, mouse.(2, 3, 5, @ctrl))
       assert eventually(fn -> :sys.get_state(screen).hover == %{pos: {row, 5}, urls?: true} end)
+      assert eventually(fn -> File.read!(path) =~ <<2::32, 28, 1>> end)
       renderer(window, mouse.(2, 3, 6, 0))
       assert eventually(fn -> :sys.get_state(screen).hover == nil end)
+      assert eventually(fn -> File.read!(path) =~ <<2::32, 28, 0>> end)
+
+      # Ctrl held over plain text: no hand.
+      renderer(window, mouse.(2, 3, 0, @ctrl))
+      assert eventually(fn -> :sys.get_state(screen).hover == %{pos: {row, 0}, urls?: true} end)
+      assert :sys.get_state(window).pointer == :default
 
       renderer(window, mouse.(0, 0, 5, @ctrl))
       assert eventually(fn -> File.read!(path) =~ <<21, "http://localhost:4000">> end)
@@ -1013,6 +1020,38 @@ defmodule Guiltty.WindowTest do
       key(window, ?g, @ctrl ||| @shift)
       assert eventually(fn -> (:sys.get_state(window).flash || "") =~ "copied a guess" end)
       assert File.read!(path) =~ <<18, 0, "GUESSED">>
+    end
+  end
+
+  describe "asking for attention" do
+    defp command_ended(window, ms), do: send(window, {:command_ended, 1, 0, ms})
+    defp attention_sent?(path), do: File.read!(path) =~ <<1::32, 27>>
+
+    test "a long command ending while the window isn't focused", %{window: window} do
+      path = record_port(window)
+      renderer(window, <<26, 0>>)
+      assert eventually(fn -> :sys.get_state(window).focused == false end)
+
+      command_ended(window, 3_000)
+      _ = :sys.get_state(window)
+      refute attention_sent?(path)
+
+      command_ended(window, 12_000)
+      assert eventually(fn -> attention_sent?(path) end)
+    end
+
+    test "not while the window is focused, nor with attention_after: nil", %{window: window} do
+      path = record_port(window)
+      renderer(window, <<26, 1>>)
+      command_ended(window, 60_000)
+      _ = :sys.get_state(window)
+      refute attention_sent?(path)
+
+      renderer(window, <<26, 0>>)
+      :sys.replace_state(window, &put_in(&1.config.attention_after, nil))
+      command_ended(window, 60_000)
+      _ = :sys.get_state(window)
+      refute attention_sent?(path)
     end
   end
 

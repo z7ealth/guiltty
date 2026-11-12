@@ -132,6 +132,7 @@ defmodule Guiltty.Session.Screen do
   @doc """
   The pointer is at a visible `{row, col}` with Ctrl held, or nil when it
   isn't: the link under it shows underlined, as long as it stays there.
+  Returns whether there's a link under it.
   """
   def hover(id, pos, urls? \\ false),
     do: GenServer.call(Session.via(id, :screen), {:hover, pos, urls?})
@@ -339,10 +340,11 @@ defmodule Guiltty.Session.Screen do
 
   def handle_call({:hover, pos, urls?}, _from, state) do
     hover = if pos, do: %{pos: pos, urls?: urls?}
+    link? = hover != nil and link_under(state, pos, urls?) != nil
 
     if hover == state.hover,
-      do: {:reply, :ok, state},
-      else: {:reply, :ok, notify(%{state | hover: hover})}
+      do: {:reply, link?, state},
+      else: {:reply, link?, notify(%{state | hover: hover})}
   end
 
   def handle_call(:cwd_uri, _from, state), do: {:reply, state.grid.cwd_uri, state}

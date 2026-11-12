@@ -157,6 +157,79 @@ once a minute per process, and sends the same as telemetry. A node has
 only one system monitor: if you attach =recon= or another tool that sets
 one, the watchdog goes quiet.
 
+* Looking inside a running guiltty
+
+The guiltty you use every day is a node, =guiltty@127.0.0.1=, and any
+Erlang node that has your cookie (=~/.erlang.cookie=) and runs on this
+machine can connect to it (chapter 20). =guiltty remote= is one such node,
+with an iex shell. Observer is another, with windows.
+
+Observer runs in your own Erlang, not in guiltty: it needs =wx= (21 MB),
+and guiltty has no use for it. But to show a remote node, Observer calls
+=observer_backend= on that node, and that module is in =runtime_tools=.
+So the release carries =runtime_tools=, loaded and never started
+([[file:../mix.exs::runtime_tools: :load][mix.exs]]): 740 KB of code that waits for a tool to call it.
+
+#+begin_example
+  your Erlang (any, OTP 26+)              guiltty@127.0.0.1 (the release)
+  +--------------------------+            +-----------------------------+
+  | observer@127.0.0.1       |  cookie,   | runtime_tools (loaded):     |
+  | -hidden                  |  127.0.0.1 |   observer_backend  <-- rpc |
+  | observer, wx (windows)   | ---------> |   dbg, msacc                |
+  +--------------------------+            | guiltty, its tabs ...       |
+                                          +-----------------------------+
+#+end_example
+
+#+begin_src sh
+  erl -hidden -name observer@127.0.0.1 -noshell \
+      -eval "observer:start_and_wait('guiltty@127.0.0.1'), halt()."
+#+end_src
+
+=-hidden= keeps the connection out of =nodes()=, so guiltty doesn't see a
+new peer, only a visitor; =start_and_wait= returns when you close the
+window, and =halt()= then ends that Erlang. Against v0.24.0, which didn't
+carry =runtime_tools=, the System tab crashes at once: ={active,
+'guiltty@127.0.0.1'}= in the error is Observer asking a node that can't
+answer.
+
+What to look at:
+
+- *Processes*, sorted by Memory: one =Screen= and one =Parser= per pane.
+  Leave a tab idle and watch both shrink after five seconds (hibernation,
+  above).
+- *Applications*: the supervision tree of chapter 8, live.
+- *Load Charts*: memory over time. During =bench/soak.exs= it should
+  level off.
+- *Table Viewer*: the Keeper's ETS table.
+
+The same module set works from =guiltty remote=. =:dbg= traces calls and
+messages; =:msacc= says where the schedulers spend their time:
+
+#+begin_src elixir
+  :dbg.tracer()
+  :dbg.p(:all, :c)
+  :dbg.tp(Guiltty.Window.Protocol, :attention, 0, [])
+  # a long command ends while you're in another window:
+  # (<0.512.0>) call 'Elixir.Guiltty.Window.Protocol':attention()
+  :dbg.stop()                # a forgotten trace slows guiltty down
+
+  :msacc.start(5_000)        # while a tab runs `cat` on a big file
+  :msacc.print()             # per scheduler: emulator, gc, nif, port, sleep
+#+end_src
+
+And plain memory questions need nothing extra:
+
+#+begin_src elixir
+  :erlang.memory()           # total, processes, binary, ets
+  Process.list()
+  |> Enum.map(&{&1, Process.info(&1, [:memory, :registered_name])})
+  |> Enum.sort_by(fn {_, i} -> -i[:memory] end)
+  |> Enum.take(10)
+#+end_src
+
+Carrying =runtime_tools= opens nothing new: anyone who can connect could
+already run any code in guiltty through =guiltty remote=.
+
 * Detach and reattach
 
 This is per tab: lock the ones you want to keep with Ctrl+Shift+L (they
@@ -301,6 +374,8 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
 - =ets:new/2=, the =heir= option; =ets:give_away/3=.
 - =gen_server= =hibernate_after=; =erlang:hibernate/3=.
 - =erlang:system_monitor/2=: =long_gc=, =large_heap=.
+- Observer user's guide (=observer:start/1=, OTP 26+); =dbg(3)=
+  (=tracer/0=, =p/2=, =tp/4=); =msacc(3)=; =erl -hidden=.
 - The Erlang Efficiency Guide, "Binaries" (refcounted binaries and the
   heap) and "Processes".
 - Mix releases: =env.sh=, =daemon=, =rpc=; chapter 23 for the =guiltty=
@@ -315,6 +390,8 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
 5. Why evaluate the config in a monitored, unlinked process?
 6. Why does the Keeper exist? Couldn't =Tabs= keep its table by itself?
 7. Hibernating an idle Screen freed its heap but not its rows. Why?
+8. Observer runs outside guiltty. Why does guiltty still need
+   =runtime_tools=?
 
 ** Answers
 :PROPERTIES:
@@ -338,3 +415,6 @@ Every other key guiltty has is on its cheatsheet (Ctrl+Shift+H,
    holds the table only while no =Tabs= does.
 7. The rows are refcounted binaries outside the heap, and they're live:
    they are the scrollback. Hibernating frees only what's garbage.
+8. Observer collects its data by calling =observer_backend= on the node
+   it shows, so that module has to be in guiltty's code, not only in
+   Observer's Erlang.

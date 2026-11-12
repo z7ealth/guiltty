@@ -185,6 +185,8 @@ defmodule Guiltty.Window do
       search: nil,
       # hints mode: the letters typed so far, or nil (see "Hints mode")
       hints: nil,
+      # the mouse pointer's shape: :default, or :link over a link
+      pointer: :default,
       alt_screen: false,
       # the view's scroll as of the last update, and whether this window
       # moved it since (the update saying so may not have arrived yet)
@@ -355,8 +357,17 @@ defmodule Guiltty.Window do
 
   def handle_info({:tabs, info}, state), do: {:noreply, show_tabs(state, info)}
 
-  # A command ended in some tab. The ✓ or ✗ on the tab comes with {:tabs, _}.
-  def handle_info({:command_ended, _session, _code, _ms}, state), do: {:noreply, state}
+  # A command ended in some tab (the ✓ or ✗ on the tab comes with {:tabs, _}).
+  # If it ran long and you're in another window, the desktop shows that
+  # this one wants you, until you come back to it.
+  def handle_info({:command_ended, _session, _code, ms}, state) do
+    seconds = state.config.attention_after
+
+    if not state.focused and is_integer(ms) and seconds != nil and ms >= seconds * 1000,
+      do: send_port(state, Protocol.attention())
+
+    {:noreply, state}
+  end
 
   def handle_info(:flash_over, state),
     do: {:noreply, update_status(%{state | flash: nil, confirm_local: nil, confirm_close: nil})}
@@ -717,12 +728,13 @@ defmodule Guiltty.Window do
   end
 
   # Moving with no button down: with Ctrl held, the link under the pointer
-  # shows underlined (as in Ghostty), so you can see what a click opens.
+  # shows underlined (as in Ghostty), and the pointer turns into a hand, so
+  # you can see what a click opens.
   defp local_mouse({:mouse, :motion, 3, col, row, mods, _}, id, state) do
     if (mods &&& @kmod_ctrl) != 0 do
       state = if state.hover != id, do: unhover(state), else: state
-      on_pane(id, &Screen.hover(&1, {row, col}, state.config.link_url))
-      %{state | hover: id}
+      link? = on_pane(id, &Screen.hover(&1, {row, col}, state.config.link_url)) == true
+      pointer(%{state | hover: id}, if(link?, do: :link, else: :default))
     else
       unhover(state)
     end
@@ -734,7 +746,15 @@ defmodule Guiltty.Window do
 
   defp unhover(state) do
     on_pane(state.hover, &Screen.hover(&1, nil))
-    %{state | hover: nil}
+    pointer(%{state | hover: nil}, :default)
+  end
+
+  # The renderer is told only when the shape changes.
+  defp pointer(%{pointer: shape} = state, shape), do: state
+
+  defp pointer(state, shape) do
+    send_port(state, Protocol.pointer(shape))
+    %{state | pointer: shape}
   end
 
   # A link comes from whatever printed it, so it only opens if it's the kind

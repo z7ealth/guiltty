@@ -63,6 +63,9 @@ seeds = %{
     Protocol.halo({255, 0, 0}, 300),
     Protocol.clipboard(:clipboard, "copied"),
     Protocol.raise_window(),
+    Protocol.attention(),
+    Protocol.pointer(:link),
+    Protocol.pointer(:default),
     Protocol.font(%{font | size: 20}),
     # A password being read: the lock in place of the cursor.
     Protocol.rows(Map.put(screen.("[sudo] password: ", 30, 4), :cursor_secret, true)),

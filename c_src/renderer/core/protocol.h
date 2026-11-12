@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 14;
+constexpr uint16_t protocol_version = 15;
 
 // Largest message we accept; anything bigger is a protocol error. An IMAGE
 // can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
@@ -101,7 +101,14 @@ enum msg_tag : uint8_t {
     MSG_PLACEMENTS = 25,
     // renderer -> Elixir: the window gained (1) or lost (0) the keyboard: u8
     MSG_FOCUS = 26,
+    // Elixir -> renderer: ask the desktop to show the window wants you (a
+    // long command finished while you were elsewhere), until it's focused
+    MSG_ATTENTION = 27,
+    // Elixir -> renderer: the mouse pointer's shape over the grid: u8
+    // (enum pointer_shape)
+    MSG_POINTER = 28,
 };
+enum pointer_shape : uint8_t { POINTER_DEFAULT = 0, POINTER_LINK = 1, pointer_shape_count };
 enum key_kind : uint8_t { KEY_PRESS = 1, KEY_REPEAT = 2, KEY_RELEASE = 3 };
 enum image_format : uint8_t { IMAGE_RGB = 0, IMAGE_RGBA = 1, IMAGE_PNG = 2 };
 // An image's side, in pixels, at most: every GPU holds a 4096 texture.

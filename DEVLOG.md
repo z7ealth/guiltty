@@ -1696,13 +1696,24 @@ and a faster scratch buffer in the text NIF (the whole NIF is 8% of the
 non-ASCII path; the buffer could save 1 to 2% at most). "Only redraw dirty
 rows" in an old Later list turned out to be done already, in both backends.
 
+After the bonfire, protocol 15: ATTENTION (`SDL_FlashWindow` until the
+window is focused, after a command of `attention_after` seconds or more)
+and POINTER (a hand over a link). On the offscreen driver used by the
+tests, `SDL_FlashWindow` isn't supported; the renderer logs it and goes on.
+The renderers' replay under ASan shows a 128-byte leak from an unknown
+module, but the seed from before the change shows the same leak, so it
+comes from the driver, not this.
+
+Then a way to look inside: the release now carries `runtime_tools`,
+loaded, never started. Observer, run from any Erlang with `-hidden`,
+attached to the installed v0.24.0 and its System tab crashed at once:
+Observer gathers its data by calling `observer_backend` on the node it
+shows, and that node didn't have it. Against a plain node that has it,
+the same command opens and stays up. Dev-only Observer was considered and
+dropped: the guiltty worth inspecting is the one running all day.
+
 ### Later
 
-- Ask the desktop for attention when a long command finishes in a window
-  that isn't focused (`SDL_FlashWindow`; a new renderer message, so a
-  protocol bump). The `{:command_ended, ...}` message already reaches the
-  Window.
-- A hand pointer over links (`SDL_SetCursor`; also a protocol message).
 - Hints for OSC 8 links, not only URLs in plain text.
 - Two-line prompts still fool the guess in Ctrl+Shift+G; a B mark (end of
   prompt) would fix it for shells that send B.

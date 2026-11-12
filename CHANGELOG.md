@@ -8,6 +8,23 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.25.0 — 2026-11-11 — A long command calls you back
+
+### Added
+- When a command that ran 10 seconds or more finishes while you're in
+  another window, guiltty asks the desktop for attention (GNOME shows
+  "guiltty is ready"). New setting: `attention_after` (seconds; `nil` never
+  asks).
+- With Ctrl held, the mouse pointer is a hand over a link.
+- The release carries Erlang's `runtime_tools`, so Observer can attach to
+  a running guiltty and show its tabs' processes and memory (book chapter
+  12, "Looking inside a running guiltty").
+
+### Changed
+- The renderer protocol is version 15. A renderer from an older guiltty
+  won't start with this one: install both together, as `./install.sh`
+  does.
+
 ## 0.24.0 — 2026-11-11 — Copy the last output
 
 ### Added

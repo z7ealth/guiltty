@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 14
+  @version 15
 
   @hello 1
   @setup 2
@@ -39,6 +39,8 @@ defmodule Guiltty.Window.Protocol do
   @image_drop 24
   @placements 25
   @focus 26
+  @attention 27
+  @pointer 28
 
   @image_formats %{rgb: 0, rgba: 1, png: 2}
 
@@ -228,6 +230,16 @@ defmodule Guiltty.Window.Protocol do
 
   @doc "Bring the window to the front."
   def raise_window, do: <<@raise>>
+
+  @doc """
+  Ask the desktop to show that the window wants you, until it's focused
+  (a long command finished while you were elsewhere).
+  """
+  def attention, do: <<@attention>>
+
+  @doc "The mouse pointer over the grid: `:default`, or `:link` (a hand)."
+  def pointer(:default), do: <<@pointer, 0>>
+  def pointer(:link), do: <<@pointer, 1>>
 
   @mouse_kinds %{0 => :press, 1 => :release, 2 => :motion, 3 => :wheel}
   @key_kinds %{1 => :press, 2 => :repeat, 3 => :release}

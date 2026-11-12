@@ -35,6 +35,9 @@ defmodule Guiltty.Config do
     * `:copy_on_select` - `true` (the primary selection), `:clipboard` (the
       clipboard too) or `false`
     * `:wheel_lines` - rows the mouse wheel scrolls per step
+    * `:attention_after` - seconds a command must run for its end to ask
+      for attention, when you're in another window (shells that mark
+      their commands, OSC 133); nil never asks
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
     * `:tab_bar` - `:bottom` (the default) or `:top`
     * `:tab_style` - how the tabs look: `:flat` (the default), `:powerline`,
@@ -141,6 +144,7 @@ defmodule Guiltty.Config do
       working_directory: :inherit,
       copy_on_select: true,
       wheel_lines: 3,
+      attention_after: 10,
       bold_is_bright: true,
       tab_bar: :bottom,
       pane_border: %{style: :solid, thickness: :thin},
@@ -373,6 +377,7 @@ defmodule Guiltty.Config do
          {:ok, copy} <-
            one_of(:copy_on_select, get.(:copy_on_select, true), [true, false, :clipboard]),
          {:ok, wheel} <- number(:wheel_lines, get.(:wheel_lines, d.wheel_lines), 1..50),
+         {:ok, attention} <- attention_after(get.(:attention_after, d.attention_after)),
          {:ok, bright} <- one_of(:bold_is_bright, get.(:bold_is_bright, true), [true, false]),
          {:ok, tab_bar} <- one_of(:tab_bar, get.(:tab_bar, d.tab_bar), [:top, :bottom]),
          {:ok, tab_style} <- one_of(:tab_style, get.(:tab_style, d.tab_style), @tab_styles),
@@ -398,6 +403,7 @@ defmodule Guiltty.Config do
          working_directory: dir,
          copy_on_select: copy,
          wheel_lines: wheel,
+         attention_after: attention,
          bold_is_bright: bright,
          tab_bar: tab_bar,
          tab_style: tab_style,
@@ -522,6 +528,12 @@ defmodule Guiltty.Config do
     do:
       {:error,
        "#{name}: expected a number from #{range.first} to #{range.last}, got #{inspect(n)}"}
+
+  defp attention_after(nil), do: {:ok, nil}
+  defp attention_after(n) when is_integer(n) and n in 0..86_400, do: {:ok, n}
+
+  defp attention_after(n),
+    do: {:error, "attention_after: expected seconds from 0 to 86400, or nil, got #{inspect(n)}"}
 
   defp scrollback(n) when is_integer(n) and n in 0..@max_scrollback, do: {:ok, n}
 

@@ -4,7 +4,7 @@ defmodule Guiltty.MixProject do
   def project do
     [
       app: :guiltty,
-      version: "0.24.0",
+      version: "0.25.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       compilers: [:elixir_make] ++ Mix.compilers(),
@@ -13,8 +13,13 @@ defmodule Guiltty.MixProject do
       releases: [
         # Temporary: when guiltty stops (window closed or shell exited), the
         # VM isn't brought down as a crash. Guiltty.Application.stop/1 then
-        # stops it cleanly.
-        guiltty: [applications: [guiltty: :temporary], steps: [:assemble, &private_cookie/1]]
+        # stops it cleanly. runtime_tools is only loaded, never started: its
+        # code is there for Observer, :dbg and :msacc to use from outside
+        # (book chapter 12, "Looking inside a running guiltty").
+        guiltty: [
+          applications: [guiltty: :temporary, runtime_tools: :load],
+          steps: [:assemble, &private_cookie/1]
+        ]
       ]
     ]
   end
