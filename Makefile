@@ -65,7 +65,17 @@ VK_CFLAGS = $(shell pkg-config --cflags vulkan)
 VK_LIBS = $(shell pkg-config --libs vulkan)
 RENDERER_VK = $(PRIV)/guiltty_vk
 
-all: $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_VK)-dbg $(RENDERER_GL) $(RENDERER_GL)-dbg
+DEBUG_RENDERERS = $(RENDERER_VK)-dbg $(RENDERER_GL)-dbg
+
+# The precompiled release (`make dist`, dist/build.sh) sets GUILTTY_DIST:
+# SDL3 is linked in statically, so `--static` adds what SDL itself needs
+# from libc; and no -dbg renderers, which need the sanitizer runtimes.
+ifdef GUILTTY_DIST
+RENDERER_LIBS = $(shell pkg-config --libs --static sdl3) $(shell pkg-config --libs freetype2 fontconfig harfbuzz libpng)
+DEBUG_RENDERERS =
+endif
+
+all: $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_GL) $(DEBUG_RENDERERS)
 
 $(CLIENT): c_src/client/guiltty.c
 	@mkdir -p $(PRIV)
@@ -215,7 +225,20 @@ text-table:
 icons:
 	sh c_src/tools/icons.sh
 
+# The precompiled release, built in a container on an older glibc so it
+# runs on most distributions (dist/Dockerfile, book chapter 17). Needs
+# Docker with BuildKit; the first run builds the toolchain (a few
+# minutes), later runs reuse it.
+dist:
+	rm -rf _build/dist
+	docker build -f dist/Dockerfile --target export --output _build/dist .
+
+# Installs that tarball in fresh containers of five distributions and
+# checks it runs (dist/smoke.sh). Pulls the images the first time.
+dist-check:
+	bash dist/smoke.sh _build/dist/guiltty-*-x86_64-linux.tar.gz
+
 clean:
 	rm -f $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
-.PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table text-table icons
+.PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table text-table icons dist dist-check

@@ -8,6 +8,30 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.26.0 — 2026-11-12 — Install without building
+
+### Added
+- A precompiled release for x86_64 Linux: a 10 MB tarball with guiltty,
+  its own Erlang and SDL3 inside. It runs on Ubuntu 23.04 or newer,
+  Debian 12 or newer, and current Fedora, Arch and openSUSE, with no
+  Elixir and no compiler. Each version's GitHub release carries it.
+- `make dist` builds that tarball in a container (only Docker needed), and
+  `make dist-check` installs it in fresh containers of five distributions
+  to check it runs.
+
+### Changed
+- One script installs guiltty:
+  `curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash`.
+  It downloads the latest precompiled release, and if a library is
+  missing, it shows the command that installs it and asks first. Run in a
+  git checkout, `./install.sh` still builds from source.
+- On Arch, missing packages are installed with `pacman -Syu`, so they
+  can't leave the system half-upgraded.
+
+### Removed
+- `get.sh`. The one-line install is now `install.sh` piped into `bash` (not
+  `sh`).
+
 ## 0.25.0 — 2026-11-11 — A long command calls you back
 
 ### Added

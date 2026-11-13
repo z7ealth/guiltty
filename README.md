@@ -24,27 +24,59 @@ end (book chapter 22).
 
 ## Install
 
-One line, on openSUSE, Fedora, Ubuntu/Debian, Arch and the distributions
-based on them:
+One line, on any x86_64 Linux from the last few years (Ubuntu 23.04 or
+newer, Debian 12 or newer, any current Fedora, Arch or openSUSE):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh
+curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
 ```
 
-[get.sh](get.sh) finds out your distribution, shows the packages that are
-missing and the `sudo` command that installs them, and asks before
-running it. Then it downloads the latest release's source into
-`~/.local/src`, builds it and installs it into `~/.local` (no root). Run
-it again to update. It only warns about Elixir: if yours is older than
-1.18 (on OTP 26), it stops and says how to get a newer one with asdf.
-Add `sh -s -- --dry-run` to see what it would do, or `--yes` not to be
-asked. It's a short script: read it first, if you like.
+That downloads the latest precompiled release (about 10 MB, with its own
+Erlang inside: no Elixir, no compiler) and installs it into `~/.local`,
+no root needed:
 
-The rest of this section is the same thing by hand.
+| Where                                             | What            |
+|---------------------------------------------------|-----------------|
+| `~/.local/lib/guiltty/`                           | the release     |
+| `~/.local/bin/guiltty`                            | the command     |
+| `~/.local/share/applications/guiltty.desktop`     | the menu entry  |
+| `~/.local/share/icons/hicolor/*/apps/guiltty.png` | the icon        |
 
-guiltty is built from source on your machine, so installing it needs
-Elixir and a C toolchain. The installed copy carries its own Erlang
-runtime: once it's installed, it runs without Elixir.
+If a library guiltty needs is missing (fontconfig, FreeType, HarfBuzz,
+libpng; every desktop normally has them), it shows the `sudo` command that
+installs it and asks before running it. Then run `guiltty`, or find it in
+your applications menu. If your shell says `guiltty: command not found`,
+add `~/.local/bin` to your `PATH`.
+
+- **Update:** run the same line again. If guiltty is running, the script
+  asks before stopping it, since that closes its tabs. Run from a guiltty
+  tab, it finishes after that tab closes, then opens guiltty again (its
+  output goes to `~/.local/state/guiltty/install.log`).
+- **Uninstall:** `curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash -s -- --uninstall`.
+  Your config stays.
+- **Without asking:** add `bash -s -- --yes`.
+- **A given version:** `GUILTTY_VERSION=v0.26.0` before `bash`.
+- **Somewhere else:** `PREFIX=/opt/guiltty` before `bash`.
+- **Without the pipe:** download `guiltty-<version>-x86_64-linux.tar.gz`
+  from the [releases](https://github.com/z7ealth/guiltty/releases), unpack
+  it and run the `install.sh` inside.
+
+[install.sh](install.sh) is a short script: read it first, if you like.
+
+guiltty needs a GPU driver with OpenGL 3.3, which almost any desktop from
+the last decade has. For Vulkan it needs a Vulkan 1.3 driver (for AMD and
+Intel GPUs, Mesa's; only AMD has been tried). Without one, guiltty draws
+with OpenGL.
+
+Fonts come from fontconfig. guiltty looks best with a Nerd Font (for
+prompt icons), Noto Color Emoji (for emoji) and a CJK font such as Noto
+Sans CJK, for Chinese and Japanese.
+
+## Build from source
+
+For working on guiltty, or on a machine the precompiled release doesn't
+run on. The same `install.sh`, run in a git checkout, builds guiltty
+there and installs it the same way.
 
 ### 1. What to install first
 
@@ -63,10 +95,10 @@ and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
 you exact versions. `elixir --version` should say Elixir 1.18 or newer, compiled with
 Erlang/OTP 26 or newer.
 
-On these distributions, one command installs it all (it's what get.sh
-runs). openSUSE Tumbleweed has been tried all the way to a running
-guiltty; on the others, get.sh found these package names in fresh
-containers of each, but the build itself hasn't been tried.
+On these distributions, one command installs it all. openSUSE
+Tumbleweed has been tried all the way to a running guiltty; on the
+others, these package names were found in fresh containers of each, but
+the build itself hasn't been tried.
 
 **openSUSE Tumbleweed**
 
@@ -97,22 +129,13 @@ Older Ubuntus have neither SDL3 nor GCC 15.
 **Arch Linux**
 
 ```sh
-sudo pacman -S --needed base-devel sdl3 freetype2 fontconfig harfbuzz libpng \
+sudo pacman -Syu --needed base-devel sdl3 freetype2 fontconfig harfbuzz libpng \
   vulkan-icd-loader vulkan-headers shaderc elixir
 ```
 
 guiltty is developed on Elixir 1.20.4 with Erlang/OTP 29. It also
 builds and passes its tests on Elixir 1.19.7 (Erlang/OTP 28 and 26) and
 Elixir 1.18.4 (Erlang/OTP 26). Anything older isn't supported.
-
-guiltty also needs a GPU driver with OpenGL 3.3, which almost any desktop
-from the last decade has. For Vulkan it needs a Vulkan 1.3 driver (for
-AMD and Intel GPUs, Mesa's; only AMD has been tried).
-Without one, guiltty draws with OpenGL.
-
-Fonts come from fontconfig. guiltty looks best with a Nerd Font (for
-prompt icons), Noto Color Emoji (for emoji) and a CJK font such as Noto
-Sans CJK, for Chinese and Japanese.
 
 ### 2. guiltty
 
@@ -122,26 +145,16 @@ cd guiltty
 ./install.sh
 ```
 
-That checks for the tools above, builds a release and installs it into
-`~/.local` (no root needed):
+That checks for the tools above, builds a release and installs it where
+the one-line install does. To update: `git pull && ./install.sh`; the
+options above work here too (`./install.sh --uninstall`, `--yes`,
+`PREFIX=...`).
 
-| Where                                             | What            |
-|---------------------------------------------------|-----------------|
-| `~/.local/lib/guiltty/`                           | the release     |
-| `~/.local/bin/guiltty`                            | the command     |
-| `~/.local/share/applications/guiltty.desktop`     | the menu entry  |
-| `~/.local/share/icons/hicolor/*/apps/guiltty.png` | the icon        |
-
-Then run `guiltty`, or find it in your applications menu. If your shell
-says `guiltty: command not found`, add `~/.local/bin` to your `PATH`.
-
-- **Update:** `git pull && ./install.sh`. If guiltty is running, the
-  script asks before stopping it, since that closes its tabs (`--yes`
-  skips the question). Run from a guiltty tab, it finishes after that
-  tab closes, then opens guiltty again (its output goes to
-  `~/.local/state/guiltty/install.log`).
-- **Uninstall:** `./install.sh --uninstall`. Your config stays.
-- **Somewhere else:** `PREFIX=/opt/guiltty ./install.sh`.
+To build the precompiled release itself (it's what each version's
+GitHub release carries), you need only Docker: `make dist` builds it in
+a container into `_build/dist/`, and `make dist-check` installs it in
+fresh containers of five distributions to see that it runs (book
+chapter 17).
 
 ## Use it
 
@@ -242,3 +255,6 @@ width table and the icons.
 
 MIT, see [LICENSE](LICENSE). The installed copy also carries the Erlang
 runtime and the `telemetry` library, both under the Apache License 2.0.
+The precompiled release also carries Elixir (Apache 2.0) and has SDL3
+(zlib license) and ncurses (MIT-style) built in; their license texts are
+in the tarball's `licenses/`.

@@ -1,0 +1,55 @@
+# When a version tag is pushed (v0.26.0...), builds the precompiled release
+# with `make dist`, tries it on five distributions (`make dist-check`), and
+# publishes it as a GitHub release with that version's CHANGELOG section as
+# its notes. install.sh, piped from curl, downloads the newest one. Book
+# chapter 17, "The precompiled release".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  dist:
+    runs-on: ubuntu-24.04
+    # Writing a release needs write access to the repository's contents;
+    # nothing else does.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # The tarball is named from mix.exs: a tag that doesn't match it
+      # would publish a file install.sh can't find.
+      - name: The tag matches mix.exs
+        run: |
+          version=$(sed -n 's/^ *version: "\(.*\)",$/\1/p' mix.exs)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME, but mix.exs says $version" >&2
+            exit 1
+          fi
+
+      # The first step builds Erlang and SDL from source: about ten minutes.
+      - name: Build the tarball
+        run: make dist
+
+      - name: Try it on five distributions
+        run: make dist-check
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          # This version's CHANGELOG section: from its heading to the next.
+          awk -v v="$version" '
+            /^## / { on = (index($0, "## " v " ") == 1); next }
+            on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+          title=$(grep -m1 "^## $version " CHANGELOG.md | sed 's/^## //') || title="$version"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" _build/dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" _build/dist/* --verify-tag \
+              --title "guiltty ${title:-$version}" --notes-file notes.md
+          fi

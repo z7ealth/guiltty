@@ -6,15 +6,15 @@
 Running guiltty from the source tree needs Elixir. An installed guiltty
 doesn't: it's a Mix *release*, a directory with guiltty's compiled code,
 the renderer, the PTY NIF, and a copy of the Erlang runtime (ERTS) itself.
-[[file:../install.sh][install.sh]] builds one and puts it, and what a desktop needs to find it,
-in your home directory. No root.
+[[file:../install.sh][install.sh]] gets one (downloaded, or built from source) and puts it,
+and what a desktop needs to find it, in your home directory. No root.
 
 #+begin_example
   ~/.local/
   ├── lib/guiltty/                     the release
   │   ├── bin/guiltty                  its start script (and rel/env.sh.eex)
   │   ├── erts-17.1.1/                 its own Erlang
-  │   └── lib/guiltty-0.21.0/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
+  │   └── lib/guiltty-0.26.0/priv/     guiltty (the client), guiltty_vk, guiltty_gl,
   │                                    pty_nif.so, text_nif.so, guiltty.bmp
   ├── bin/guiltty                      a link to that client (chapter 23)
   └── share/
@@ -25,9 +25,9 @@ in your home directory. No root.
           └── 256x256/apps/guiltty.png
 #+end_example
 
-The release is built next to the old one (=lib/guiltty.new=) and swapped
-in only when the build worked, so a failed update leaves the installed
-guiltty alone. A running installed guiltty is stopped first (after
+The new release is put next to the old one (=lib/guiltty.new=) and
+swapped in only when that worked, so a failed update leaves the
+installed guiltty alone. A running installed guiltty is stopped first (after
 asking: its tabs close); the one in =_build/prod= is never touched, only
 pointed out, because both would use the node name =guiltty@127.0.0.1=.
 The swap is two renames (old aside, new in), so there's no moment with
@@ -66,55 +66,109 @@ that lets a program connect to it) comes from =~/.erlang.cookie=, never
 from the command line: =install.sh= stops if that file can be read by
 anyone but you. Chapter 20 explains why.
 
-* The one-line install
+* One install.sh, three ways in
 
-[[file:../get.sh][get.sh]] does the whole of this chapter for someone who has nothing yet:
-
-#+begin_src sh
-curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/get.sh | sh
-#+end_src
+Until v0.26.0 there were two scripts: =get.sh=, piped from curl, which
+installed build packages and downloaded the source, and =install.sh=,
+which built it. On a fresh Fedora, Ubuntu and Arch, that never got as
+far as a running guiltty (the next section says why). Now there's one
+[[file:../install.sh][install.sh]], and where it finds itself decides what it does:
 
 #+begin_example
-  /etc/os-release      ID=opensuse-tumbleweed, ID_LIKE="opensuse suse"
-       |                -> family: suse, fedora, debian or arch
-       v
-  missing packages     asked of the package manager one by one
-       |               (rpm -q --whatprovides, dpkg-query, pacman -Q)
-       |               -> shows "sudo zypper install ...", asks [y/N]
-       v
-  Elixir 1.18+ on      if not: says how to get one with asdf, and stops
-  OTP 26+?             (one already on the PATH, asdf's say, is used,
-       |                and the distribution's isn't added)
-       v
-  C23 compiler?        a two-line test program with constexpr
-       v
-  latest tag           api.github.com/repos/z7ealth/guiltty/tags, sorted
-       |               by version; GUILTTY_VERSION=v0.18.1 picks one
-       v
-  source tarball       github.com/.../archive/refs/tags/<tag>.tar.gz
-       |               -> ~/.local/src/guiltty-<version> (no git needed)
-       v
-  install.sh           the rest of this chapter
+  curl ... | bash             BASH_SOURCE is empty: there's no file
+        |                     -> download the latest release (below)
+        v
+  ./install.sh, next to a     an unpacked release tarball
+  release/ directory          -> install that release
+        |
+  ./install.sh, next to       a git checkout
+  mix.exs                     -> build from source (mix release)
+        |
+        v
+  check the libraries (not for a source build: it has them, or the build
+        |               fails) -> missing ones: "sudo apt install ...", [y/N]
+        v
+  stop the installed guiltty (asks), swap the release in, link the
+  command, menu entry and icons
 #+end_example
 
-Two details are about pipes. Run as =curl ... | sh=, the script's stdin is
-the script itself, so a question can't be read from it: =ask= reads the
-answer from =/dev/tty=, the terminal, directly. And =/dev/tty= can exist
-and still fail to open (a container, cron: no controlling terminal), so
-=has_tty= tries to open it, and without one only =--yes= goes ahead.
+Downloading:
 
-It's POSIX =sh=, not bash: =sh= is what every distribution has where the
-pipe lands. =install.sh= stays bash.
+#+begin_example
+  latest tag     api.github.com/repos/z7ealth/guiltty/releases/latest
+       |         (GUILTTY_VERSION=v0.26.0 picks one instead)
+       v
+  tarball        github.com/z7ealth/guiltty/releases/download/v0.26.0/
+       |           guiltty-0.26.0-x86_64-linux.tar.gz   and its .sha256
+       v
+  sha256sum -c   a damaged download stops here
+       v
+  unpacked into a temporary directory, removed at the end
+#+end_example
 
-Tried: the whole run on a fresh openSUSE Tumbleweed container (packages,
-Tumbleweed's own Elixir, the build, the install), and =--dry-run= on
-Fedora, Ubuntu 26.04 and Arch, which found every package name.
+The checksum only catches a broken download: anyone who could swap the
+tarball could swap the checksum next to it. What protects you is HTTPS
+from github.com, which is why the script is worth reading before piping it.
+
+Three details are about pipes:
+
+- *The whole script is read first.* Bash reads a script from a pipe a
+  line at a time, so a command that reads stdin could swallow the rest of
+  the script. Everything is in functions, and the last line calls =main=:
+  bash has to read to the end before anything runs.
+- *Questions go to the terminal.* stdin is the script, so =ask= reads the
+  answer from =/dev/tty=. =/dev/tty= can exist and still fail to open (a
+  container, cron: no controlling terminal), so =has_tty= tries to open
+  it, and without one only =--yes= goes ahead.
+- *bash, not sh.* The one-liner says =| bash=: install.sh uses arrays and
+  =<<<=, and bash is on every distribution's desktop.
+
+** Which libraries are missing
+
+The release carries guiltty, its Erlang and SDL3. The rest it takes from
+the system, and =ldd= says which of those can't be found:
+
+#+begin_example
+  $ ldd guiltty_vk           (on a bare Ubuntu 24.04 container)
+      libfontconfig.so.1 => not found
+      libharfbuzz.so.0 => not found
+      libfreetype.so.6 => not found
+      libpng16.so.16 => not found
+      libvulkan.so.1 => not found
+      libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+#+end_example
+
+install.sh reads =/etc/os-release= (=ID=, =ID_LIKE=) to learn the
+family (openSUSE, Fedora, Debian/Ubuntu, Arch), turns each missing
+library into that family's package name (=package_for=), shows the
+command and asks:
+
+#+begin_example
+  guiltty needs these libraries, and this system doesn't have them: libfontconfig.so.1 ...
+    sudo apt update && sudo apt install libfontconfig1 libfreetype6 libharfbuzz0b libpng16-16 libvulkan1
+  Install them now? [y/N]
+#+end_example
+
+Vulkan alone is optional (guiltty falls back to OpenGL, chapter 19), so
+it's added to the command but only warned about. The parsing is plain
+bash, with no awk: a minimal openSUSE image has no awk. The first version
+used it, and on such a system the check failed without a word and the
+install went ahead without the libraries. A check that can't run has to
+stop the script, not pass.
+
+On Arch the command is =pacman -Syu --needed=, not =pacman -S=. Arch
+supports only whole-system upgrades: installing a package from a fresh
+package list onto an older system can pull in a library newer than the
+ones installed (a "partial upgrade") and break them. In testing, a fresh
+Arch container installing curl that way got an OpenSSL 4 that pacman
+itself couldn't use.
 
 * What building needs
 
-Building is where Elixir comes in: =install.sh= compiles guiltty, its C
-programs and the release on your machine, and checks first that the tools
-are there.
+Building is where Elixir comes in. Run in a git checkout, =install.sh=
+compiles guiltty, its C programs and the release on your machine, and
+checks first that the tools are there. If some are missing, it lists
+them and points to the one-line install instead.
 
 | Needed                          | For                                     |
 |---------------------------------+-----------------------------------------|
@@ -124,11 +178,125 @@ are there.
 | SDL3, FreeType, fontconfig, HarfBuzz, libpng, Vulkan (dev files) | the renderers |
 
 Running the installed copy needs none of the build tools, only the shared
-libraries (SDL3, FreeType, fontconfig, HarfBuzz, libpng) and a GPU driver with
+libraries (FreeType, fontconfig, HarfBuzz, libpng, and SDL3 when built
+from source) and a GPU driver with
 OpenGL 3.3. Vulkan is optional: with the loader and a Vulkan 1.3 driver,
 guiltty draws with Vulkan; without them, =guiltty_vk= can't start and the
 Window falls back to OpenGL by itself (chapter 19). The README has the
 commands.
+
+* The precompiled release
+
+Building needs newer tools than many distributions ship. Ubuntu 24.04 has
+GCC 13, which can't compile =#embed=, Elixir 1.14 and no SDL3 package at all.
+So =make dist= builds the release once, in a container, and packs it as
+=_build/dist/guiltty-<version>-x86_64-linux.tar.gz= (about 10 MB).
+
+** Why it runs elsewhere: glibc only goes forward
+
+A program records the glibc symbol *versions* it was linked against
+(=memcpy@GLIBC_2.14=). The loader refuses to run it where glibc is older,
+and newer glibcs keep every old version. So the rule is: build on the
+oldest glibc you want to support. [[file:../dist/Dockerfile][dist/Dockerfile]] builds on Debian 12
+(glibc 2.36), which covers Debian 12, Ubuntu 23.04 and newer, and every
+current Fedora, Arch and openSUSE.
+
+#+begin_example
+  debian:bookworm (glibc 2.36)
+    ├── Erlang/OTP 29.1.2, built from source   (cached: built once)
+    ├── Elixir 1.20.5, precompiled
+    ├── Clang 20 (apt.llvm.org)                C23 and #embed
+    ├── SDL 3.4.18, built as a static library
+    └── dist/build.sh
+          GUILTTY_DIST=1 mix release           Makefile: SDL linked in,
+          strip, check NEEDED, tar             no -dbg renderers
+#+end_example
+
+** What it may need from your machine
+
+Every file says which shared libraries it needs (=NEEDED= in its dynamic
+section, =readelf -d=). [[file:../dist/build.sh][dist/build.sh]] fails the build if any binary
+needs something outside this list:
+
+| Who                         | May need                                                 |
+|-----------------------------+----------------------------------------------------------|
+| the renderers               | libc, libm, fontconfig, FreeType, HarfBuzz, libpng, Vulkan |
+| the NIFs and the client     | libc                                                     |
+| the Erlang runtime (ERTS)   | libc, libm, libstdc++, libgcc_s, zlib                    |
+
+Two libraries are deliberately absent:
+
+- *SDL3* is linked in statically. SDL then loads X11, Wayland, EGL,
+  PulseAudio, IBus and the rest with =dlopen= when it starts, choosing
+  whatever the machine has, so a system without PipeWire, say, still runs.
+- *libtinfo* (ncurses, used by the Erlang shell) is linked into the
+  Erlang runtime. The first attempt used a prebuilt Erlang that linked it
+  dynamically, and on openSUSE Tumbleweed the VM didn't start:
+
+#+begin_example
+  beam.smp: symbol lookup error: beam.smp: undefined symbol: strfnames,
+  version NCURSES6_TINFO_5.0.19991023
+#+end_example
+
+  Debian builds libtinfo with symbol versions and openSUSE doesn't, and
+  Fedora printed a warning about it on every command. So the Dockerfile
+  builds Erlang itself. It deletes the =libtinfo.so= development link
+  first, which leaves the linker only =libtinfo.a= to use.
+
+** Licenses
+
+Shipping other people's code means shipping their licenses. The
+Dockerfile keeps a copy of each as it builds, and the tarball carries
+them in =licenses/=: Erlang and Elixir (Apache 2.0, with parts of Erlang
+under BSD and MIT), SDL3 (zlib), ncurses (MIT-style: its notice must go
+with every copy) and telemetry (Apache 2.0).
+
+** Publishing it: the release workflow
+
+[[file:../.github/workflows/release.yml][.github/workflows/release.yml]] runs when a tag like =v0.26.0= is pushed:
+
+#+begin_example
+  git push origin v0.26.0
+       |
+       v
+  GitHub Actions (ubuntu-24.04 runner)
+    1. the tag must match mix.exs's version   else the tarball's name
+                                              wouldn't match what
+                                              install.sh asks for
+    2. make dist                              ~10 min: Erlang and SDL
+                                              from source, no cache
+    3. make dist-check                        five distributions
+    4. gh release create v0.26.0              tarball + .sha256, notes
+                                              = CHANGELOG's 0.26.0 section
+#+end_example
+
+Step 3 is why it can't publish a broken tarball: [[file:../dist/smoke.sh][dist/smoke.sh]] starts a
+bare container of each distribution, adds only what a desktop always has
+(Mesa and a font), and runs =install.sh --yes= from the unpacked tarball.
+Then =guiltty version= has to answer, both NIFs have to load, and both
+renderers have to draw the replay fixture offscreen. The workflow's token
+may write the repository's contents (=permissions: contents: write=),
+which is what creating a release needs, and nothing else.
+
+** Tried
+
+The tarball was unpacked in fresh containers of Ubuntu 24.04, Debian 12,
+Fedora, Arch and openSUSE Tumbleweed, with only the runtime libraries
+installed: ERTS started and loaded both NIFs, and both renderers replayed
+=test/fixtures/replay/session.msgs= offscreen on Mesa's software drivers
+and saved a screenshot. On Debian 12 only the OpenGL replay ran, because
+its lavapipe has no =VK_EXT_headless_surface= (a limit of the headless
+test, not of a desktop).
+
+Then the whole install, in bare containers of the same five
+(=make dist-check=, and by hand for the paths it doesn't take): from an
+unpacked tarball with =--yes=, installing the missing libraries first;
+=--uninstall= and a download, both piped into bash, with the download
+served from a local file; a damaged download (refused: checksum
+mismatch); no terminal and no =--yes= (shows the command, stops); and a
+checkout with no build tools (lists them, points to the one-liner). Not
+tried yet: a real desktop on each distribution, and the workflow itself,
+which runs only on GitHub.
 
 * The menu entry
 
@@ -215,7 +383,16 @@ headless Chromium otherwise.
   its foreground job; =signal(7)=: an ignored signal stays ignored across
   =fork= and =exec=; =proc_pid_stat(5)=: the parent pid.
 - =os-release(5)=: =ID= and =ID_LIKE=; =tty(4)=: =/dev/tty=, the
-  controlling terminal; =sh(1p)= (POSIX shell) for what =get.sh= may use.
+  controlling terminal; =bash(1)=, =BASH_SOURCE= (where a script was read
+  from) and "here strings" (=<<<=); =ldd(1)=.
+- =pacman(8)= and the Arch wiki's "Partial upgrades are unsupported".
+- GitHub Actions: workflow syntax (=on.push.tags=, =permissions=) and
+  =gh release create=.
+- =ld.so(8)= and =readelf(1)= (=-d=, the =NEEDED= entries): how a program
+  finds its shared libraries; glibc's symbol versioning (=objdump -T=
+  shows the =GLIBC_2.x= versions a binary needs).
+- Docker multi-stage builds and =docker build --output=: the last stage,
+  =FROM scratch=, is only the tarball.
 
 * Questions
 
@@ -225,8 +402,12 @@ headless Chromium otherwise.
 4. Why does guiltty need a BMP copy of its logo?
 5. Why did updating from inside guiltty stop halfway, and how does the
    script tell it's running inside guiltty?
-6. Piped into =sh=, how does =get.sh= ask you anything, and why isn't
-   checking that =/dev/tty= is readable enough?
+6. Piped into bash, how does =install.sh= ask you anything, and why
+   does it put everything in functions and call =main= on the last line?
+7. Why is the precompiled release built on Debian 12, not on the newest
+   distribution, and why is SDL3 linked in while FreeType isn't?
+8. How does install.sh find out which libraries are missing, and what
+   went wrong the first time on a minimal openSUSE?
 
 ** Answers
 :PROPERTIES:
@@ -247,6 +428,18 @@ headless Chromium otherwise.
    pids (=/proc/<pid>/stat=) looking for guiltty's VM; if it's there, it
    ignores =SIGHUP= and writes to a log instead of the closed terminal.
 6. Its stdin is the script, coming down the pipe; it reads answers from
-   =/dev/tty=, the controlling terminal, instead. In a container or cron
+   =/dev/tty=, the controlling terminal, instead (in a container or cron
    there is none: the file exists but opening it fails, so it tries to
-   open it.
+   open it). Bash reads a piped script a line at a time, so a command
+   that reads stdin could eat the rest of it; with everything in
+   functions, bash must read to the last line before anything runs.
+7. A binary runs only on a glibc at least as new as the one it was built
+   against, so building on an older one covers more systems. SDL3 isn't
+   packaged everywhere (Ubuntu 24.04 has none), while FreeType,
+   fontconfig, HarfBuzz and libpng are on every desktop and get security
+   updates from the distribution.
+8. It runs =ldd= on the renderers and on =beam.smp= and collects the
+   lines that say =not found=, then maps each library to the family's
+   package name. The first version filtered with awk, which that image
+   didn't have: the filter printed nothing, so nothing looked missing, and
+   the install went ahead without the libraries.

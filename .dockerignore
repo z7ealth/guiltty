@@ -1,0 +1,11 @@
+# What `make dist` doesn't send to Docker: build products and local state.
+# The container builds everything itself.
+_build
+deps
+tmp
+.git
+priv/*.so
+priv/guiltty
+priv/guiltty_gl*
+priv/guiltty_vk*
+c_src/renderer/vk/shaders/*.spv

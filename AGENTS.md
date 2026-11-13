@@ -272,7 +272,9 @@ mix run --no-start test/fixtures/fuzz/make_seeds.exs   # regenerate fuzz seeds (
 make width-table            # regenerate the Unicode width table from glibc's wcwidth
 make text-table             # regenerate the text NIF's codepoint table (after width-table)
 make icons                  # regenerate the icons from priv/icons/logo.svg (+ logo-small.svg)
-./install.sh                # install for the user into ~/.local (--uninstall to remove)
+./install.sh                # in a checkout: build and install into ~/.local (--uninstall to remove)
+make dist                   # the precompiled release tarball, built in Docker (book chapter 17)
+make dist-check             # install that tarball in fresh containers of five distributions
 ./priv/guiltty_gl-dbg --demo   # the renderer alone, no Elixir
 ./priv/guiltty_vk-dbg --replay test/fixtures/replay/session.msgs --screenshot x.ppm
                                # replay recorded port messages, save the last frame

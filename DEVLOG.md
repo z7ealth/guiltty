@@ -1717,3 +1717,75 @@ dropped: the guiltty worth inspecting is the one running all day.
 - Hints for OSC 8 links, not only URLs in plain text.
 - Two-line prompts still fool the guess in Ctrl+Shift+G; a B mark (end of
   prompt) would fix it for shells that send B.
+
+## 2026-11-12 — Three laptops, no guiltty: a precompiled release
+
+_Draft: agent, awaiting user_
+
+The laptop was reinstalled three times today, with Fedora, Ubuntu and
+Arch, and get.sh got guiltty onto none of them. Looking back, the
+script was never the real problem. Building guiltty needs GCC 15, SDL3
+and Elixir 1.18, and Ubuntu 24.04 ships none of the three. The README
+already admitted that the full build had only been tried on openSUSE.
+
+So the answer is to stop building on the user's machine. `make dist`
+builds the release once, in a Debian 12 container, and packs it as a
+10 MB tarball. Debian 12 because glibc only runs programs built for the
+same glibc or an older one: build on an old one and every newer system
+can run the result. Clang 20 from apt.llvm.org for C23, and SDL3 built
+from source and linked in statically, so Ubuntu's missing SDL3 package
+doesn't matter.
+
+The first tarball passed on Ubuntu, Fedora and Arch and failed on
+openSUSE, the one distribution guiltty had always worked on. hexpm's
+prebuilt Erlang links ncurses' libtinfo dynamically, and openSUSE's
+libtinfo has no symbol versions: `undefined symbol: strfnames, version
+NCURSES6_TINFO_5.0.19991023`. Fedora's only printed a warning. The fix
+was to build Erlang in the container with libtinfo linked in statically
+(delete the `.so` development link, and the linker has only the `.a`
+left). That made the tarball 29 MB, of which 56 MB unpacked was
+beam.smp's debug symbols. Stripped, it's back to 10 MB.
+
+Now dist/build.sh reads every binary's NEEDED list and fails the build
+if anything turns up beyond libc, libm, zlib, the C++ runtime and the
+desktop libraries. The tarball then ran in fresh containers of all five
+distributions: ERTS started, both NIFs loaded, and both renderers drew
+the replay fixture on Mesa's software drivers. Debian 12 was the
+exception for Vulkan headless, because its lavapipe has no headless
+surface.
+
+Next: one install.sh that downloads this tarball (get.sh goes away), and
+a GitHub Actions workflow that runs `make dist` when a tag is pushed.
+
+Later the same day, the rest. get.sh is gone. One install.sh decides
+what to do from where it finds itself: piped from curl, it downloads
+the tarball; next to an unpacked `release/`, it installs that; in a git
+checkout, it builds. A tarball install first runs `ldd` over the
+renderers and the VM, turns every `not found` into the distribution's
+package name, and asks before running the `sudo` command.
+
+The tests were bare containers of the five distributions, with install.sh
+run from the tarball, piped from a file, with a damaged download, with
+no terminal, and in a checkout with no tools. Two real bugs turned up.
+openSUSE's minimal image has no awk, so the library check printed
+nothing and the install went ahead without the libraries. It's plain
+bash now, and an ldd that fails stops the script. And on Arch, my test
+setup ran `pacman -Sy` and got a half-upgraded system whose pacman
+couldn't load its new OpenSSL. install.sh had the same `pacman -S` in
+it, and that may well be the "package conflicts" from this morning's
+Arch install. It's `pacman -Syu` now.
+
+The tarball also carries its neighbours' licenses now (Erlang, Elixir,
+SDL3, ncurses, telemetry), since it ships their code. A GitHub Actions
+workflow builds it when a tag is pushed, runs the five-distribution
+check, and publishes the release with the CHANGELOG section as its notes.
+That workflow is the one piece no one has run yet: it only runs on
+GitHub.
+
+### Later
+
+- Cache the Docker layers in the release workflow: every tag rebuilds
+  Erlang and SDL from scratch, about ten minutes.
+- An aarch64 tarball.
+- Try `make dist-check`'s distributions on real desktops, not only
+  headless.
