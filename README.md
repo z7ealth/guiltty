@@ -24,8 +24,8 @@ end (book chapter 22).
 
 ## Install
 
-One line, on any x86_64 Linux with glibc 2.36 or newer: Ubuntu 23.04 or
-newer, Debian 12 or newer, and any current Fedora, Arch, Manjaro or
+One line, on any x86_64 Linux with glibc 2.36 or newer: Ubuntu 24.04 and
+26.04 LTS, Debian 12 or newer, and any current Fedora, Arch, Manjaro or
 openSUSE:
 
 ```sh

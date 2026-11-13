@@ -173,7 +173,7 @@ install.sh picks out the newest version asked for, asks glibc for its own
 
 #+begin_example
   guiltty: this guiltty needs glibc 2.36 or newer, and this system has 2.35.
-  guiltty: That's Ubuntu 23.04, Debian 12, or any current Fedora, Arch or openSUSE;
+  guiltty: That's Ubuntu 24.04 or 26.04, Debian 12, or any current Fedora, Arch or openSUSE;
   guiltty: on an older system, build from source instead (README, "Build from source")
 #+end_example
 
@@ -252,8 +252,8 @@ A program records the glibc symbol *versions* it was linked against
 (=memcpy@GLIBC_2.14=). The loader refuses to run it where glibc is older,
 and newer glibcs keep every old version. So the rule is: build on the
 oldest glibc you want to support. [[file:../dist/Dockerfile][dist/Dockerfile]] builds on Debian 12
-(glibc 2.36), which covers Debian 12, Ubuntu 23.04 and newer, and every
-current Fedora, Arch and openSUSE.
+(glibc 2.36), which covers Debian 12, the Ubuntu LTS releases guiltty
+supports (24.04 and 26.04), and every current Fedora, Arch and openSUSE.
 
 Building on 2.36 doesn't by itself mean needing 2.36: a binary asks only
 for the versions of the functions it calls. Most of guiltty would run on

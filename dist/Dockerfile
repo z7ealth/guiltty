@@ -7,8 +7,8 @@
 #
 # Why Debian 12: a program built against one glibc runs on that glibc and
 # any newer one, never an older one (glibc's symbol versioning). Debian
-# 12 has glibc 2.36, so the tarball runs on Debian 12, Ubuntu 23.04 and
-# newer, and every current Fedora, Arch and openSUSE. It also has glslc
+# 12 has glibc 2.36, so the tarball runs on Debian 12, Ubuntu 24.04 and
+# 26.04, and every current Fedora, Arch and openSUSE. It also has glslc
 # and the X11/Wayland headers SDL needs. What it lacks we bring: a C23
 # compiler (Clang from apt.llvm.org), and SDL3, built here.
 

@@ -241,7 +241,7 @@ check_runtime_libs() {
         have=$(getconf GNU_LIBC_VERSION 2>/dev/null) || have="an older one"
         have=${have#glibc }
         warn "this guiltty needs glibc $glibc or newer, and this system has $have."
-        warn "That's Ubuntu 23.04, Debian 12, or any current Fedora, Arch or openSUSE;"
+        warn "That's Ubuntu 24.04 or 26.04, Debian 12, or any current Fedora, Arch or openSUSE;"
         die "on an older system, build from source instead (README, \"Build from source\")"
     fi
 
