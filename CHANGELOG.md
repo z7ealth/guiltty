@@ -8,6 +8,13 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.26.2 — 2026-11-13 — wget is enough
+
+### Fixed
+- The wget one-liner (`wget -qO- …/install.sh | bash`) works on a system
+  without curl, such as Ubuntu's desktop: `install.sh` downloads with
+  wget when there's no curl, instead of stopping with "curl is needed".
+
 ## 0.26.1 — 2026-11-13 — OpenGL without a warning, and fixes to installing
 
 ### Changed

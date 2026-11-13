@@ -2,6 +2,7 @@
 # Installs guiltty for you (no root needed), or updates it. Three ways:
 #
 #   curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
+#   wget -qO- https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
 #                             downloads the latest precompiled release
 #   ./install.sh              in an unpacked release tarball: installs it
 #   ./install.sh              in a git checkout: builds from source (needs
@@ -267,16 +268,34 @@ check_runtime_libs() {
 
 # --- Getting the release: downloaded, unpacked here, or built ---
 
+# fetch URL FILE [progress]: downloads URL into FILE ("-" for stdout),
+# failing on an HTTP error, with curl or else wget. Ubuntu's desktop has
+# wget and no curl; most others have both.
+fetch() {
+    local url=$1 out=$2 progress=${3:-}
+    if need curl; then
+        if [ -n "$progress" ]; then
+            curl -fSL --progress-bar -o "$out" "$url"
+        else
+            curl -fsSL -o "$out" "$url"
+        fi
+    elif [ -n "$progress" ]; then
+        wget -q --show-progress -O "$out" "$url"
+    else
+        wget -q -O "$out" "$url"
+    fi
+}
+
 download_release() {
     local tag version name url tmp
-    need curl || die "curl is needed"
+    need curl || need wget || die "curl or wget is needed"
     need tar || die "tar is needed"
     need sha256sum || die "sha256sum is needed"
     [ "$(uname -m)" = x86_64 ] || die "the precompiled release is for x86_64 only; build from source (README)"
 
     tag="${GUILTTY_VERSION:-}"
     if [ -z "$tag" ]; then
-        tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
+        tag=$(fetch "https://api.github.com/repos/$REPO/releases/latest" - |
             sed -n 's/.*"tag_name": *"\(v[0-9][0-9.]*\)".*/\1/p') ||
             die "can't reach GitHub to find the latest release"
         [ -n "$tag" ] || die "no release found on github.com/$REPO"
@@ -291,8 +310,8 @@ download_release() {
     tmp=$(mktemp -d)
     # shellcheck disable=SC2064 # expand $tmp now
     trap "rm -rf '$tmp'" EXIT
-    curl -fSL --progress-bar -o "$tmp/$name.tar.gz" "$url" || die "download failed: $url"
-    curl -fsSL -o "$tmp/$name.tar.gz.sha256" "$url.sha256" || die "download failed: $url.sha256"
+    fetch "$url" "$tmp/$name.tar.gz" progress || die "download failed: $url"
+    fetch "$url.sha256" "$tmp/$name.tar.gz.sha256" || die "download failed: $url.sha256"
     # The checksum catches a broken download; a tampered one would come
     # with a matching checksum, so HTTPS from github.com is the real guard.
     (cd "$tmp" && sha256sum --quiet -c "$name.tar.gz.sha256") || die "the download is damaged (checksum mismatch)"
@@ -314,6 +333,7 @@ build_from_source() {
         warn "can't build guiltty, missing: ${missing[*]}"
         warn "the README lists what to install, or skip building: install the precompiled release with"
         warn "  curl -fsSL https://raw.githubusercontent.com/$REPO/master/install.sh | bash"
+        warn "  (or: wget -qO- https://raw.githubusercontent.com/$REPO/master/install.sh | bash)"
         exit 1
     fi
 

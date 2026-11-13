@@ -1847,3 +1847,11 @@ The workflow got a "Run workflow" button for the next time a tag push
 starts nothing. The README now has a manual install, both the tarball
 with its own install.sh and every step by hand, and the by-hand steps
 were run as written in a fresh container.
+
+Adding wget to the docs turned up one more bug. The README already
+offered `wget -qO- …/install.sh | bash` for Ubuntu's desktop, which has
+no curl, but install.sh then downloaded the release with curl and
+stopped: "curl is needed". A small `fetch` function now uses curl when
+it's there and wget otherwise. Tested with wget alone, in an Ubuntu
+container serving the tarball over a local HTTP server, since wget
+can't read file:// URLs.

@@ -32,7 +32,8 @@ openSUSE:
 curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
 ```
 
-Ubuntu's desktop has no curl; wget does the same:
+Or with wget, if you don't have curl (Ubuntu's desktop doesn't): it does the
+same, and the script then downloads with wget too:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
@@ -64,10 +65,11 @@ Options go after `bash -s --`, settings before `bash`:
 | update                     | the same line again                                       |
 | uninstall (config stays)   | `curl -fsSL …/install.sh \| bash -s -- --uninstall`        |
 | not be asked anything      | `curl -fsSL …/install.sh \| bash -s -- --yes`              |
-| install a given version    | `curl -fsSL …/install.sh \| GUILTTY_VERSION=v0.26.1 bash` |
+| install a given version    | `curl -fsSL …/install.sh \| GUILTTY_VERSION=v0.26.2 bash` |
 | install somewhere else     | `curl -fsSL …/install.sh \| PREFIX=/opt/guiltty bash`      |
 
-(`…` is `https://raw.githubusercontent.com/z7ealth/guiltty/master`.)
+(`…` is `https://raw.githubusercontent.com/z7ealth/guiltty/master`. With
+wget, write `wget -qO- …/install.sh` where these say `curl -fsSL …/install.sh`.)
 
 When updating, if guiltty is running, the script asks before stopping
 it, since that closes its tabs. Run from a guiltty tab, it finishes after
@@ -94,9 +96,12 @@ and run the `install.sh` inside it. It's the same script, and it installs
 that tarball instead of downloading one:
 
 ```sh
-v=0.26.1
+v=0.26.2
 curl -fLO https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz
 curl -fLO https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz.sha256
+#   or, with wget:
+# wget https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz
+# wget https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz.sha256
 sha256sum -c guiltty-$v-x86_64-linux.tar.gz.sha256      # should say: OK
 tar xzf guiltty-$v-x86_64-linux.tar.gz
 ./guiltty-$v-x86_64-linux/install.sh                    # --uninstall, --yes work here too
@@ -119,7 +124,7 @@ Without any script. This is all that install.sh does.
    unpacking the tarball as above):
 
    ```sh
-   v=0.26.1
+   v=0.26.2
    mkdir -p ~/.local/lib ~/.local/bin ~/.local/share/applications
    cp -a guiltty-$v-x86_64-linux/release ~/.local/lib/guiltty
    ln -sf ~/.local/lib/guiltty/lib/guiltty-$v/priv/guiltty ~/.local/bin/guiltty

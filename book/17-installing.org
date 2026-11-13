@@ -108,6 +108,13 @@ Downloading:
   unpacked into a temporary directory, removed at the end
 #+end_example
 
+Downloads go through one small function, =fetch=, which uses curl when
+it's there and wget otherwise. The one-liner works with either
+(=curl -fsSL ... | bash= or =wget -qO- ... | bash=), and Ubuntu's desktop
+comes with wget but not curl. Until v0.26.2 the script itself only knew
+curl, so the wget one-liner fetched install.sh and then stopped with
+"curl is needed".
+
 The checksum only catches a broken download: anyone who could swap the
 tarball could swap the checksum next to it. What protects you is HTTPS
 from github.com, which is why the script is worth reading before piping it.
