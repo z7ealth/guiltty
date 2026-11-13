@@ -7,8 +7,10 @@
 # In each, install.sh --yes installs the libraries it finds missing, then
 # guiltty: `guiltty version` must answer, both NIFs must load, and the
 # renderers must draw test/fixtures/replay/session.msgs offscreen, on
-# Mesa's software drivers. `make dist-check` runs it on the newest tarball,
-# and so does the release workflow before publishing anything.
+# Mesa's software drivers. Then one distribution that's too old (Ubuntu
+# 22.04, glibc 2.35): install.sh must refuse it before installing
+# anything. `make dist-check` runs it on the newest tarball, and so does
+# the release workflow before publishing anything.
 set -euo pipefail
 
 tarball=${1:?usage: dist/smoke.sh <tarball> [image...]}
@@ -72,6 +74,23 @@ for image in "${images[@]}"; do
         failed+=("$image")
     fi
 done
+
+# Too old: the release needs glibc 2.36 (pidfd_open in the PTY NIF), and
+# install.sh must say so and stop, not install something that can't open
+# a tab.
+echo "=== ubuntu:22.04 (too old: must be refused)"
+# shellcheck disable=SC2016 # expanded in the container
+if docker run --rm -v "$work:/w:ro,z" ubuntu:22.04 bash -c '
+    cd /tmp && tar -xzf /w/guiltty.tar.gz
+    out=$(bash /tmp/guiltty-*/install.sh --yes 2>&1) && { echo "installed, but should not have"; exit 1; }
+    echo "$out" | grep "needs glibc" || { echo "$out"; exit 1; }
+    [ ! -e ~/.local/lib/guiltty ] || { echo "left an install behind"; exit 1; }
+'; then
+    echo "=== ubuntu:22.04: refused, ok"
+else
+    echo "=== ubuntu:22.04: FAILED"
+    failed+=("ubuntu:22.04 (refusal)")
+fi
 
 if [ ${#failed[@]} -gt 0 ]; then
     echo "failed on: ${failed[*]}" >&2

@@ -24,11 +24,18 @@ end (book chapter 22).
 
 ## Install
 
-One line, on any x86_64 Linux from the last few years (Ubuntu 23.04 or
-newer, Debian 12 or newer, any current Fedora, Arch or openSUSE):
+One line, on any x86_64 Linux with glibc 2.36 or newer: Ubuntu 23.04 or
+newer, Debian 12 or newer, and any current Fedora, Arch, Manjaro or
+openSUSE:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
+```
+
+Ubuntu's desktop has no curl; wget does the same:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash
 ```
 
 That downloads the latest precompiled release (about 10 MB, with its own
@@ -44,33 +51,103 @@ no root needed:
 
 If a library guiltty needs is missing (fontconfig, FreeType, HarfBuzz,
 libpng; every desktop normally has them), it shows the `sudo` command that
-installs it and asks before running it. Then run `guiltty`, or find it in
-your applications menu. If your shell says `guiltty: command not found`,
-add `~/.local/bin` to your `PATH`.
+installs it and asks before running it. On a system too old for the
+release (Ubuntu 22.04, Debian 11), it says so and installs nothing. Then
+run `guiltty`, or find it in your applications menu. If your shell says
+`guiltty: command not found`, log in again (Ubuntu and Fedora add
+`~/.local/bin` to your `PATH` at login once it exists) or add it yourself.
 
-- **Update:** run the same line again. If guiltty is running, the script
-  asks before stopping it, since that closes its tabs. Run from a guiltty
-  tab, it finishes after that tab closes, then opens guiltty again (its
-  output goes to `~/.local/state/guiltty/install.log`).
-- **Uninstall:** `curl -fsSL https://raw.githubusercontent.com/z7ealth/guiltty/master/install.sh | bash -s -- --uninstall`.
-  Your config stays.
-- **Without asking:** add `bash -s -- --yes`.
-- **A given version:** `GUILTTY_VERSION=v0.26.0` before `bash`.
-- **Somewhere else:** `PREFIX=/opt/guiltty` before `bash`.
-- **Without the pipe:** download `guiltty-<version>-x86_64-linux.tar.gz`
-  from the [releases](https://github.com/z7ealth/guiltty/releases), unpack
-  it and run the `install.sh` inside.
+Options go after `bash -s --`, settings before `bash`:
+
+| To                         | Run                                                       |
+|----------------------------|-----------------------------------------------------------|
+| update                     | the same line again                                       |
+| uninstall (config stays)   | `curl -fsSL …/install.sh \| bash -s -- --uninstall`        |
+| not be asked anything      | `curl -fsSL …/install.sh \| bash -s -- --yes`              |
+| install a given version    | `curl -fsSL …/install.sh \| GUILTTY_VERSION=v0.26.1 bash` |
+| install somewhere else     | `curl -fsSL …/install.sh \| PREFIX=/opt/guiltty bash`      |
+
+(`…` is `https://raw.githubusercontent.com/z7ealth/guiltty/master`.)
+
+When updating, if guiltty is running, the script asks before stopping
+it, since that closes its tabs. Run from a guiltty tab, it finishes after
+that tab closes, then opens guiltty again (its output goes to
+`~/.local/state/guiltty/install.log`).
 
 [install.sh](install.sh) is a short script: read it first, if you like.
 
 guiltty needs a GPU driver with OpenGL 3.3, which almost any desktop from
-the last decade has. For Vulkan it needs a Vulkan 1.3 driver (for AMD and
-Intel GPUs, Mesa's; only AMD has been tried). Without one, guiltty draws
-with OpenGL.
+the last decade has. With a Vulkan 1.3 driver (Mesa's, for AMD and Intel
+GPUs; only AMD has been tried), it draws with Vulkan; without one, as in
+most virtual machines, it draws with OpenGL, silently: that's a normal
+way to run.
 
 Fonts come from fontconfig. guiltty looks best with a Nerd Font (for
 prompt icons), Noto Color Emoji (for emoji) and a CJK font such as Noto
 Sans CJK, for Chinese and Japanese.
+
+### Manual install
+
+Without piping a script into your shell: download the release from the
+[releases page](https://github.com/z7ealth/guiltty/releases), check it
+and run the `install.sh` inside it. It's the same script, and it installs
+that tarball instead of downloading one:
+
+```sh
+v=0.26.1
+curl -fLO https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz
+curl -fLO https://github.com/z7ealth/guiltty/releases/download/v$v/guiltty-$v-x86_64-linux.tar.gz.sha256
+sha256sum -c guiltty-$v-x86_64-linux.tar.gz.sha256      # should say: OK
+tar xzf guiltty-$v-x86_64-linux.tar.gz
+./guiltty-$v-x86_64-linux/install.sh                    # --uninstall, --yes work here too
+```
+
+### Entirely by hand
+
+Without any script. This is all that install.sh does.
+
+1. The libraries, if they're missing:
+
+   | Distribution         | Command                                                                          |
+   |----------------------|----------------------------------------------------------------------------------|
+   | openSUSE             | `sudo zypper install fontconfig libfreetype6 libharfbuzz0 libpng16-16 libvulkan1` |
+   | Fedora               | `sudo dnf install fontconfig freetype harfbuzz libpng vulkan-loader`              |
+   | Ubuntu, Debian       | `sudo apt install libfontconfig1 libfreetype6 libharfbuzz0b libpng16-16 libvulkan1` |
+   | Arch, Manjaro        | `sudo pacman -Syu --needed fontconfig freetype2 harfbuzz libpng vulkan-icd-loader` |
+
+2. The release, the command, the icons and the menu entry (after
+   unpacking the tarball as above):
+
+   ```sh
+   v=0.26.1
+   mkdir -p ~/.local/lib ~/.local/bin ~/.local/share/applications
+   cp -a guiltty-$v-x86_64-linux/release ~/.local/lib/guiltty
+   ln -sf ~/.local/lib/guiltty/lib/guiltty-$v/priv/guiltty ~/.local/bin/guiltty
+   for s in 16 24 32 48 64 128 256; do
+     install -D -m 644 ~/.local/lib/guiltty/lib/guiltty-$v/priv/icons/guiltty-$s.png \
+       ~/.local/share/icons/hicolor/${s}x$s/apps/guiltty.png
+   done
+   cat > ~/.local/share/applications/guiltty.desktop <<EOF
+   [Desktop Entry]
+   Type=Application
+   Name=guiltty
+   GenericName=Terminal
+   Comment=A GPU terminal emulator in Elixir and C
+   Exec=$HOME/.local/bin/guiltty
+   Icon=guiltty
+   Terminal=false
+   Categories=System;TerminalEmulator;
+   StartupWMClass=guiltty
+   StartupNotify=false
+   EOF
+   ```
+
+   The command has to be a link into the release, not a copy: it finds
+   the release it belongs to through the link.
+
+3. To update, stop guiltty first (`~/.local/lib/guiltty/bin/guiltty
+   stop`; that closes its tabs), then replace `~/.local/lib/guiltty` and
+   the link. To uninstall, remove those, the menu entry and the icons.
 
 ## Build from source
 
@@ -133,9 +210,10 @@ sudo pacman -Syu --needed base-devel sdl3 freetype2 fontconfig harfbuzz libpng \
   vulkan-icd-loader vulkan-headers shaderc elixir
 ```
 
-guiltty is developed on Elixir 1.20.4 with Erlang/OTP 29. It also
-builds and passes its tests on Elixir 1.19.7 (Erlang/OTP 28 and 26) and
-Elixir 1.18.4 (Erlang/OTP 26). Anything older isn't supported.
+guiltty is developed on Elixir 1.20.5 with Erlang/OTP 29, and passes its
+tests on Elixir 1.18.4 with Erlang/OTP 26 too. Anything older isn't
+supported. (0.24.0 to 0.26.0 couldn't open a window on OTP 26; fixed in
+0.26.1.)
 
 ### 2. guiltty
 
@@ -148,7 +226,9 @@ cd guiltty
 That checks for the tools above, builds a release and installs it where
 the one-line install does. To update: `git pull && ./install.sh`; the
 options above work here too (`./install.sh --uninstall`, `--yes`,
-`PREFIX=...`).
+`PREFIX=/opt/guiltty ./install.sh`). This is also the way on a system too
+old for the precompiled release, if it has the tools (GCC 15 and SDL3
+are usually what's missing).
 
 To build the precompiled release itself (it's what each version's
 GitHub release carries), you need only Docker: `make dist` builds it in

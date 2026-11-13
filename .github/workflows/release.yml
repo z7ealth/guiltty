@@ -8,6 +8,10 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A "Run workflow" button in the Actions tab: pick the tag under "Use
+  # workflow from". For when a tag push doesn't start a run, which
+  # happened with v0.26.0.
+  workflow_dispatch:
 
 jobs:
   dist:

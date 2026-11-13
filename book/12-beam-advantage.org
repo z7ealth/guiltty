@@ -119,6 +119,13 @@ holds it only in between. There's one race worth knowing: the supervisor
 can start the new =Tabs= before the transfer message reaches the Keeper,
 so =take/1= waits up to a second for it (=await_owner/1=).
 
+The option is spelled ={:heir, self(), nil}=: a pid and a piece of data
+that rides along in the ='ETS-TRANSFER'= message. Newer OTPs also take
+=heir: pid= without the data, but OTP 26 doesn't: =:ets.new= raises
+=badarg=, no desk could start, and no window opened. Until v0.26.1 the
+code used the short form, and only the run on the oldest supported
+versions (chapter 10) caught it.
+
 The broadcast group isn't kept on purpose. Joining checks what each pane
 is running (chapter 18); after a crash you join again, rather than have
 your keystrokes fan out to servers without having asked.

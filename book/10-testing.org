@@ -278,15 +278,21 @@ rectangle fills. That's those features in daily use, not just in a test suite.
 * Older Elixir and Erlang
 
 guiltty is written on the newest Elixir and Erlang, but the people who
-install it often have what their distribution ships. The oldest it
+build it from source often have what their distribution ships (the
+precompiled release carries its own, OTP 29: chapter 17). The oldest it
 supports is *Elixir 1.18 on Erlang/OTP 26*. Every pair below built
 guiltty with =--warnings-as-errors=, passed the whole suite, and (where
 marked) built a release that starts:
 
 | Elixir | Erlang/OTP | Tests            | Release |
 |--------+------------+------------------+---------|
-| 1.20.5 | 29         | 599, all passed  | yes     |
-| 1.18.4 | 26         | 599, all passed  | yes     |
+| 1.20.5 | 29         | 678, all passed  | yes     |
+| 1.18.4 | 26         | 678, all passed  | yes     |
+
+(As of v0.26.1. From v0.24.0 to v0.26.0, 11 tests failed on OTP 26: an
+ETS option spelled the newer way, chapter 12, so no window could open.
+AGENTS.md asks for this run before every tag that touches Elixir code,
+and it was skipped for those three.)
 
 =mix.exs= enforces the Elixir side (=elixir: "~> 1.18"=); nothing
 enforces the Erlang side, so the README states it.

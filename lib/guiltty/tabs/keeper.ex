@@ -32,7 +32,10 @@ defmodule Guiltty.Tabs.Keeper do
 
   @impl true
   def init(nil) do
-    table = :ets.new(:guiltty_tabs, [:set, :protected, heir: self()])
+    # {:heir, pid, data}: OTP 26 knows only this form (`heir: pid`, without
+    # the data, came later and makes ets:new raise badarg there). The data
+    # rides along in the ETS-TRANSFER message, which ignores it.
+    table = :ets.new(:guiltty_tabs, [:set, :protected, {:heir, self(), nil}])
     {:ok, table}
   end
 

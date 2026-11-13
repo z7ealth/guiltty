@@ -1789,3 +1789,61 @@ GitHub.
 - An aarch64 tarball.
 - Try `make dist-check`'s distributions on real desktops, not only
   headless.
+
+## 2026-11-13 — The first release on GitHub (v0.26.0)
+
+_Draft: agent, awaiting user_
+
+The commit and the tag went up, and nothing happened. GitHub listed the
+workflow as active, the repository's Actions settings allowed everything,
+and yet there wasn't a single run. The tag push had simply produced no
+run. Deleting the tag on GitHub and pushing it again (`git push origin
+:v0.26.0`, then `git push origin v0.26.0`) did it: the run started at
+once and went green in about 15 minutes, building Erlang and SDL from
+scratch, passing the five-distribution check and publishing the release
+with the CHANGELOG section as its notes.
+
+Then the real one-liner, in a fresh Ubuntu 24.04 container: it found
+v0.26.0 as the latest release, downloaded it, installed the four missing
+libraries, and `guiltty version` answered. Next is real desktops in VMs.
+
+## 2026-11-13 — OpenGL is not an error (v0.26.1)
+
+_Draft: agent, awaiting user_
+
+The VMs all worked: Manjaro first try, then the rest. The one thing that
+looked wrong was the tab bar on Manjaro saying "Vulkan couldn't start".
+Nothing was broken. The VM's virtual GPU has an OpenGL driver and no
+Vulkan one, and Manjaro doesn't even install the Vulkan loader without a
+Vulkan driver. guiltty fell back to OpenGL exactly as designed, then
+announced it like a failure. Now only the log says so, as a notice, and
+install.sh stopped warning about a missing Vulkan loader too.
+
+The rule is to run the suite on the oldest supported versions (Elixir
+1.18.4, OTP 26) before a tag that touches Elixir code. That run gave 11
+failures, and they weren't new: v0.25.0 as committed gave the same 11.
+Since v0.24.0, the Keeper that holds the tab layout through a crash
+created its ETS table with `heir: self()`. That's the two-element form,
+and OTP 26 only knows `{:heir, pid, data}`. On OTP 26 every desk failed
+to start, so a source build there never opened a window. The tests had
+been saying so for two versions; nobody ran them on 26. The precompiled
+release carries OTP 29 and never had the problem.
+
+Later, asked whether any bug was still pending, the one I had mentioned
+turned out to be real and worse than I'd said. I had assumed the release
+needs glibc 2.36 because it's built on Debian 12, and that install.sh
+just didn't check. A first measurement said 2.34, which was wrong too.
+Ubuntu 22.04 then showed what's really going on: everything installed,
+and the PTY NIF refused to load. It calls `pidfd_open`, whose glibc
+wrapper is 2.36. install.sh only ran `ldd` on the renderers and the VM,
+never on the NIFs, so it couldn't see it. Now it checks every binary,
+picks out "version `GLIBC_2.36' not found" lines and stops before
+installing anything. Its first message said "this system has ?", because
+`ldd --version | head -n 1` under pipefail counts head's early exit as a
+failure. `getconf GNU_LIBC_VERSION` answers with no pipe. `make
+dist-check` now also makes sure Ubuntu 22.04 is refused.
+
+The workflow got a "Run workflow" button for the next time a tag push
+starts nothing. The README now has a manual install, both the tarball
+with its own install.sh and every step by hand, and the by-hand steps
+were run as written in a fresh container.

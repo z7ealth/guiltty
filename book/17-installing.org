@@ -85,8 +85,10 @@ far as a running guiltty (the next section says why). Now there's one
   mix.exs                     -> build from source (mix release)
         |
         v
-  check the libraries (not for a source build: it has them, or the build
-        |               fails) -> missing ones: "sudo apt install ...", [y/N]
+  check glibc and the libraries (not for a source build: it has them, or
+        |               the build fails)
+        |               -> glibc too old: say so, stop, install nothing
+        |               -> missing ones: "sudo apt install ...", [y/N]
         v
   stop the installed guiltty (asks), swap the release in, link the
   command, menu entry and icons
@@ -149,8 +151,45 @@ command and asks:
   Install them now? [y/N]
 #+end_example
 
+It checks every binary of guiltty's own: the two renderers, the
+client, both NIFs and the VM. The NIFs matter as much as the renderers:
+they're loaded into the VM only when a tab opens, so one that can't load
+fails late, with the window already up.
+
+** A glibc too old
+
+One library can't be fixed by installing a package: the C library
+itself, glibc, which is the distribution's own. If it's older than the
+release needs, =ldd= says so in a line of its own:
+
+#+begin_example
+  $ ldd pty_nif.so           (on Ubuntu 22.04, glibc 2.35)
+  pty_nif.so: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.36' not found
+      (required by pty_nif.so)
+#+end_example
+
+install.sh picks out the newest version asked for, asks glibc for its own
+(=getconf GNU_LIBC_VERSION=) and stops before installing anything:
+
+#+begin_example
+  guiltty: this guiltty needs glibc 2.36 or newer, and this system has 2.35.
+  guiltty: That's Ubuntu 23.04, Debian 12, or any current Fedora, Arch or openSUSE;
+  guiltty: on an older system, build from source instead (README, "Build from source")
+#+end_example
+
+The first version of this message said "this system has ?". It got the
+number from =ldd --version | head -n 1=: =head= exits after one line,
+=ldd= is killed by =SIGPIPE= writing the rest, and under =set -o pipefail=
+that failed pipeline was taken as "couldn't tell". =getconf= gives the
+answer with no pipe to break. Until v0.26.1 there was no check at all:
+on Ubuntu 22.04 everything installed, and then the PTY NIF refused to
+load when guiltty opened its first tab.
+
+** Missing Vulkan
+
 Vulkan alone is optional (guiltty falls back to OpenGL, chapter 19), so
-it's added to the command but only warned about. The parsing is plain
+a missing Vulkan loader is never mentioned on its own. It only joins the
+install command when something else is missing too. The parsing is plain
 bash, with no awk: a minimal openSUSE image has no awk. The first version
 used it, and on such a system the check failed without a word and the
 install went ahead without the libraries. A check that can't run has to
@@ -162,6 +201,21 @@ package list onto an older system can pull in a library newer than the
 ones installed (a "partial upgrade") and break them. In testing, a fresh
 Arch container installing curl that way got an OpenSSL 4 that pacman
 itself couldn't use.
+
+** By hand
+
+The README has two ways without the pipe. One downloads the tarball,
+checks it (=sha256sum -c=) and runs the =install.sh= inside it: the same
+script, which finds =release/= next to itself. The other does without
+any script. That's a list of commands, because all install.sh does
+is in this chapter: libraries, then the release in =~/.local/lib/guiltty=,
+the link, the icons and the =.desktop= file.
+
+The one step that isn't obvious is the link. =~/.local/bin/guiltty= must
+be a symbolic link into the release, not a copy of the client. The client
+finds the release it belongs to by following its own path
+(=/proc/self/exe=, chapter 23), so a copy elsewhere wouldn't know which
+release to start.
 
 * What building needs
 
@@ -200,6 +254,18 @@ and newer glibcs keep every old version. So the rule is: build on the
 oldest glibc you want to support. [[file:../dist/Dockerfile][dist/Dockerfile]] builds on Debian 12
 (glibc 2.36), which covers Debian 12, Ubuntu 23.04 and newer, and every
 current Fedora, Arch and openSUSE.
+
+Building on 2.36 doesn't by itself mean needing 2.36: a binary asks only
+for the versions of the functions it calls. Most of guiltty would run on
+2.34. The PTY NIF is what needs 2.36, because it calls =pidfd_open= and
+=pidfd_send_signal= (chapter 2), whose wrappers glibc added in 2.36.
+=objdump -T= shows it:
+
+#+begin_example
+  $ objdump -T priv/pty_nif.so | grep GLIBC_2.36
+  0000000000000000      DF *UND*  0000000000000000 (GLIBC_2.36) pidfd_send_signal
+  0000000000000000      DF *UND*  0000000000000000 (GLIBC_2.36) pidfd_open
+#+end_example
 
 #+begin_example
   debian:bookworm (glibc 2.36)
@@ -265,7 +331,8 @@ with every copy) and telemetry (Apache 2.0).
                                               install.sh asks for
     2. make dist                              ~10 min: Erlang and SDL
                                               from source, no cache
-    3. make dist-check                        five distributions
+    3. make dist-check                        five distributions, and one
+                                              too old (must be refused)
     4. gh release create v0.26.0              tarball + .sha256, notes
                                               = CHANGELOG's 0.26.0 section
 #+end_example
@@ -277,6 +344,17 @@ Then =guiltty version= has to answer, both NIFs have to load, and both
 renderers have to draw the replay fixture offscreen. The workflow's token
 may write the repository's contents (=permissions: contents: write=),
 which is what creating a release needs, and nothing else.
+
+The check ends with Ubuntu 22.04, which is too old (glibc 2.35). There
+install.sh must say "needs glibc" and leave nothing installed, and the
+check fails if it doesn't.
+
+A tag push doesn't always start a run: for v0.26.0 none appeared until
+the tag was deleted on GitHub and pushed again. So the workflow can also
+be started by hand (=workflow_dispatch=): in the Actions tab, "release",
+"Run workflow", with the tag picked under "Use workflow from". Started
+from a branch instead, it stops at its first step, because "master"
+isn't the version in =mix.exs=.
 
 ** Tried
 
@@ -294,9 +372,12 @@ unpacked tarball with =--yes=, installing the missing libraries first;
 =--uninstall= and a download, both piped into bash, with the download
 served from a local file; a damaged download (refused: checksum
 mismatch); no terminal and no =--yes= (shows the command, stops); and a
-checkout with no build tools (lists them, points to the one-liner). Not
-tried yet: a real desktop on each distribution, and the workflow itself,
-which runs only on GitHub.
+checkout with no build tools (lists them, points to the one-liner).
+
+The workflow published v0.26.0 in about 15 minutes, and the one-liner,
+run in a fresh Ubuntu 24.04 container, downloaded that release from
+GitHub and installed it. Not tried yet: a real desktop on each
+distribution.
 
 * The menu entry
 
@@ -408,6 +489,9 @@ headless Chromium otherwise.
    distribution, and why is SDL3 linked in while FreeType isn't?
 8. How does install.sh find out which libraries are missing, and what
    went wrong the first time on a minimal openSUSE?
+9. The release is built on glibc 2.36, but most of it would run on 2.34.
+   What makes 2.36 the real floor, and how does install.sh find out
+   before installing anything?
 
 ** Answers
 :PROPERTIES:
@@ -438,8 +522,13 @@ headless Chromium otherwise.
    packaged everywhere (Ubuntu 24.04 has none), while FreeType,
    fontconfig, HarfBuzz and libpng are on every desktop and get security
    updates from the distribution.
-8. It runs =ldd= on the renderers and on =beam.smp= and collects the
+8. It runs =ldd= on every binary (renderers, client, NIFs, =beam.smp=) and collects the
    lines that say =not found=, then maps each library to the family's
    package name. The first version filtered with awk, which that image
    didn't have: the filter printed nothing, so nothing looked missing, and
    the install went ahead without the libraries.
+9. The PTY NIF calls =pidfd_open= and =pidfd_send_signal=, whose glibc
+   wrappers are versioned =GLIBC_2.36=. On an older glibc, =ldd= on the
+   NIF prints "version `GLIBC_2.36' not found"; install.sh looks for
+   that line in every binary's =ldd= output and stops with the version
+   it found (=getconf GNU_LIBC_VERSION=).

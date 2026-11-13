@@ -8,6 +8,30 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.26.1 — 2026-11-13 — OpenGL without a warning, and fixes to installing
+
+### Changed
+- When Vulkan can't start (most virtual machines have no Vulkan driver),
+  guiltty draws with OpenGL as before, but no longer says "Vulkan couldn't
+  start" in the tab bar: OpenGL is a normal way to run. The log
+  (`~/.local/lib/guiltty/tmp/log/erlang.log.1`) still has a line about it.
+- `install.sh` no longer warns when there's no Vulkan loader.
+
+### Fixed
+- Built from source on Erlang/OTP 26, guiltty couldn't open a window
+  (since 0.24.0): the table that keeps the tabs through a crash used an
+  option OTP 26 doesn't accept. The precompiled release was never
+  affected; it carries OTP 29.
+- On a system too old for the precompiled release (glibc older than
+  2.36: Ubuntu 22.04, Debian 11), `install.sh` installed it anyway, and
+  guiltty then failed when opening its first tab. Now it says which glibc
+  is needed and installs nothing.
+- `GUILTTY_VERSION=0.26.1` (without the `v`) picks that version too.
+
+### Added
+- The README explains how to install by hand: the tarball with its own
+  `install.sh`, or without any script at all.
+
 ## 0.26.0 — 2026-11-12 — Install without building
 
 ### Added

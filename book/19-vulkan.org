@@ -204,12 +204,28 @@ window), the Vulkan renderer exits with status 1. The Window
     |--- SETUP, ROWS ---->|
     |                     | SDL_CreateWindow / vkCreateInstance fails
     |<-- exit_status 1 ---x   no FRAME was ever drawn
-    | log a warning, remember :vulkan_failed
+    | log a notice, remember :vulkan_failed
     |--- spawn ----------------------------------------------->|
     |<-- HELLO "gl" -------------------------------------------|
     |--- SETUP, TABS, every row ------------------------------>|
-    |    status: "Vulkan couldn't start: drawing with OpenGL"  (10 s)
 #+end_example
+
+Nothing shows in the window: OpenGL is a normal way to run, not an error,
+so only the log hears about it (=~/.local/lib/guiltty/tmp/log/erlang.log.1=
+for the installed guiltty):
+
+#+begin_example
+  [notice] window: the Vulkan renderer exited with status 1; drawing with OpenGL
+#+end_example
+
+Until v0.26.1 the tab bar said "Vulkan couldn't start" for ten seconds,
+which looked like something was broken. Where does it happen? Mostly in
+virtual machines. The virtual GPU (virtio-gpu, QXL, VMware's SVGA,
+VirtualBox's) has an OpenGL driver in Mesa but usually no Vulkan one, and
+some distributions don't even install the Vulkan loader, =libvulkan.so.1=,
+unless a Vulkan driver needs it. Manjaro is one: on a VM it has neither.
+Ubuntu and Fedora install the loader and Mesa's Vulkan drivers by
+default, so on a VM they may find lavapipe (Mesa's Vulkan on the CPU).
 
 The sign is "exited before its first FRAME", not "before its hello": the
 renderer says hello before it makes its window, because SETUP carries the

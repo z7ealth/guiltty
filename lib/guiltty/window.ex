@@ -281,8 +281,12 @@ defmodule Guiltty.Window do
   # with OpenGL instead, in this same Window: forget the handshake and the
   # tab being shown, so the new renderer's hello does both again. Later
   # windows go straight to OpenGL, until guiltty restarts.
+  #
+  # Only the log hears about it, as a notice, not a warning: OpenGL is a
+  # normal way to run, not an error. It's what happens in most virtual
+  # machines, whose virtual GPUs have no Vulkan driver.
   defp fall_back(%{renderer: "guiltty_vk" <> build, drawn: false} = state, why) do
-    Logger.warning("window: the Vulkan renderer #{why}; drawing with OpenGL")
+    Logger.notice("window: the Vulkan renderer #{why}; drawing with OpenGL")
     Application.put_env(:guiltty, :vulkan_failed, true)
     if why == "didn't say hello", do: Port.close(state.port)
     state = unview_all(state)
@@ -293,7 +297,6 @@ defmodule Guiltty.Window do
        state
        | port: open_renderer(renderer, state.env),
          renderer: renderer,
-         notice: "Vulkan couldn't start: drawing with OpenGL (see the log)",
          ready: false,
          active: nil,
          active_tab: nil,

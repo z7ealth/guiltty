@@ -193,21 +193,38 @@ install_packages() {
 # --- A precompiled release: the libraries it needs from the system ---
 #
 # The tarball carries guiltty, its Erlang and SDL3. What it takes from
-# the system is listed in dist/build.sh: the C and C++ runtimes, zlib,
-# and the desktop's font and image libraries. ld.so(8) says which are
-# missing (ldd prints "not found"). Vulkan is optional: without it the
+# the system is listed in dist/build.sh: the C library (glibc 2.36 or
+# newer: it was built on Debian 12), the C++ runtime, zlib, and the
+# desktop's font and image libraries. ld.so(8) says which are missing
+# (ldd prints "not found"). Vulkan is optional: without it the
 # window falls back to OpenGL (book chapter 19).
 check_runtime_libs() {
-    local release=$1 priv f lib arrow rest out pkg
+    local release=$1 priv f lib arrow rest out pkg line glibc="" have
     local -a required=() optional=() packages=()
     need ldd || die "ldd is needed (it comes with the C library)"
     priv=$(echo "$release"/lib/guiltty-*/priv)
-    for f in "$priv/guiltty_vk" "$priv/guiltty_gl" "$release"/erts-*/bin/beam.smp; do
-        # A missing library reads "libfoo.so.1 => not found". Plain bash,
-        # no awk: a minimal system may not have it, and a check that
-        # can't run must not pass.
-        out=$(ldd "$f") || die "can't check $f with ldd"
-        while read -r lib arrow rest; do
+    # Every program and library of guiltty's own, and the VM. The NIFs
+    # matter as much as the renderers: they're loaded into the VM later,
+    # when a tab opens, and fail there if they can't be.
+    for f in "$priv/guiltty_vk" "$priv/guiltty_gl" "$priv/guiltty" "$priv"/*.so \
+        "$release"/erts-*/bin/beam.smp; do
+        # A missing library reads "libfoo.so.1 => not found"; a C library
+        # too old for us, "version `GLIBC_2.36' not found". Plain bash, no
+        # awk: a minimal system may not have it, and a check that can't
+        # run must not pass.
+        out=$(ldd "$f" 2>&1) || die "can't check $f with ldd"
+        while read -r line; do
+            case "$line" in
+            *"version \`GLIBC_"*"' not found"*)
+                # The newest one asked for is the one to report.
+                line=${line#*\`GLIBC_}
+                line=${line%%\'*}
+                if [ -z "$glibc" ] || [ "$(printf '%s\n%s\n' "$glibc" "$line" | sort -V | tail -n 1)" = "$line" ]; then
+                    glibc=$line
+                fi
+                ;;
+            esac
+            read -r lib arrow rest <<<"$line"
             [ "$arrow $rest" = "=> not found" ] || continue
             case "$lib" in
             libvulkan.so.1) optional+=("$lib") ;;
@@ -215,13 +232,26 @@ check_runtime_libs() {
             esac
         done <<<"$out"
     done
+
+    # glibc is the one library a package manager can't bring up to date:
+    # it's the distribution's own, so the answer is a newer distribution
+    # (or building from source, which links against what's there).
+    if [ -n "$glibc" ]; then
+        # getconf(1) asks glibc itself ("glibc 2.35"): no pipe to break.
+        have=$(getconf GNU_LIBC_VERSION 2>/dev/null) || have="an older one"
+        have=${have#glibc }
+        warn "this guiltty needs glibc $glibc or newer, and this system has $have."
+        warn "That's Ubuntu 23.04, Debian 12, or any current Fedora, Arch or openSUSE;"
+        die "on an older system, build from source instead (README, \"Build from source\")"
+    fi
+
     # Each library once.
     mapfile -t required < <(printf '%s\n' "${required[@]}" | sed '/^$/d' | sort -u)
     mapfile -t optional < <(printf '%s\n' "${optional[@]}" | sed '/^$/d' | sort -u)
 
-    if [ ${#optional[@]} -gt 0 ]; then
-        warn "no Vulkan loader (libvulkan.so.1): guiltty will draw with OpenGL"
-    fi
+    # No Vulkan isn't worth a word: drawing with OpenGL is a normal way to
+    # run (most virtual machines have no Vulkan driver anyway). It only
+    # joins the install command when something else is missing too.
     [ ${#required[@]} -eq 0 ] && return 0
 
     say "guiltty needs these libraries, and this system doesn't have them: ${required[*]}"
@@ -251,6 +281,8 @@ download_release() {
             die "can't reach GitHub to find the latest release"
         [ -n "$tag" ] || die "no release found on github.com/$REPO"
     fi
+    # The tags are spelled v0.26.0; accept 0.26.0 too.
+    case "$tag" in v*) ;; *) tag="v$tag" ;; esac
     version=${tag#v}
     name="guiltty-$version-x86_64-linux"
     url="https://github.com/$REPO/releases/download/$tag/$name.tar.gz"

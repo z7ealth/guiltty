@@ -766,7 +766,7 @@ defmodule Guiltty.WindowTest do
     assert Port.info(port(window))
   end
 
-  test "a Vulkan renderer that can't start falls back to OpenGL, and says so", %{
+  test "a Vulkan renderer that can't start falls back to OpenGL, without a warning", %{
     window: window
   } do
     GenServer.stop(window)
@@ -791,7 +791,8 @@ defmodule Guiltty.WindowTest do
            end),
            "no fallback"
 
-    assert {:warning, "Vulkan couldn't start" <> _} = :sys.get_state(window).status
+    # OpenGL is a normal way to run: the log says so, the window doesn't.
+    refute match?({:warning, _}, :sys.get_state(window).status)
     assert Application.get_env(:guiltty, :vulkan_failed)
   end
 
