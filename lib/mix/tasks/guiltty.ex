@@ -28,7 +28,9 @@ defmodule Mix.Tasks.Guiltty do
         ref = Process.monitor(pid)
 
         receive do
-          {:DOWN, ^ref, :process, _pid, _reason} -> Process.sleep(100) && wait()
+          {:DOWN, ^ref, :process, _pid, _reason} ->
+            Process.sleep(100)
+            wait()
         end
     end
   end

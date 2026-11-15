@@ -248,6 +248,20 @@ bracketed paste. So the text waits until the tool turns that mode on, and goes t
 After 5 seconds it goes anyway, with its line breaks turned into spaces, because to a
 program without bracketed paste a line break is the same as pressing Enter.
 
+*Knowing when it's waiting for you.* An agent asking "allow this command?" looks, to a
+terminal, just like one thinking: no output. Only the agent knows, so it has to say so,
+and the simplest way any terminal understands is the bell. Tell Claude Code to ring it
+(=preferredNotifChannel= set to ="terminal_bell"= in its settings); Codex rings it on its
+own when it can't send a notification. A tab you're not looking at then shows 🔔, so with
+a few agents in tabs you see which one is waiting.
+
+*It never joins a broadcast* (chapter 18). Joining a tab joins every pane in it, and
+the AI pane beside an ssh is a pane of that tab, so until v0.26.3 it joined too: type
+=hostname= into two servers and the AI got it as well. The Window knows which panes it
+opened for the tool (=ai_panes=) and passes them to =Tabs.toggle_broadcast/4= as
+=except:=; Tabs leaves them out. An AI tab of its own has nothing else to join, and
+Ctrl+Shift+B there just says so.
+
 * Loot
 
 - tmux(1): =split-window=, =select-pane=, =resize-pane= (the model the

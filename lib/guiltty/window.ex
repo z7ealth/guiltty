@@ -1106,9 +1106,14 @@ defmodule Guiltty.Window do
     programs = state.config.broadcast_programs
     local? = state.confirm_local == state.active_tab
 
+    opts = [local: local?, except: Map.values(state.ai_panes)]
+
     case catch_exit(fn ->
-           Tabs.toggle_broadcast(state.desk_tabs, state.active_tab, programs, local: local?)
+           Tabs.toggle_broadcast(state.desk_tabs, state.active_tab, programs, opts)
          end) do
+      {:error, :nothing_to_join} ->
+        flash(state, "the AI tab doesn't join a broadcast")
+
       {:error, {:not_allowed, program}} ->
         state = %{state | confirm_local: state.active_tab}
         flash(state, "this tab is local (#{program}): Ctrl+Shift+B again adds it as a local tab")

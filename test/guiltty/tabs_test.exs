@@ -217,6 +217,31 @@ defmodule Guiltty.TabsTest do
       assert MapSet.size(:sys.get_state(@tabs).lost) == 0
     end
 
+    test "the AI pane beside a tab never joins, and an AI tab can't" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [first] = ids()
+      run_cat(first)
+      {:ok, ai} = Tabs.split(@tabs, :right)
+      {:ok, second} = Tabs.new_tab(@tabs)
+      run_cat(second)
+
+      # The AI pane runs bash, not cat: without `except` the tab is refused.
+      assert {:error, {:not_allowed, "bash"}} = Tabs.toggle_broadcast(@tabs, first, ["cat"])
+      assert {:ok, :joined} = Tabs.toggle_broadcast(@tabs, first, ["cat"], except: [ai])
+      assert {:ok, :joined} = Tabs.toggle_broadcast(@tabs, second, ["cat"], except: [ai])
+      refute Map.has_key?(:sys.get_state(@tabs).group, ai)
+
+      assert :sent = Tabs.send_input(@tabs, second, "not-the-ai\r")
+      assert eventually(fn -> Session.dump(first) =~ ~r/^not-the-ai$/m end)
+      Process.sleep(200)
+      refute Session.dump(ai) =~ "not-the-ai"
+
+      {:ok, ai_tab} = Tabs.new_tab(@tabs)
+
+      assert {:error, :nothing_to_join} =
+               Tabs.toggle_broadcast(@tabs, ai_tab, ["cat"], local: true, except: [ai_tab])
+    end
+
     test "the check runs by itself and marks a lost tab before anyone types" do
       Tabs.attach_window(@tabs, self())
       [first] = ids()

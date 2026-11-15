@@ -98,6 +98,11 @@ first press says so and nothing joins; a second press adds the non-ssh
 panes as local ones. The group's members are panes; the markers and the
 status count tabs (and panes, when there are more).
 
+The one pane that never joins is the AI tool's (chapter 27, "The AI
+key"): it's there to ask about the server, not to run the command again.
+The Window names it in =except:= and Tabs leaves it out
+([[file:../lib/guiltty/tabs.ex::defp toggle_broadcast_tab][toggle_broadcast_tab]]).
+
 * Who does what
 
 [[file:../lib/guiltty/tabs.ex][Tabs]] owns the group, like it owns the tab list and the locks: which tabs,

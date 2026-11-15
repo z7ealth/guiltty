@@ -349,11 +349,10 @@ defmodule Guiltty.Parser do
   ## Ground bytes that aren't text
 
   defp ground_byte(byte, rest, p, acc) do
-    cond do
-      c0?(byte) -> anywhere(byte, rest, :ground, p, acc)
-      # DEL
-      true -> step(:ground, rest, p, acc)
-    end
+    # Anything else here is DEL.
+    if c0?(byte),
+      do: anywhere(byte, rest, :ground, p, acc),
+      else: step(:ground, rest, p, acc)
   end
 
   ## C0 controls: the same in every state except strings

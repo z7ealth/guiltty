@@ -8,6 +8,14 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.26.3 — 2026-11-15 — the AI pane stays out of a broadcast
+
+### Fixed
+- In a broadcast, the AI pane beside a tab no longer gets what you type
+  into the servers: Ctrl+Shift+B joins every pane of the tab except the
+  AI one. A tab with an AI pane beside an ssh now joins on the first
+  press. The AI in a tab of its own can't join, and the tab bar says so.
+
 ## 0.26.2 — 2026-11-13 — wget is enough
 
 ### Fixed

@@ -1855,3 +1855,37 @@ stopped: "curl is needed". A small `fetch` function now uses curl when
 it's there and wget otherwise. Tested with wget alone, in an Ubuntu
 container serving the tarball over a local HTTP server, since wget
 can't read file:// URLs.
+
+## 2026-11-15 — The AI heard the broadcast (v0.26.3)
+
+_Draft: agent, awaiting user_
+
+Two tabs in a broadcast group, one of them with the AI pane open beside
+it. Type `hostname`, press Enter, and the servers answered, and so did
+the AI: it got `hostname` as a prompt. Nothing was misrouted. Joining a
+tab joins every pane of it, by design, so a tab split in four types
+into four servers. The AI pane is a pane of the tab like any other. Its
+program isn't ssh, so the first Ctrl+Shift+B said "this tab is local",
+and the second press, the one meant for joining your own machine on
+purpose, added the AI along with everything else as a local pane.
+
+The fix is small because the two halves already knew what they needed
+to. Tabs owns the group but doesn't know what an AI pane is; the Window
+opened that pane and remembers it in `ai_panes`. So the Window passes
+them along as `except:` and Tabs leaves them out before anything else
+happens. An AI in a tab of its own has nothing left to join, and gets a
+message instead of a silent nothing.
+
+
+Later the same day, two linters, run once each and not kept. Credo
+found no bugs: one warning (the grid struct has 75 fields, on purpose)
+and 35 suggestions, mostly "nested too deep" at a limit of 2 and "too
+complex" on the key encoding and Kitty graphics tables, which are long
+because the protocols are. Three small things were worth fixing: a
+`with` clause that did nothing, a `cond` that was an `if`, and an
+assignment inside an `if`'s condition. Dialyzer found one real bug:
+moving a tab with none active did `nil - 1` before the line meant to
+check for nil, so the check could never work. It's unlikely to happen,
+since Tabs stops when its last tab does, but now nil simply moves
+nothing. Its other findings were about `Mix`, which isn't in its table
+of known modules.

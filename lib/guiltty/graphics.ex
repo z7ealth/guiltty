@@ -403,9 +403,8 @@ defmodule Guiltty.Graphics do
   defp decode(c, payload) do
     with :ok <- direct(c),
          {:ok, data} <- base64(payload),
-         {:ok, data} <- inflate(c[?o], data, expected_size(c)),
-         {:ok, image} <- check(Map.get(c, ?f, 32), c, data) do
-      {:ok, image}
+         {:ok, data} <- inflate(c[?o], data, expected_size(c)) do
+      check(Map.get(c, ?f, 32), c, data)
     end
   end
 

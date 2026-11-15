@@ -155,7 +155,10 @@ defmodule Guiltty.Session.Pty do
         fn -> System.find_executable("bash") end,
         fn -> "/bin/sh" end
       ],
-      fn candidate -> if executable?(path = candidate.()), do: path end
+      fn candidate ->
+        path = candidate.()
+        if executable?(path), do: path
+      end
     )
   end
 

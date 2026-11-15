@@ -135,7 +135,9 @@ defmodule Guiltty.Tabs do
   join, each pane's foreground program must be one of `programs`; with
   `local: true` the others join as local panes. Returns `{:ok, :joined}`,
   `{:ok, :left}` or `{:error, {:not_allowed, program}}` (and nothing
-  joins). `tab` may also be one of its panes.
+  joins). Panes in `except: ids` (the AI pane) never join; a tab with no
+  other pane gives `{:error, :nothing_to_join}`. `tab` may also be one of
+  its panes.
   """
   def toggle_broadcast(tabs, tab, programs, opts \\ []),
     do: GenServer.call(tabs, {:toggle_broadcast, tab, programs, opts})
@@ -478,10 +480,11 @@ defmodule Guiltty.Tabs do
   end
 
   def handle_call({:move, direction}, _from, state) do
+    # No active tab gives no index: nil is in no range, so nothing moves.
     index = Enum.find_index(state.tabs, &(&1 == state.active))
-    target = if direction == :left, do: index - 1, else: index + 1
+    target = index && if(direction == :left, do: index - 1, else: index + 1)
 
-    if (index && target >= 0) and target < length(state.tabs) do
+    if target in 0..(length(state.tabs) - 1)//1 do
       tabs = state.tabs |> List.delete_at(index) |> List.insert_at(target, state.active)
       {:reply, :ok, notify_windows(%{state | tabs: tabs})}
     else
@@ -824,9 +827,16 @@ defmodule Guiltty.Tabs do
 
   ## The broadcast group
 
+  # The AI pane beside a server is for asking about it, not one more place
+  # to type the command into: it never joins.
   defp toggle_broadcast_tab(state, tab, programs, opts) do
-    members = Layout.panes(state.layouts[tab])
+    case Layout.panes(state.layouts[tab]) -- Keyword.get(opts, :except, []) do
+      [] -> {:reply, {:error, :nothing_to_join}, state}
+      members -> toggle_members(state, members, programs, opts)
+    end
+  end
 
+  defp toggle_members(state, members, programs, opts) do
     if Enum.any?(members, &Map.has_key?(state.group, &1)) do
       state = Enum.reduce(members, state, &leave_group(&2, &1))
       {:reply, {:ok, :left}, notify_windows(state)}
