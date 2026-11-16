@@ -13,6 +13,16 @@ defmodule Guiltty.Window.Compose do
   A tab of one pane is the common case, and costs nothing: its rows are
   the window's rows, as they come.
 
+  ## Dimming the other panes
+
+  With several panes, the ones without the focus have their text dimmed
+  (unless the config's `pane_border` says `dim_inactive: false`), so you
+  see at a glance where you'd type. It's the dim attribute (SGR 2) set on
+  their cells as they're stitched in: the renderer already draws it,
+  mixing a cell's text color halfway toward its background. The rows a
+  pane sent are kept as they came, so moving the focus only stitches
+  again.
+
   ## Clusters
 
   A cell holds a codepoint, or the id of a *cluster* (a character made of
@@ -23,6 +33,8 @@ defmodule Guiltty.Window.Compose do
   use them are rewritten. Only rows of panes that have clusters at all
   are rewritten.
   """
+
+  import Bitwise
 
   alias Guiltty.Grid
 
@@ -57,7 +69,14 @@ defmodule Guiltty.Window.Compose do
     {:none, :thick} => ~c"       "
   }
 
-  @default_look %{style: :solid, thickness: :thin, color: nil, active_color: nil}
+  @default_look %{
+    style: :solid,
+    thickness: :thin,
+    color: nil,
+    active_color: nil,
+    dim_inactive: true
+  }
+  @dim Grid.attr(:dim)
 
   defstruct size: {0, 0},
             # visible panes, in layout order: [{id, {x, y, w, h}}]
@@ -115,7 +134,8 @@ defmodule Guiltty.Window.Compose do
 
   @doc """
   What the separators look like, from the config: its `pane_border`
-  (`style`, `thickness`) and the theme's `pane_border` and
+  (`style`, `thickness`, and `dim_inactive`: whether the panes without
+  the focus are dimmed) and the theme's `pane_border` and
   `pane_border_active` colors (nil: the palette's bright black and blue).
   """
   def look(pane_border, theme) do
@@ -123,7 +143,8 @@ defmodule Guiltty.Window.Compose do
       style: pane_border.style,
       thickness: pane_border.thickness,
       color: Map.get(theme, :pane_border),
-      active_color: Map.get(theme, :pane_border_active)
+      active_color: Map.get(theme, :pane_border_active),
+      dim_inactive: Map.get(pane_border, :dim_inactive, true)
     }
   end
 
@@ -227,7 +248,7 @@ defmodule Guiltty.Window.Compose do
         w = min(w, cols - x)
         gap = binary_part(base, pos * @cell, (x - pos) * @cell)
         row = c.rows |> Map.get(id, {}) |> elem_or_nil(r - y)
-        {[acc, gap, fit(row, base, x, w)], x + w}
+        {[acc, gap, row |> fit(base, x, w) |> dim(c, id)], x + w}
       end)
 
     IO.iodata_to_binary([parts, binary_part(base, pos * @cell, (cols - pos) * @cell)])
@@ -249,6 +270,17 @@ defmodule Guiltty.Window.Compose do
     if have > w,
       do: binary_part(row, 0, w * @cell),
       else: row <> binary_part(base, (x + have) * @cell, (w - have) * @cell)
+  end
+
+  # A pane without the focus: every cell dimmed (see "Dimming the other
+  # panes"). Only reached with two panes or more: one pane is never dimmed.
+  defp dim(cells, %{focus: focus}, focus), do: cells
+  defp dim(cells, %{look: %{dim_inactive: false}}, _id), do: cells
+
+  defp dim(cells, _c, _id) do
+    for <<glyph::32, attrs::16, colors::binary-size(8) <- cells>>, into: <<>> do
+      <<glyph::32, attrs ||| @dim::16, colors::binary>>
+    end
   end
 
   # Blank cells and the separators: dim, except along the focused pane.

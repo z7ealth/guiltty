@@ -104,7 +104,9 @@
   # The border between split panes (Ctrl+Shift+O / E): one cell wide, a
   # line of style :solid, :dashed, :double or :none (blank), :thin or
   # :thick. Its colors are in theme: (pane_border, pane_border_active).
-  pane_border: [style: :solid, thickness: :thin],
+  # dim_inactive: the panes without the focus have their text dimmed, so you
+  # see where you'd type; false keeps them as bright as the focused one.
+  pane_border: [style: :solid, thickness: :thin, dim_inactive: true],
 
   # Join ->, !=, |>, => and the like into one symbol, when the font has
   # ligatures (JetBrains Mono and Fira Code do; Source Code Pro doesn't).

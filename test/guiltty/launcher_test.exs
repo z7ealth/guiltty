@@ -42,8 +42,11 @@ defmodule Guiltty.LauncherTest do
     :exit, _ -> false
   end
 
-  # The client, with this environment; {output, exit status}.
+  # The client, with this environment; {output, exit status}. Without the
+  # GUILTTY_PANE of the shell running the tests (a guiltty pane, likely),
+  # unless the test gives one.
   defp client(args, env) do
+    env = if List.keymember?(env, "GUILTTY_PANE", 0), do: env, else: [{"GUILTTY_PANE", nil} | env]
     System.cmd(@client, args, env: env, stderr_to_stdout: true)
   end
 

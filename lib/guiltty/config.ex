@@ -47,7 +47,8 @@ defmodule Guiltty.Config do
     * `:pane_border` - the line between split panes: `style:` `:solid`
       (the default), `:dashed`, `:double` or `:none`, and `thickness:`
       `:thin` (the default) or `:thick`; its colors can be set in the theme
-      (`pane_border`, `pane_border_active`)
+      (`pane_border`, `pane_border_active`). With `dim_inactive:` `true`
+      (the default), the panes without the focus have their text dimmed
     * `:ligatures` - join `->`, `!=`, `|>` and the like into one symbol,
       when the font has ligatures (JetBrains Mono, Fira Code)
     * `:broadcast_programs` - what a tab must be running to join the
@@ -149,7 +150,7 @@ defmodule Guiltty.Config do
       attention_after: 10,
       bold_is_bright: true,
       tab_bar: :bottom,
-      pane_border: %{style: :solid, thickness: :thin},
+      pane_border: %{style: :solid, thickness: :thin, dim_inactive: true},
       tab_style: :powerline,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
@@ -447,8 +448,14 @@ defmodule Guiltty.Config do
            one_of(:"pane_border thickness", Keyword.get(opts, :thickness, d.thickness), [
              :thin,
              :thick
-           ]) do
-      {:ok, %{style: style, thickness: thickness}}
+           ]),
+         {:ok, dim} <-
+           one_of(
+             :"pane_border dim_inactive",
+             Keyword.get(opts, :dim_inactive, d.dim_inactive),
+             [true, false]
+           ) do
+      {:ok, %{style: style, thickness: thickness, dim_inactive: dim}}
     end
   end
 

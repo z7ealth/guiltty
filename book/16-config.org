@@ -134,6 +134,7 @@ the renderer, some reach the shell's process:
 | =tab_style= (=:flat=, =:powerline=, =:rounded=, =:minimal=, =:separators=) | renderer (TAB_STYLE) | live (chapter 25) |
 | =theme: tab_bar=, =tab_text=, =tab_active=, =tab_active_text=, =tab_accent= | renderer (TAB_STYLE) | live; unset ones derived from the theme (chapter 25) |
 | =pane_border: style= (=:solid=, =:dashed=, =:double=, =:none=), =thickness= (=:thin=, =:thick=) | Window (Compose) | live: every row sent again (chapter 27) |
+| =pane_border: dim_inactive= (=true=) | Window (Compose) | live: every row sent again; the panes without the focus dimmed (chapter 27) |
 | =theme: pane_border=, =pane_border_active= | Window (Compose) | live; unset: the palette's bright black and blue (chapter 27) |
 | =ligatures=                    | renderer (OPTIONS) | live: every row sent again (chapter 14) |
 | =broadcast_programs=           | Tabs            | the next join (chapter 18)    |

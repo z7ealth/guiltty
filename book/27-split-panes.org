@@ -57,6 +57,43 @@ and double ones come from the font. =pane_border_active= colors the
 border along the focused pane; unset, the colors are the palette's bright
 black and blue.
 
+* Which pane you're in: the others are dimmed
+
+The lit separator says where the focus is, but not always clearly: with
+two panes side by side, the one separator borders both. So since
+v0.27.1 the panes without the focus have their text dimmed, as tmux,
+Ghostty and WezTerm can do. Programs' colors stay, only fainter, and
+the backgrounds don't change at all.
+
+It costs almost nothing, because the renderer could already draw dim
+text: SGR 2, the dim attribute (bit =0x02= of a cell's attrs), mixes a
+cell's text color halfway toward its background (=decode_cell=, chapter
+6). So [[file:../lib/guiltty/window/compose.ex::defp dim(][Compose]] sets that bit on the other panes' cells as it
+stitches them into the window:
+
+#+begin_example
+  pane 1 (no focus)   <<?l::32, 0x0000::16, fg::32, bg::32>>  as the pane sent it
+  window row          <<?l::32, 0x0002::16, fg::32, bg::32>>  dim bit set
+  renderer            fg' = (fg + bg) / 2                      drawn fainter
+#+end_example
+
+- *Moving the focus* stitches the same rows again, with the other pane
+  dimmed: Compose keeps every pane's rows as they came, and dims only
+  in the window's copy. The Window already sends every row when the
+  focus moves.
+- *One pane* is never dimmed: there's nothing to tell it from, and its
+  rows go through untouched, as before.
+- *Turning it off*: =pane_border: [dim_inactive: false]= (chapter 16),
+  live: a new look sends every row again.
+- *Its limits*: the amount is the renderer's, half way, not a setting.
+  Text a program already made dim stays as it is, and images aren't
+  dimmed (they're drawn apart from the cells, chapter 26).
+
+Two other ways were tried first and dropped the same day (DEVLOG): a
+lighter background for the focused pane, which needed a renderer
+message and stopped short of the window's edge in the padding, and a
+frame around every pane, which cost two columns and two rows.
+
 * A pane is a session
 
 Nothing about sessions changed. A pane is exactly what a tab used to be:
@@ -307,6 +344,8 @@ it off.
 6. Tabs crashes. What comes back, and what doesn't?
 7. The AI's tab was locked for it. You quit the agent. Why does the lock
    go, and why wouldn't it if you had pressed Ctrl+Shift+L in between?
+8. How do the panes without the focus get dimmed, with no change to the
+   renderer, and why isn't a lone pane dimmed?
 
 ** Answers
 :PROPERTIES:
@@ -332,3 +371,6 @@ it off.
    takes it off: otherwise a plain shell tab would keep guiltty running
    with no window. Pressing the key makes the lock yours (=make_yours/2=),
    and guiltty never undoes what you chose.
+8. Compose sets the dim attribute (SGR 2) on their cells as it stitches
+   them in, and the renderer already draws dim text, halfway to the
+   background. A lone pane has nothing to be told apart from.

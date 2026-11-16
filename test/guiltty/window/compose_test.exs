@@ -44,6 +44,37 @@ defmodule Guiltty.Window.ComposeTest do
     assert text(last) == "          │          "
   end
 
+  # Each cell's attrs, for the cells from..to of a row.
+  defp attrs(row, cols), do: for(<<_::32, a::16, _::64 <- row>>, do: a) |> Enum.slice(cols)
+
+  test "the panes without the focus are dimmed; the focused one, and a lone pane, aren't" do
+    dim = Grid.attr(:dim)
+    # Pane 2 has the focus: pane 1 (columns 0-9) is dimmed.
+    {c, _, _} = Compose.update(two(), 1, update("left", {10, 4}))
+    {c, _, _} = Compose.update(c, 2, update("right", {10, 4}))
+    [{0, row} | _] = Compose.all_rows(c)
+    assert Enum.all?(attrs(row, 0..9), &(Bitwise.band(&1, dim) != 0))
+    assert Enum.all?(attrs(row, 11..20), &(Bitwise.band(&1, dim) == 0))
+    # The text is the same: only the attribute changed.
+    assert text(row) == "left      │right     "
+
+    # The focus moves: the other pane is dimmed now, from the same rows.
+    [{0, row} | _] = c |> Compose.refocus(1, c.separators) |> Compose.all_rows()
+    assert Enum.all?(attrs(row, 0..9), &(Bitwise.band(&1, dim) == 0))
+    assert Enum.all?(attrs(row, 11..20), &(Bitwise.band(&1, dim) != 0))
+
+    # Turned off in the config: nothing dimmed.
+    look = Compose.look(%{style: :solid, thickness: :thin, dim_inactive: false}, %{})
+    [{0, row} | _] = c |> Compose.restyle(look) |> Compose.all_rows()
+    assert Enum.all?(attrs(row, 0..20), &(Bitwise.band(&1, dim) == 0))
+
+    # One pane: its rows go through untouched.
+    one = Compose.new({10, 2}, %{rects: %{1 => {0, 0, 10, 2}}, separators: [], focus: 1}, [1])
+    u = update("hello", {10, 2})
+    {_c, changed, _} = Compose.update(one, 1, u)
+    assert changed == u.rows
+  end
+
   test "the separator next to the focused pane is lit" do
     c = two()
     [{0, row} | _] = Compose.all_rows(c)

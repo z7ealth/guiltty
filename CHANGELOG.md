@@ -8,6 +8,13 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.27.1 — 2026-11-16 — the other panes are dimmed
+
+### Added
+- In a split tab, the panes without the focus have their text dimmed, so
+  you see at a glance where you'd type. Programs' colors stay, only
+  fainter. `pane_border: [dim_inactive: false]` turns it off.
+
 ## 0.27.0 — 2026-11-16 — control guiltty from a shell
 
 ### Added

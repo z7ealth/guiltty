@@ -222,6 +222,16 @@ defmodule Guiltty.ConfigTest do
     assert msg =~ "pane_border"
   end
 
+  test "the panes without the focus are dimmed unless turned off", %{tmp_dir: dir} do
+    assert {:ok, %{pane_border: %{dim_inactive: true}}} = Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{pane_border: %{dim_inactive: false, style: :solid}}} =
+             Config.load(write(dir, "b.exs", "[pane_border: [dim_inactive: false]]"))
+
+    assert {:error, msg} = Config.load(write(dir, "c.exs", "[pane_border: [dim_inactive: 1]]"))
+    assert msg =~ "pane_border dim_inactive"
+  end
+
   test "the default keys work on US and Latin American layouts alike" do
     keys = Config.defaults().keys
     # Ctrl+Shift+H on any layout; the + key, where it has a key of its own.

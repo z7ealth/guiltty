@@ -1962,3 +1962,37 @@ yourself is never undone.
 - `guiltty window --close`, and a `--json` for `window --list`.
 - Shell completion for the commands (bash, zsh, fish), generated from
   `Guiltty.Command`'s table.
+
+## 2026-11-16 — Which pane am I in? (v0.27.1)
+
+_Draft: agent, awaiting user_
+
+With a tab split, only the lit separator said which pane had the focus,
+and with two panes side by side the one separator borders both. Three
+ideas in one afternoon, and the third stayed.
+
+First, a lighter background for the focused pane. It worked: a new
+renderer message told the core which rectangle to shade as it read each
+row. But zoomed in, the shade stopped short of the window's edge, since
+the padding and the leftover pixels there belong to no cell. Fixing that
+took a second clear in both backends. By then a protocol message, two
+backends and a setting were going into "which pane am I in".
+
+Second, a frame: every pane a card, the focused one boxed in all round.
+That one was almost free in code, since the frame is just four more
+separators, but it cost two columns and two rows of every split tab.
+Neither convinced, and both were rolled back before being committed.
+
+Third, dimming the other panes, as tmux, Ghostty and WezTerm can. The
+renderer already drew dim text (SGR 2: the text color mixed halfway to
+the background), so Compose sets that bit on the other panes' cells as
+it stitches them into the window, and that's all. No C, no protocol, no
+cells lost, and the backgrounds and the window's edges don't change. The
+amount isn't adjustable (it's the renderer's half way), which is the
+price of not touching the renderer. On by default; `pane_border:
+[dim_inactive: false]` turns it off.
+
+Also from today: the launcher tests broke when run inside a v0.27.0
+guiltty, because the shell's own `GUILTTY_PANE` reached the client and
+the server rightly said that pane wasn't its own. The test helper now
+leaves it out unless a test sets one.
