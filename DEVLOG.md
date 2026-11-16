@@ -1996,3 +1996,20 @@ Also from today: the launcher tests broke when run inside a v0.27.0
 guiltty, because the shell's own `GUILTTY_PANE` reached the client and
 the server rightly said that pane wasn't its own. The test helper now
 leaves it out unless a test sets one.
+
+## 2026-11-16 — A config at install time (v0.27.2)
+
+_Draft: agent, awaiting user_
+
+`install.sh` now offers to put the example config in
+`~/.config/guiltty/config.exs`, and to replace one that's already there. The interesting part was
+*when* to ask: run from a guiltty tab, the script loses its terminal the
+moment it stops guiltty, so the question is asked before that and the
+file is copied after the new release is in place, from that release.
+
+Two choices worth noting: `--yes` creates a missing config but never
+replaces an existing one, and no terminal means no config rather than
+an error, because a config is optional and shouldn't be able to stop an
+install. Testing it, the loop over "yes new", "no existing" and so on
+failed mysteriously until it turned out the shell running it was zsh,
+which doesn't split an unquoted `$args` into words.

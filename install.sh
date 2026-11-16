@@ -10,8 +10,9 @@
 #
 # Options (after `bash -s --` when piped):
 #
-#   --yes         install missing libraries and stop a running guiltty
-#                 without asking
+#   --yes         install missing libraries, stop a running guiltty and
+#                 create a missing config without asking (an existing
+#                 config is never replaced without asking)
 #   --uninstall   remove it (your ~/.config/guiltty stays)
 #
 #   GUILTTY_VERSION=v0.26.0   a release other than the latest (download only)
@@ -23,6 +24,8 @@
 #   ~/.local/bin/guiltty                      the command (starts it, or opens a window)
 #   ~/.local/share/applications/guiltty.desktop        the menu entry
 #   ~/.local/share/icons/hicolor/NxN/apps/guiltty.png  the icon, in each size
+#   ~/.config/guiltty/config.exs              the config, if you say yes: the
+#                                             example, every setting commented
 #
 # Only installing missing libraries uses root (sudo), and only after you
 # say yes. Read this file before piping it into a shell: that's what
@@ -38,10 +41,13 @@ DESKTOP="$APPS/guiltty.desktop"
 ICONS="$PREFIX/share/icons/hicolor"
 SIZES="16 24 32 48 64 128 256"
 LOG="${XDG_STATE_HOME:-$HOME/.local/state}/guiltty/install.log"
+# Where guiltty reads its config (Guiltty.Config.path/0).
+CONFIG="${GUILTTY_CONFIG:-$HOME/.config/guiltty/config.exs}"
 
 yes=false
 uninstall=false
 inside=false
+write_config=false
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'guiltty: %s\n' "$*" >&2; }
@@ -347,6 +353,38 @@ build_from_source() {
         MIX_ENV=prod mix release guiltty --overwrite --quiet --path "$APP.new")
 }
 
+# --- The config file ---
+
+# Asked before anything is stopped: stopping guiltty from one of its own
+# tabs closes the terminal this script talks to. A config is optional,
+# so no terminal is never a reason to stop, and --yes creates a missing
+# one but never replaces yours.
+choose_config() {
+    if [ -e "$CONFIG" ]; then
+        $yes && return 0
+        has_tty || return 0
+        if ask "$CONFIG exists: replace it with the example config? (yours is lost)"; then
+            write_config=true
+        fi
+    else
+        $yes || has_tty || return 0
+        if ask "Create a config file, $CONFIG? (the example: every setting, commented)"; then
+            write_config=true
+        fi
+    fi
+}
+
+# The example comes from the release just installed, so it lists the
+# settings this version knows. cp writes through a symlink (a config
+# kept in a dotfiles repository stays a link).
+put_config() {
+    local example=$1
+    $write_config || return 0
+    mkdir -p "$(dirname "$CONFIG")"
+    cp "$example" "$CONFIG"
+    say "the config is $CONFIG: guiltty applies it on every save"
+}
+
 # --- Putting it in place ---
 
 install_release() {
@@ -393,6 +431,8 @@ StartupNotify=false
 EOF
     if need desktop-file-validate; then desktop-file-validate "$DESKTOP"; fi
     refresh_desktop
+
+    put_config "$APP/lib/guiltty-$version/priv/config.example.exs"
 
     say "guiltty $version is installed: run guiltty, or find it in your menu"
 
@@ -456,6 +496,7 @@ main() {
         cp -a "$release_dir" "$APP.new"
     fi
 
+    choose_config
     install_release
 
     if [ -n "$here" ] && running "$here/_build/prod/rel/guiltty"; then

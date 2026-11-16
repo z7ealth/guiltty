@@ -23,6 +23,8 @@ and what a desktop needs to find it, in your home directory. No root.
           ├── 16x16/apps/guiltty.png
           ├── ...
           └── 256x256/apps/guiltty.png
+
+  ~/.config/guiltty/config.exs         the config, only if you say yes
 #+end_example
 
 The new release is put next to the old one (=lib/guiltty.new=) and
@@ -60,6 +62,35 @@ on the new version:
 
 Tested on a private X display: the old guiltty stopped, the script
 lived on, and a new window of the new version opened about 3 s later.
+
+** The config file
+
+guiltty runs fine without a config, but the example
+([[file:../priv/config.example.exs][priv/config.example.exs]], every setting with a comment) is the easiest
+way to find what you can change. So =install.sh= offers it
+([[file:../install.sh::choose_config()][choose_config]]):
+
+#+begin_example
+  no config yet ── "Create a config file, ~/.config/guiltty/config.exs?"
+                     y: copy the example there
+  a config      ── "... exists: replace it with the example config?"
+                     y: copy the example over it
+#+end_example
+
+Three details:
+
+- *Asked early, written late.* The question comes before a running
+  guiltty is stopped, because from one of its tabs that closes the
+  terminal the script asks in. The copy happens after the swap
+  ([[file:../install.sh::put_config()][put_config]]), from the release just installed, so the example lists
+  the settings this version knows.
+- *Optional means it never stops the install.* Without a terminal the
+  script leaves the config alone instead of failing, and =--yes= creates
+  a missing one but never replaces yours: "don't ask me" isn't "throw
+  away my settings".
+- *Through links.* =cp= writes into the existing file, so a config that
+  is a symlink into a dotfiles repository stays a link. It honours
+  =$GUILTTY_CONFIG=, like guiltty does (chapter 16).
 
 The installed node listens only on 127.0.0.1, and its cookie (the secret
 that lets a program connect to it) comes from =~/.erlang.cookie=, never
@@ -499,6 +530,8 @@ headless Chromium otherwise.
 9. The release is built on glibc 2.36, but most of it would run on 2.34.
    What makes 2.36 the real floor, and how does install.sh find out
    before installing anything?
+10. Why does install.sh ask about the config before stopping guiltty,
+    but copy it only after the new release is in place?
 
 ** Answers
 :PROPERTIES:
@@ -539,3 +572,7 @@ headless Chromium otherwise.
    NIF prints "version `GLIBC_2.36' not found"; install.sh looks for
    that line in every binary's =ldd= output and stops with the version
    it found (=getconf GNU_LIBC_VERSION=).
+10. Stopping guiltty from one of its tabs closes the terminal the script
+    would ask in, so the answer has to come first. The example is taken
+    from the newly installed release, so it matches the settings that
+    version accepts.

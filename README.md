@@ -71,6 +71,11 @@ Options go after `bash -s --`, settings before `bash`:
 (`…` is `https://raw.githubusercontent.com/z7ealth/guiltty/master`. With
 wget, write `wget -qO- …/install.sh` where these say `curl -fsSL …/install.sh`.)
 
+The script also offers to create your config file,
+`~/.config/guiltty/config.exs`, from the example that lists every
+setting. If you already have one, it asks before replacing it; `--yes` creates a missing one but never
+replaces yours.
+
 When updating, if guiltty is running, the script asks before stopping
 it, since that closes its tabs. Run from a guiltty tab, it finishes after
 that tab closes, then opens guiltty again (its output goes to

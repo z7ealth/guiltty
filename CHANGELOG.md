@@ -8,6 +8,15 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.27.2 — 2026-11-16 — install.sh offers a config file
+
+### Added
+- `install.sh` asks whether to create `~/.config/guiltty/config.exs`
+  from the example (every setting, commented). If you already have one,
+  it asks whether to replace it with the example.
+  With `--yes` it creates a missing config but never replaces yours;
+  with no terminal to ask in, it leaves the config alone.
+
 ## 0.27.1 — 2026-11-16 — the other panes are dimmed
 
 ### Added
