@@ -170,7 +170,7 @@ defmodule Guiltty.ConfigTest do
 
   test "tab styles, and tab colors in the theme, also from a named one", %{tmp_dir: dir} do
     # The default (guiltty) sets its accent, and leaves the bar to the renderer.
-    assert {:ok, %{tab_style: :flat, theme: %{tab_accent: {0x91, 0x84, 0xD9}, tab_bar: nil}}} =
+    assert {:ok, %{tab_style: :powerline, theme: %{tab_accent: {0x91, 0x84, 0xD9}, tab_bar: nil}}} =
              Config.load(write(dir, "a.exs", "[]"))
 
     assert {:ok, %{tab_style: :powerline, theme: theme}} =

@@ -6,7 +6,7 @@
 # previous config stays.
 
 [
-  font: [family: "monospace", size: 18],
+  font: [family: "monospace", size: 12],
 
   # A built-in theme by name: "guiltty" (the icon's lavender on
   # near-black, what guiltty uses without a config), "tomorrow-night",
@@ -91,15 +91,15 @@
   tab_bar: :bottom,
 
   # How the tabs look:
-  #   :flat        (the default) side by side, the active one lighter, with
+  #   :flat        side by side, the active one lighter, with
   #                a line along its edge
-  #   :powerline   colored blocks joined by arrows
+  #   :powerline   (the default) colored blocks joined by arrows
   #   :rounded     pills with round ends, the active one filled
   #   :minimal     no bar: titles on the terminal's background, the line
   #                under the active one
   #   :separators  titles between thin bars, the active one filled
   # Their colors are in theme: (tab_bar, tab_active, ... above).
-  tab_style: :flat,
+  tab_style: :powerline,
 
   # The border between split panes (Ctrl+Shift+O / E): one cell wide, a
   # line of style :solid, :dashed, :double or :none (blank), :thin or

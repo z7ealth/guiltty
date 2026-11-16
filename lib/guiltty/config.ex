@@ -16,7 +16,7 @@ defmodule Guiltty.Config do
   A config is a map:
 
     * `:theme` - a `Guiltty.Theme`
-    * `:font` - `%{family: "monospace", size: 18}`
+    * `:font` - `%{family: "monospace", size: 12}`
     * `:keys` - `%{action => [key]}`, see `Guiltty.Keymap.parse_key/1`
     * `:scrollback` - rows each tab keeps (applies to tabs opened after a
       change)
@@ -40,7 +40,7 @@ defmodule Guiltty.Config do
       their commands, OSC 133); nil never asks
     * `:bold_is_bright` - bold text in the 8 basic colors uses the bright ones
     * `:tab_bar` - `:bottom` (the default) or `:top`
-    * `:tab_style` - how the tabs look: `:flat` (the default), `:powerline`,
+    * `:tab_style` - how the tabs look: `:powerline` (the default), `:flat`,
       `:rounded`, `:minimal` or `:separators`; their colors can be set in
       the theme (`tab_bar`, `tab_text`, `tab_active`, `tab_active_text`,
       `tab_accent`)
@@ -135,7 +135,7 @@ defmodule Guiltty.Config do
   def defaults do
     %{
       theme: Theme.default(),
-      font: %{family: "monospace", size: 18},
+      font: %{family: "monospace", size: 12},
       keys: @default_keys,
       scrollback: 10_000,
       cursor: %{style: :block, blink: false, password_lock: true},
@@ -148,7 +148,7 @@ defmodule Guiltty.Config do
       bold_is_bright: true,
       tab_bar: :bottom,
       pane_border: %{style: :solid, thickness: :thin},
-      tab_style: :flat,
+      tab_style: :powerline,
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan,
@@ -614,7 +614,7 @@ defmodule Guiltty.Config do
   defp color(other, _default), do: {:error, "bad color #{inspect(other)}, expected \"#rrggbb\""}
 
   defp font(opts, _default) when not is_list(opts),
-    do: {:error, "font: expected a keyword list, like [family: \"monospace\", size: 18]"}
+    do: {:error, "font: expected a keyword list, like [family: \"monospace\", size: 12]"}
 
   defp font(opts, default) do
     family = Keyword.get(opts, :family, default.family)

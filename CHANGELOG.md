@@ -8,6 +8,15 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.26.4 — 2026-11-16 — smaller font, powerline tabs
+
+### Changed
+- Without a `font:` size in the config, the font is 12 instead of 18.
+- Without a `tab_style:` in the config, the tabs are `:powerline`
+  (colored blocks joined by arrows) instead of `:flat`. Set
+  `tab_style: :flat` to keep the old look.
+- `priv/config.example.exs` shows the new defaults.
+
 ## 0.26.3 — 2026-11-15 — the AI pane stays out of a broadcast
 
 ### Fixed

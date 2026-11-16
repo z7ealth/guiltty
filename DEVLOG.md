@@ -1889,3 +1889,13 @@ check for nil, so the check could never work. It's unlikely to happen,
 since Tabs stops when its last tab does, but now nil simply moves
 nothing. Its other findings were about `Mix`, which isn't in its table
 of known modules.
+
+## 2026-11-16 — New defaults (v0.26.4)
+
+_Draft: agent, awaiting user_
+
+Two defaults changed: the font is 12 instead of 18, and the tabs are
+powerline instead of flat. Both live in `Guiltty.Config.defaults/0`, so
+the change is two values there, the example config, and one config test
+that pinned `:flat` as what an empty config gives. Anyone who liked the
+old look sets `tab_style: :flat` or `font: [size: 18]`.

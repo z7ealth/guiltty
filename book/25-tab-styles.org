@@ -9,14 +9,15 @@ foreground and a background, drawn by the same shaders. Everything a
 style does, it does with characters and colors. So a new style is new
 C in one function, =build_tab_bar= in [[file:../c_src/renderer/core/main.c::static void build_tab_bar][main.c]], and no new shader.
 
-The config picks one of five (=tab_style:=), and the theme
+The config picks one of five (=tab_style:=, =:powerline= by default since
+v0.26.4; =:flat= before), and the theme
 can set the bar's colors. As the real renderer draws them (offscreen,
 tabs "zsh", "ssh dns1" active, "ssh worker2"):
 
 #+begin_example
-  flat (default)    zsh   ssh dns1   ssh worker2       the active tab lighter,
+  flat              zsh   ssh dns1   ssh worker2       the active tab lighter,
                           ▔▔▔▔▔▔▔▔▔▔                    a line along its edge
-  powerline        zsh ▶ ssh dns1 ▶ ssh worker2 ▶      blocks joined by arrows
+  powerline (dflt)  zsh ▶ ssh dns1 ▶ ssh worker2 ▶      blocks joined by arrows
   rounded          (zsh) (ssh dns1) (ssh worker2)      pills, the active one filled
   minimal           zsh   ssh dns1   ssh worker2       no bar: the terminal's own
                           ▔▔▔▔▔▔▔▔▔▔                    background, and the line
