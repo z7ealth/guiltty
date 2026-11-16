@@ -1,21 +1,34 @@
 defmodule Guiltty.Launcher do
   @moduledoc """
   The server half of the `guiltty` command: a Unix socket the C client
-  (`c_src/client/guiltty.c`) connects to, to ask for a window. Book
-  chapter 23.
+  (`c_src/client/guiltty.c`) connects to, to ask for a window, or to run
+  a command (`guiltty tab --new`). Book chapters 23 and 29.
 
       client                                   this process
         connect $XDG_RUNTIME_DIR/guiltty/sock ->
-        "guiltty 1 open\\n"                     is it you? (SO_PEERCRED)
-        "DISPLAY=:0\\n" ...                     read at most 16 lines, 2 s
+        "guiltty 2 open\\n"                     is it you? (SO_PEERCRED)
+        "DISPLAY=:0\\n" ...                     read at most 32 lines, 2 s
         "PWD=/home/me/src\\n"
         "\\n"                                   check every line
                                              <- "ok\\n" or "error: why\\n"
 
-  Only the display variables and the client's folder (`PWD`, where the
-  window's first tab starts) are accepted, and only one request: open a
-  window (`Guiltty.Lifeline.open/1`, so a closed window that kept locked
-  tabs comes back first). Anything else gets an error and the connection
+  A command is the same, with `cmd` for `open`, an `ARG=` line per word
+  of it and, from a shell guiltty started, `PANE=` (its `GUILTTY_PANE`):
+
+        "guiltty 2 cmd\\n"
+        "ARG=tab\\n" "ARG=--new\\n"
+        "PANE=12\\n" "PWD=/home/me/src\\n" "DISPLAY=:0\\n" ...
+        "\\n"
+                                             <- "out: 31\\n" ... "ok\\n"
+
+  Its answer may start with lines to print, each `out: ` and the text;
+  the last line is `ok` or `error: why`, as for `open`.
+
+  Only the display variables and the client's folder (`PWD`, where a new
+  shell starts) are accepted, plus the words and the pane of a command.
+  `open` opens a window (`Guiltty.Lifeline.open/1`, so a closed window
+  that kept locked tabs comes back first); `cmd` goes to
+  `Guiltty.Command`. Anything else gets an error and the connection
   closes. Each connection is served in its own process, so a slow or
   broken client never holds up another.
 
@@ -30,10 +43,11 @@ defmodule Guiltty.Launcher do
 
   # Which protocol the client speaks: a client and a server of different
   # versions refuse each other cleanly.
-  @version 1
+  @version 2
   @open_request "guiltty #{@version} open\n"
+  @cmd_request "guiltty #{@version} cmd\n"
   @display_vars ~w(DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_RUNTIME_DIR)
-  @max_lines 16
+  @max_lines 32
   @max_line 4096
   @read_timeout 2_000
   # SOL_SOCKET and SO_PEERCRED (socket(7)); the answer is struct ucred:
@@ -133,15 +147,22 @@ defmodule Guiltty.Launcher do
       with :ok <- check_peer(socket),
            {:ok, lines} <- read_lines(socket, []),
            {:ok, request} <- parse_request(lines) do
-        open_window(request, window_opts)
+        handle(request, window_opts)
       end
 
     :gen_tcp.send(socket, answer(reply))
     :gen_tcp.close(socket)
   end
 
-  defp answer(:ok), do: "ok\n"
-  defp answer({:error, why}), do: "error: #{why}\n"
+  @doc false
+  # Output lines, then the verdict. A line is printed in your terminal, and
+  # some come from programs (a tab's title): control characters, which
+  # could be escape sequences or break the framing, become "?".
+  def answer(:ok), do: "ok\n"
+  def answer({:ok, lines}), do: Enum.map(lines, &["out: ", printable(&1), "\n"]) ++ ["ok\n"]
+  def answer({:error, why}), do: ["error: ", printable(why), "\n"]
+
+  defp printable(text), do: String.replace(text, ~r/[\x00-\x1f\x7f]/u, "?")
 
   # The folder already keeps others out; this says so for every request.
   defp check_peer(socket) do
@@ -183,19 +204,28 @@ defmodule Guiltty.Launcher do
 
   @doc """
   Checks a request, its lines without the empty one that ends it. Returns
-  `{:ok, %{env: env, cwd: cwd}}`: the display variables as the renderer
-  wants them (`[{charlist, charlist}]`), and the client's folder (an
-  absolute path) or nil. Or `{:error, why}`. Never raises: whatever a
-  client sends is checked here first.
+  `{:ok, %{kind: :open | :cmd, env: env, cwd: cwd, args: args, pane: pane}}`:
+  the display variables as the renderer wants them
+  (`[{charlist, charlist}]`), the client's folder (an absolute path) or
+  nil, and for a command its words and `GUILTTY_PANE` (or nil). Or
+  `{:error, why}`. Never raises: whatever a client sends is checked here
+  first.
   """
-  def parse_request([@open_request | vars]), do: parse_vars(vars, %{env: [], cwd: nil})
+  def parse_request([@open_request | vars]), do: parse_vars(vars, new_request(:open))
+  def parse_request([@cmd_request | vars]), do: parse_vars(vars, new_request(:cmd))
 
   def parse_request(["guiltty " <> rest | _]) when is_binary(rest),
-    do: {:error, "this guiltty speaks version #{@version}: update the guiltty command"}
+    do:
+      {:error,
+       "this guiltty speaks version #{@version} and the command another: " <>
+         "after an update, close every guiltty window once"}
 
   def parse_request(_), do: {:error, "not a guiltty request"}
 
-  defp parse_vars([], request), do: {:ok, %{request | env: Enum.reverse(request.env)}}
+  defp new_request(kind), do: %{kind: kind, env: [], cwd: nil, args: [], pane: nil}
+
+  defp parse_vars([], request),
+    do: {:ok, %{request | env: Enum.reverse(request.env), args: Enum.reverse(request.args)}}
 
   defp parse_vars([line | rest], request) when is_binary(line) do
     with [name, value] <- String.split(String.trim_trailing(line, "\n"), "=", parts: 2),
@@ -211,6 +241,17 @@ defmodule Guiltty.Launcher do
 
   defp add_var(request, "PWD", "/" <> _ = dir), do: {:ok, %{request | cwd: dir}}
 
+  # A word may be empty (--rename "" gives the title back).
+  defp add_var(%{kind: :cmd} = request, "ARG", word),
+    do: {:ok, %{request | args: [word | request.args]}}
+
+  defp add_var(%{kind: :cmd, pane: nil} = request, "PANE", id) do
+    case Guiltty.Command.pane_id(id) do
+      {:ok, pane} -> {:ok, %{request | pane: pane}}
+      :error -> :error
+    end
+  end
+
   defp add_var(request, name, value) when name in @display_vars,
     do:
       {:ok,
@@ -218,25 +259,31 @@ defmodule Guiltty.Launcher do
 
   defp add_var(_request, _name, _value), do: :error
 
-  defp open_window(%{env: env, cwd: cwd}, window_opts) do
+  defp handle(%{env: env, cwd: cwd} = request, window_opts) do
     # The folder only if it's one: it may have been removed since, or not
     # be readable from here.
     cwd = if cwd && File.dir?(cwd), do: cwd
+    window = Keyword.merge(window_opts, env: env ++ Keyword.get(window_opts, :env, []))
 
-    if Process.whereis(Guiltty.Lifeline) do
-      case Guiltty.Lifeline.open(
-             window: Keyword.merge(window_opts, env: env ++ Keyword.get(window_opts, :env, [])),
-             cwd: cwd
-           ) do
-        {:ok, _desk} -> :ok
-        {:error, reason} -> {:error, "couldn't open a window: #{inspect(reason)}"}
-      end
-    else
-      {:error, "shutting down"}
-    end
+    if Process.whereis(Guiltty.Lifeline),
+      do: handle(request.kind, request, window, cwd),
+      else: {:error, "shutting down"}
   catch
     # Lifeline went away while we asked: it's shutting down.
     :exit, _ -> {:error, "shutting down"}
+  end
+
+  defp handle(:open, _request, window, cwd) do
+    case Guiltty.Lifeline.open(window: window, cwd: cwd) do
+      {:ok, _desk} -> :ok
+      {:error, reason} -> {:error, "couldn't open a window: #{inspect(reason)}"}
+    end
+  end
+
+  defp handle(:cmd, request, window, cwd) do
+    with {:ok, command} <- Guiltty.Command.parse(request.args) do
+      Guiltty.Command.run(command, %{pane: request.pane, cwd: cwd, window: window})
+    end
   end
 
   # The uid this BEAM runs as: the owner of its own /proc entry.

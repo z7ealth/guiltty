@@ -360,8 +360,8 @@ install_release() {
     rm -rf "$APP.old"
 
     # The `guiltty` command is the release's small C client (book chapter
-    # 23): it asks the running guiltty for a window, or starts guiltty; any
-    # other argument (stop, remote, pid...) goes to the release's own
+    # 23): it asks the running guiltty for a window, or starts guiltty;
+    # `guiltty release stop` (remote, pid...) goes to the release's own
     # script. A link, so the client finds the release it belongs to.
     version=$(cut -d' ' -f2 "$APP/releases/start_erl.data")
     mkdir -p "$(dirname "$BIN")"

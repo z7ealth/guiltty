@@ -155,7 +155,7 @@ defmodule Guiltty.ConfigTest do
   end
 
   test "the AI tool: its command and where it opens", %{tmp_dir: dir} do
-    assert {:ok, %{ai: %{command: nil, position: :right}}} =
+    assert {:ok, %{ai: %{command: nil, position: :right, lock: true}}} =
              Config.load(write(dir, "a.exs", "[]"))
 
     assert {:ok, %{ai: %{command: "my-ai-tool", position: :tab}}} =

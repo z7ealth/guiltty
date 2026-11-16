@@ -189,7 +189,7 @@ still reading.
 
 =GUILTTY_RENDERER= is read from guiltty's own environment, which it gets
 once, from the =guiltty= that started it: set it on a cold start
-(=guiltty stop=, then =GUILTTY_RENDERER=gl guiltty=). Later launches only
+(=guiltty release stop=, then =GUILTTY_RENDERER=gl guiltty=). Later launches only
 ask the running guiltty for a window (chapter 23), so the variable on
 them changes nothing.
 

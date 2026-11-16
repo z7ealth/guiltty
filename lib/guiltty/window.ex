@@ -462,6 +462,7 @@ defmodule Guiltty.Window do
   # shell gets nothing.
   defp handle_event({:focus, focused}, state) do
     report_focus(state, state.active, focused)
+    if focused, do: Lifeline.focused(state.desk_tabs)
     {:noreply, %{state | focused: focused}}
   end
 
@@ -1177,7 +1178,9 @@ defmodule Guiltty.Window do
   end
 
   defp open_ai_session(state, path, args) do
-    opts = [shell: path, args: args]
+    # Locked while it runs: closing the window by accident shouldn't end
+    # an agent's work (Guiltty.Tabs, "Held tabs").
+    opts = [shell: path, args: args, hold: state.config.ai.lock]
 
     case state.config.ai.position do
       :tab ->

@@ -8,6 +8,33 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.27.0 — 2026-11-16 — control guiltty from a shell
+
+### Added
+- `guiltty NOUN --ACTION` commands control the running guiltty from a
+  shell or a script: `guiltty tab --new`, `tab --close`, `tab --next`,
+  `tab --go 3`, `tab --rename NAME`, `tab --lock`, `pane --split-right`,
+  `pane --split-down`, `pane --close`, `pane --focus left`,
+  `window --new`, `window --list`, `theme --set NAME` and `theme --list`.
+  `guiltty help` lists them. Commands that open a shell print its pane's
+  id, for scripts.
+- A command acts on the pane it was typed in: every shell guiltty starts
+  has `GUILTTY_PANE`, its pane's id. `--pane ID` picks another; from
+  outside guiltty, a command goes to the window last used.
+- `theme --set` changes every window's theme until the config file
+  changes; a name can be shortened (`drac` for dracula).
+- The AI key's tab is locked while the AI tool runs (🔒), so closing the
+  window by accident doesn't end it; the lock goes when the tool exits.
+  `ai: [lock: false]` turns it off.
+
+### Changed
+- The release's own commands moved under `release`: `guiltty release
+  stop`, `guiltty release pid`, `guiltty release remote` (they were
+  `guiltty stop` and so on). `guiltty version` stays as it was.
+- The `guiltty` command and a running guiltty speak a new protocol
+  version. Right after updating, a guiltty that's still running is the
+  old one and refuses the new command: close its windows once.
+
 ## 0.26.4 — 2026-11-16 — smaller font, powerline tabs
 
 ### Changed

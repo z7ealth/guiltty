@@ -18,6 +18,10 @@ asks over a Unix socket, and an Elixir process answers.
 (Measured with =hyperfine= and =bench/time_to_window.sh= on a private X
 display with a window manager and software OpenGL; chapter 22.)
 
+Since v0.27.0 the same socket also takes commands (=guiltty tab --new=,
+=guiltty pane --split-right=): chapter 29. This chapter is about the
+part they share, and about opening a window.
+
 * The picture
 
 #+begin_example
@@ -26,7 +30,7 @@ display with a window manager and software OpenGL; chapter 22.)
     ▼
   ~/.local/bin/guiltty  ->  a link to priv/guiltty, the C client
     │  connect $XDG_RUNTIME_DIR/guiltty/sock
-    │  "guiltty 1 open\n" "DISPLAY=:0\n" ... "PWD=/home/me/src\n" "\n"
+    │  "guiltty 2 open\n" "DISPLAY=:0\n" ... "PWD=/home/me/src\n" "\n"
     │                               ─────────────►  Guiltty.Launcher (Elixir)
     │                                                 you? (SO_PEERCRED)
     │                                                 a valid request?
@@ -54,14 +58,17 @@ client's job is to find that BEAM, or start it.
 
 * The client: a doorbell
 
-[[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]], about 250 lines, decides nothing:
+[[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]], about 330 lines, decides nothing:
 
-1. With arguments (=guiltty stop=, =pid=, =remote=), it =execv= s the
-   release's own script with them, as the old wrapper did. =guiltty
-   version= is answered by [[file:../rel/env.sh.eex][rel/env.sh.eex]], which that script sources
-   first: "guil" plain and "tty" in the logo's purple, as a 24-bit colour
-   (=ESC [38;2;145;132;217m=). Into a pipe, or with =NO_COLOR= set, it's
-   plain =guiltty v0.23.3=, with the "v" the tags have.
+1. =guiltty release ARGS= (=release stop=, =pid=, =remote=) =execv= s
+   the release's own script with =ARGS=, as the old wrapper did for any
+   arguments until v0.27.0. =guiltty version= (or =--version=) goes there
+   too, so it answers with no guiltty running: [[file:../rel/env.sh.eex][rel/env.sh.eex]], which
+   that script sources first, prints "guil" plain and "tty" in the logo's
+   purple, as a 24-bit colour (=ESC [38;2;145;132;217m=). Into a pipe, or
+   with =NO_COLOR= set, it's plain =guiltty v0.27.0=, with the "v" the
+   tags have. Those two words are the only ones the client knows.
+   Any other arguments are a command for the running guiltty (chapter 29).
 2. Otherwise it builds the request: the first line, then each display
    variable it has (=DISPLAY=, =WAYLAND_DISPLAY=, =XAUTHORITY=,
    =XDG_RUNTIME_DIR=), leaving out any too long or with a line break in
@@ -73,10 +80,12 @@ client's job is to find that BEAM, or start it.
    (=ENOENT=), or one nobody listens on (=ECONNREFUSED=, left by a guiltty
    that's gone), it =execv= s =bin/guiltty daemon=. The new node inherits
    the client's environment, so its first window opens on this display.
-4. If it connected, it sends the request and waits for one line, at most
-   10 s (=poll=). "ok": exit 0. "error: shutting down", or no answer: the
-   guiltty it reached is going away, so it waits 50 ms and starts over,
-   for up to 5 s. Any other error is printed, exit 1.
+4. If it connected, it sends the request and reads the answer until the
+   server closes the connection, waiting at most 10 s for each piece
+   (=poll=). Lines starting =out: = are printed (a command's output);
+   the last line decides: "ok": exit 0. "error: shutting down", or no
+   answer: the guiltty it reached is going away, so it waits 50 ms and
+   starts over, for up to 5 s. Any other error is printed, exit 1.
 
 It finds the release from =/proc/self/exe=: it lives in
 =lib/guiltty-VERSION/priv/= inside it, and =~/.local/bin/guiltty= is a link
@@ -93,9 +102,10 @@ connection, a new process (so one stuck client never holds up another):
 
 #+begin_example
   is the caller you?   getsockopt(SO_PEERCRED) -> uid == ours
-  read at most 16 lines of at most 4 KB, 2 s at most
-  first line exactly "guiltty 1 open"
-  every other line NAME=value, NAME one of the four display variables,
+  read at most 32 lines of at most 4 KB, 2 s at most
+  first line exactly "guiltty 2 open" (or "guiltty 2 cmd": chapter 29)
+  every other line NAME=value, NAME one of the four display variables
+                   or PWD (and ARG, PANE in a command),
                    value valid UTF-8 without control characters
   Lifeline alive?      no -> "error: shutting down"
   Lifeline.open(window: [env: ...]) -> "ok"
@@ -196,8 +206,10 @@ session's environment, exactly.
 
 - Everything after the window request: desks, windows, tabs, the
   renderer.
-- =guiltty stop=, =pid=, =remote=: still Erlang distribution, still
-  locked down (chapter 20), only no longer on the launch path.
+- =guiltty release stop=, =pid=, =remote=: still Erlang distribution,
+  still locked down (chapter 20), only no longer on the launch path.
+  (Before v0.27.0 they were =guiltty stop= and so on: the bare words now
+  belong to the commands of chapter 29.)
 - Closing the last window still stops guiltty.
 
 * Loot
@@ -244,7 +256,9 @@ session's environment, exactly.
    believe a window opened.
 5. The server sees =guiltty 2 open=, answers that it speaks version 1,
    and the client prints that and exits 1: a clear refusal, not a
-   misunderstanding.
+   misunderstanding. (It happened for real at v0.27.0, which went to
+   version 2: right after an update, a still-running old guiltty refuses
+   the new command until its windows close.)
 6. The renderer gets the display from the request, but the shells get
    the node's environment, which is the first launch's. A window asked
    for from another display would otherwise have tabs whose GUI programs

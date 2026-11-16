@@ -228,7 +228,7 @@ from the =guiltty= that started it (chapter 23). So it works on a cold
 start only:
 
 #+begin_src sh
-guiltty stop
+guiltty release stop
 GUILTTY_RENDERER=gl guiltty
 #+end_src
 

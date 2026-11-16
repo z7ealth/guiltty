@@ -278,6 +278,12 @@ the cursor is: nothing you type appears, but guiltty is listening.
 
 Hold Shift to select in programs that use the mouse (vim, htop).
 
+The same things work from a shell or a script, on the pane they're typed
+in (or `--pane ID`): `guiltty tab --new`, `guiltty pane --split-right`,
+`guiltty tab --rename build`, `guiltty theme --set dracula`,
+`guiltty window --list`. `guiltty help` lists them all. The release's own
+commands are under `release`: `guiltty release stop`.
+
 A tab you're not looking at shows ● when it prints something and 🔔 when
 it rings the bell (a build that ends with `; printf '\a'`, say), until you
 switch to it.
@@ -306,7 +312,7 @@ start (an old GPU, no driver), it switches to OpenGL by itself and says so
 in the tab bar. With `renderer: :gl` in the config it always uses OpenGL,
 starting with the next window (so one window can be Vulkan and the next
 OpenGL). `GUILTTY_RENDERER=gl` does the same for a whole run, when it's
-set as guiltty starts (`guiltty stop`, then `GUILTTY_RENDERER=gl guiltty`).
+set as guiltty starts (`guiltty release stop`, then `GUILTTY_RENDERER=gl guiltty`).
 
 ## Hack on it
 

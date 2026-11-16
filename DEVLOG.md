@@ -1899,3 +1899,66 @@ powerline instead of flat. Both live in `Guiltty.Config.defaults/0`, so
 the change is two values there, the example config, and one config test
 that pinned `:flat` as what an empty config gives. Anyone who liked the
 old look sets `tab_style: :flat` or `font: [size: 18]`.
+
+## 2026-11-16 — guiltty from a shell (v0.27.0)
+
+_Draft: agent, awaiting user_
+
+The question was whether guiltty could be controlled from the command
+line, the way tmux and kitty can: `guiltty tab --new`, `guiltty pane
+--split-right`. Almost everything needed was already there. The socket
+the `guiltty` command uses to ask for a window already checked who was
+asking and served each connection in its own process. Every key already
+ended in a call to `Guiltty.Tabs`. What was missing was a second kind of
+request, and a way to say *which* pane.
+
+The which-pane part was the real design question. A key knows: it's the
+focused pane. A command typed in a shell might come from a background
+tab, or another window, or a shell that isn't in guiltty at all. The
+answer is tmux's: every shell gets `GUILTTY_PANE`, its pane's id, and
+the client sends it along. The environment is the one thing that's sure
+to follow a command from the shell it was typed in, through make or a
+script, to the client. When that pane is gone (a tmux started in it
+outlives it), the answer is an error, never a guess, since guessing
+wrong on `tab --close` can't be undone.
+
+The client still decides nothing. It sends the words as `ARG=` lines and
+prints the `out:` lines that come back; `Guiltty.Command` parses and
+runs them, so a new command will never need a new client. The only
+words the client knows are `release` and `version`, which have to work
+with no guiltty running: the old `guiltty stop` is now `guiltty release
+stop`, and the bare words belong to the commands.
+
+One thing came up during testing: `window --list` prints tab titles,
+and a title is whatever a program sets, ssh'd servers included. Printed
+raw, an escape sequence in a title would run in the terminal that asked
+for the list. The server now turns control characters into `?` before
+any line goes out.
+
+The protocol went to version 2, so for once the old question 5 of
+chapter 23 really happens: right after updating, a still-running
+v0.26 guiltty refuses the new command until its windows close.
+
+Later the same day, while this was still uncommitted, the window
+running the agent that wrote it got closed by accident. The work had
+just finished, but it made the point: an agent's conversation lives
+only in its process. So the tab the AI key opens is now locked while
+the tool runs. The lock had to come off again when the tool exits, or
+a plain shell tab would keep guiltty alive with no window. Tabs keeps
+these locks apart (`held`, pane => tab), and a lock you set or clear
+yourself is never undone.
+
+### Later
+- A reopened window doesn't know its old AI pane: the tab comes back,
+  but the AI key opens a second tool instead of going to the first.
+  (A Window that crashes and restarts has the same gap.) Tabs could
+  remember which panes are the AI's, as it remembers `held`.
+- Ask before closing a window with something running in it, like the
+  busy-tab check: the renderer would catch SDL's close request and ask
+  Elixir first (a protocol change).
+- `guiltty tab --new -- htop`: run a program in the new tab or pane.
+- `guiltty pane --focus` with no direction, to bring a pane (by
+  `--pane ID`) and its tab to the front.
+- `guiltty window --close`, and a `--json` for `window --list`.
+- Shell completion for the commands (bash, zsh, fish), generated from
+  `Guiltty.Command`'s table.

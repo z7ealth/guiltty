@@ -128,6 +128,40 @@ defmodule Guiltty.TabsTest do
     assert eventually(fn -> Session.dump(second) =~ ~r/^\/usr\/share$/m end)
   end
 
+  test "every shell knows its pane: GUILTTY_PANE" do
+    [first] = ids()
+    Session.write(first, "echo pane=$GUILTTY_PANE\r")
+    assert eventually(fn -> Session.dump(first) =~ ~r/^pane=#{first}$/m end)
+  end
+
+  test "a held tab is locked while its pane runs, and only then" do
+    [first] = ids()
+
+    {:ok, ai} =
+      Tabs.split(@tabs, :right, hold: true, shell: System.find_executable("cat"), args: [])
+
+    assert [%{locked: true}] = Tabs.describe(@tabs)
+    Tabs.close(@tabs, ai)
+    assert eventually(fn -> match?([%{locked: false, panes: [_]}], Tabs.describe(@tabs)) end)
+
+    # Locked by you first: the pane ending leaves it locked.
+    :ok = Tabs.lock(@tabs, first, true)
+    {:ok, ai} = Tabs.split(@tabs, :right, hold: true)
+    Tabs.close(@tabs, ai)
+    assert eventually(fn -> match?([%{panes: [_]}], Tabs.describe(@tabs)) end)
+    assert [%{locked: true}] = Tabs.describe(@tabs)
+  end
+
+  test "lock and unlock say what they mean, twice is the same as once" do
+    [first] = ids()
+    :ok = Tabs.lock(@tabs, first, true)
+    :ok = Tabs.lock(@tabs, first, true)
+    assert [%{locked: true}] = Tabs.describe(@tabs)
+    :ok = Tabs.lock(@tabs, first, false)
+    assert [%{locked: false}] = Tabs.describe(@tabs)
+    assert {:error, :no_tab} = Tabs.lock(@tabs, 999_999, true)
+  end
+
   test "closing the unlocked tabs keeps the locked ones" do
     Tabs.attach_window(@tabs, self())
     [first] = ids()
@@ -302,6 +336,28 @@ defmodule Guiltty.TabsTest do
       assert eventually(fn -> Tabs.active(@tabs) == tab end)
       assert eventually(fn -> Session.size(tab) == {81, 24} end)
       assert ids() == [tab]
+    end
+
+    test "a pane named in the options is split, in its own tab, even one not on screen" do
+      [first] = ids()
+      {:ok, second} = Tabs.new_tab(@tabs)
+      {:ok, right} = Tabs.split(@tabs, :right, pane: first)
+      # The window stays where it was; the first tab has two panes now.
+      assert Tabs.active(@tabs) == second
+
+      assert [%{id: ^first, panes: [%{id: ^first}, %{id: ^right, focus: true}]}, _] =
+               Tabs.describe(@tabs)
+
+      assert {:error, :no_tab} = Tabs.split(@tabs, :right, pane: 999_999)
+    end
+
+    test "closing a tab closes every pane in it" do
+      [first] = ids()
+      {:ok, _right} = Tabs.split(@tabs, :right)
+      {:ok, second} = Tabs.new_tab(@tabs)
+      assert :ok = Tabs.close_tab(@tabs, first)
+      assert eventually(fn -> ids() == [second] end)
+      assert {:error, :no_tab} = Tabs.close_tab(@tabs, first)
     end
 
     test "too small to split: nothing happens" do

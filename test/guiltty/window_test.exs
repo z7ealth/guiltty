@@ -87,7 +87,10 @@ defmodule Guiltty.WindowTest do
   describe "the AI key" do
     defp set_ai(window, command, position \\ :right) do
       :sys.replace_state(window, fn state ->
-        %{state | config: %{state.config | ai: %{command: command, position: position}}}
+        %{
+          state
+          | config: %{state.config | ai: %{command: command, position: position, lock: true}}
+        }
       end)
     end
 
@@ -144,6 +147,17 @@ defmodule Guiltty.WindowTest do
       ai_key(window)
       assert eventually(fn -> :sys.get_state(window).active == pane end)
       assert panes_of_tab(window, id) == [pane]
+    end
+
+    test "its tab is locked while it runs, and unlocked when it ends", %{id: id, window: window} do
+      set_ai(window, "cat -v")
+      ai_key(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      assert eventually(fn -> MapSet.member?(:sys.get_state(window).locked, id) end)
+
+      Tabs.close(@tabs, pane)
+      assert eventually(fn -> not MapSet.member?(:sys.get_state(window).locked, id) end)
     end
 
     test "position: :tab opens a tab of its own", %{id: id, window: window} do

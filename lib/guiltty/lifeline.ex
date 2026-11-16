@@ -28,6 +28,19 @@ defmodule Guiltty.Lifeline do
   """
   def open(opts \\ []), do: GenServer.call(__MODULE__, {:open, opts})
 
+  @doc """
+  A window got the keyboard: `tabs` is its desk's `Guiltty.Tabs`. A
+  `guiltty` command run from outside guiltty (no `GUILTTY_PANE`) acts on
+  that window. Safe to call with no Lifeline running (tests).
+  """
+  def focused(tabs), do: GenServer.cast(__MODULE__, {:focused, tabs})
+
+  @doc """
+  The Tabs of the window that last had the keyboard, if it's still
+  running; else the newest desk's; nil with no desk at all.
+  """
+  def last_focused, do: GenServer.call(__MODULE__, :last_focused)
+
   @impl true
   def init(_opts) do
     # Desks already running (this process restarted): watch them again.
@@ -37,7 +50,7 @@ defmodule Guiltty.Lifeline do
         {Process.monitor(pid), desk}
       end)
 
-    {:ok, %{watched: watched}}
+    {:ok, %{watched: watched, focused: nil}}
   end
 
   @impl true
@@ -50,6 +63,21 @@ defmodule Guiltty.Lifeline do
       _none_or_failed -> start_desk(opts, state)
     end
   end
+
+  def handle_call(:last_focused, _from, state) do
+    alive = state.focused && GenServer.whereis(state.focused) && state.focused
+
+    newest =
+      case Desk.all() do
+        [] -> nil
+        desks -> Desk.tabs(Enum.max(desks))
+      end
+
+    {:reply, alive || newest, state}
+  end
+
+  @impl true
+  def handle_cast({:focused, tabs}, state), do: {:noreply, %{state | focused: tabs}}
 
   defp start_desk(opts, state) do
     desk = System.unique_integer([:positive, :monotonic])

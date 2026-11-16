@@ -114,7 +114,7 @@
   # (no driver, no GPU that can show the window), guiltty says so and
   # draws with OpenGL. Applies to windows opened after a change.
   # GUILTTY_RENDERER=gl (or vulkan) in guiltty's environment wins over
-  # this, to try the other one for a run: `guiltty stop`, then
+  # this, to try the other one for a run: `guiltty release stop`, then
   # `GUILTTY_RENDERER=gl guiltty`.
   renderer: :vulkan,
 
@@ -199,7 +199,9 @@
   # The AI tool the `ai` key opens, beside you (:right, :down) or in a tab of its
   # own (:tab). It's a program in a pane: what's selected goes to its prompt, and
   # nothing else on your screen does. Without a command, the key only says so.
-  # ai: [command: "", position: :right],
+  # With lock (the default), its tab is locked while the tool runs, so closing
+  # the window doesn't end it; the lock goes when the tool exits.
+  # ai: [command: "", position: :right, lock: true],
 
   # Programs can put text on the clipboard (OSC 52), from the focused pane.
   # They can never read it.

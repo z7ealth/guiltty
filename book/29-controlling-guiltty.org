@@ -1,0 +1,275 @@
+#+TITLE: Controlling guiltty from a shell: guiltty NOUN --ACTION
+#+STARTUP: overview
+
+* The idea
+
+Everything you can do with a key you can also type, or put in a script:
+
+#+begin_src sh
+guiltty tab --new                # Ctrl+Shift+T
+guiltty pane --split-right       # Ctrl+Shift+O
+guiltty tab --rename build       # Ctrl+Shift+R, without the typing
+guiltty theme --set dracula      # no key for this one
+guiltty window --list            # what's open, with the ids
+#+end_src
+
+That's what tmux and kitty (=kitty @=) offer, and what makes a terminal
+scriptable: a script that starts a server in one pane and tails its log
+in the one beside it, a project that opens its three tabs, a theme
+switched from a cron job at sunset.
+
+| Command                                      | Does                                              |
+|----------------------------------------------+---------------------------------------------------|
+| =guiltty window --new=                       | a new window (never a closed one's locked tabs)   |
+| =guiltty window --list=                      | windows, tabs, panes, with their ids              |
+| =guiltty tab --new=                          | a tab after the active one                        |
+| =guiltty tab --close=                        | the tab, every pane in it                         |
+| =guiltty tab --next= / =--prev= / =--go N=   | switch tabs (=N= counts from 1)                   |
+| =guiltty tab --rename NAME=                  | name it; =""= gives the program's title back      |
+| =guiltty tab --lock= / =--unlock=            | keep it running when the window closes, or not    |
+| =guiltty pane --split-right= / =--split-down= | split the pane                                    |
+| =guiltty pane --close=                       | close the pane                                    |
+| =guiltty pane --focus left/right/up/down=    | move the window's focus                           |
+| =guiltty theme --set NAME= / =--list=        | a built-in theme, until the config file changes   |
+| =guiltty help=                               | all of the above                                  |
+| =guiltty release stop= (=pid=, =remote=...)  | the release's own commands (chapter 23)           |
+
+Each one is a noun (what you're acting on) and one =--action=. An action
+that takes a value takes it next (=--go 3=) or after an equals sign
+(=--go=3=). =--pane ID= can go anywhere, to act on another pane than
+"here" (see below).
+
+* Where "here" is
+
+=guiltty pane --split-right= has to know /which/ pane. A key knows: it's
+the one with the focus. A command typed in a shell could have come from
+any pane of any window, or from a script in a tab you're not looking at,
+or from a shell outside guiltty altogether.
+
+So every shell guiltty starts gets one more environment variable,
+=GUILTTY_PANE=, its pane's id ([[file:../lib/guiltty/session/pty.ex::defp pane_env][Pty.pane_env/2]]):
+
+#+begin_example
+  $ echo $GUILTTY_PANE
+  2
+#+end_example
+
+and the client sends it along. Then, in order:
+
+#+begin_example
+  --pane ID given?        -> that pane
+  GUILTTY_PANE set?       -> that pane          (typed in a guiltty shell)
+  neither                 -> the focused pane of the window that last
+                             had the keyboard   (a shell outside guiltty)
+#+end_example
+
+This is the same trick as tmux's =$TMUX_PANE= and kitty's
+=$KITTY_WINDOW_ID=. The environment is the one thing that's sure to
+follow a command from the shell it was typed in, through every program
+in between (=make=, a script, =xargs=), to the client.
+
+The id is the pane's session id, unique across every window
+([[file:27-split-panes.org][chapter 27]]): no window number is needed. The session is registered
+in =Guiltty.Registry= together with its desk's id, so from a pane id the
+server finds the window (=Guiltty.Command.desk_of/1=).
+
+** A pane that's gone is an error, never a guess
+
+A =GUILTTY_PANE= can go stale. Start tmux in pane 7 and close that
+pane: tmux keeps running, and every shell in it still says 7. Then
+
+#+begin_example
+  $ guiltty tab --close
+  guiltty: there's no pane 7 (closed?): see guiltty window --list
+#+end_example
+
+and nothing happens. Falling back to "the focused window" would have
+closed some other tab, and closing a tab can't be undone.
+
+** "The window that last had the keyboard"
+
+When a window gets the focus (SDL's focus event, chapter 7), it tells
+[[file:../lib/guiltty/lifeline.ex::def focused][Lifeline]], which remembers its Tabs. With no window ever focused (they
+all opened offscreen, as in the tests), it's the newest one.
+
+* What travels: the socket, version 2
+
+Commands use the launcher's socket (chapter 23), with one more kind of
+request. These are the bytes =guiltty window --list= sends from pane 2
+and the answer it gets, from a real run (only the user and host in the
+titles shortened):
+
+#+begin_example
+  client                                   Guiltty.Launcher
+  "guiltty 2 cmd\n"            ──────►     a command, protocol 2
+  "ARG=window\n"                           its words, one per line,
+  "ARG=--list\n"                           exactly as typed
+  "PANE=2\n"                               $GUILTTY_PANE
+  "PWD=/home/me/src\n"                     where a new shell would start
+  "\n"                                     the end
+                                           Guiltty.Command.parse/1
+                                           Guiltty.Command.run/2
+                               ◄──────
+  "out: window 1 (last used)\n"
+  "out:   tab 1: build (locked)\n"
+  "out:     pane 2: me@laptop:~/src (here)\n"
+  "out:     pane 4: me@laptop:~/src (focus)\n"
+  "out:   tab 2: me@laptop:~/src (active)\n"
+  "out:     pane 3: me@laptop:~/src (focus)\n"
+  "ok\n"
+#+end_example
+
+The client prints each =out:= line and exits 0 on =ok=. An error is the
+same shape, with =error: why= as the last line, printed on stderr, exit 1:
+
+#+begin_example
+  $ guiltty tab --open
+  guiltty: tab has no --open: --new, --close, --next, --prev, --go, --rename, --lock, --unlock
+  $ guiltty theme --set catppuccin
+  guiltty: catppuccin could be catppuccin-latte or catppuccin-mocha
+#+end_example
+
+Three choices in that format:
+
+- *Words, not a parsed command.* The client sends =ARG= lines and knows
+  nothing about tabs or panes. Every decision stays in Elixir, where it
+  can be tested without a socket ([[file:../test/guiltty/command_test.exs][command_test.exs]]), and a new command
+  never needs a new client. The client knows exactly two words:
+  =release= and =version=, which must work with no guiltty running.
+- *A prefix on output lines.* =out: = keeps a printed line from ever
+  being taken for the =ok= or =error:= that ends the answer, whatever a
+  tab's title says.
+- *Printable only.* Titles come from programs, and a program (over ssh,
+  even) can put escape sequences in its title. =window --list= prints
+  them in /your/ terminal, so the server turns every control character
+  into =?= before it sends a line ([[file:../lib/guiltty/launcher.ex::def answer][Launcher.answer/1]]). The client
+  prints what it gets.
+
+The version went from 1 to 2: a v0.26 client and a v0.27 guiltty refuse
+each other with a message, rather than one taking =cmd= for something
+else. Right after an update, a guiltty that's still running is the old
+one: close its windows once.
+
+* The sequence
+
+#+begin_example
+  shell in pane 2        guiltty (C)          Launcher           Command        Tabs (desk 1)
+       │ guiltty pane --split-right
+       │──────────────────►│
+       │                   │ connect, request
+       │                   │──────────────────►│ SO_PEERCRED: you?
+       │                   │                   │ parse_request
+       │                   │                   │──────────────────►│ parse(["pane","--split-right"])
+       │                   │                   │                   │ target(2): Registry -> desk 1
+       │                   │                   │                   │──────────────────►│ split(:right, pane: 2)
+       │                   │                   │                   │◄──────────────────│ {:ok, 4}
+       │                   │◄──────────────────│ "out: 4\n" "ok\n" │
+       │◄──────────────────│ prints 4, exit 0
+#+end_example
+
+=pane --split-right= splits pane 2 even when it's in a tab you're not
+looking at: =Tabs.split/3= takes =pane:= and splits that one, in its own
+tab ([[file:../lib/guiltty/tabs.ex::defp split][Tabs.split]]), where the key always splits the focused pane of the
+tab on screen. The window doesn't switch to it: a script in a background
+tab shouldn't pull you away from what you're doing.
+
+* Commands that open a shell print its pane
+
+=window --new=, =tab --new= and =pane --split-*= print the new pane's id,
+so a script can go on with it:
+
+#+begin_src sh
+log=$(guiltty pane --split-down)
+guiltty --pane "$log" tab --rename server
+#+end_src
+
+The new shell starts in the folder the command was typed in, as a new
+window starts where =guiltty= was run, when =working_directory= is
+=:inherit= (the default, chapter 16).
+
+* Things a command does differently from its key
+
+- =tab --close= closes the *tab*, every pane in it. The key
+  (Ctrl+Shift+W) closes the focused *pane*, and the tab only with its
+  last one: the noun says which.
+- No "press again" for a busy tab. The key asks first when a program is
+  running (chapter 24), but typed in a shell, the busy program is the
+  =guiltty= command itself, so the question would always come. A command
+  is already on purpose.
+- =tab --lock= and =--unlock= say what they want, where the key toggles.
+  A script that locks twice still has a locked tab ([[file:../lib/guiltty/tabs.ex::def lock][Tabs.lock/3]]).
+- =theme --set= lasts until the config file changes
+  ([[file:../lib/guiltty/config.ex::def override][Config.override/2]]). Trying a theme shouldn't rewrite your
+  config: put it in =config.exs= to keep it. A name can be shortened to
+  any start that only one theme has: =drac=, =tok=.
+
+* Why not the release's =rpc=?
+
+The release could already run code in guiltty: =guiltty release rpc
+'Guiltty.Tabs.new_tab(...)'=. But that starts a second Erlang VM
+(about a second), connects over Erlang distribution (chapter 20: anyone
+who connects can run anything), and needs you to know the module names.
+The socket answers in milliseconds, accepts only your uid, and only
+these commands.
+
+* Where it lives
+
+| File                                | What                                          |
+|-------------------------------------+-----------------------------------------------|
+| [[file:../c_src/client/guiltty.c][c_src/client/guiltty.c]]              | sends the words, prints the answer            |
+| [[file:../lib/guiltty/launcher.ex][lib/guiltty/launcher.ex]]             | the socket, the =cmd= request, the answer     |
+| [[file:../lib/guiltty/command.ex][lib/guiltty/command.ex]]              | what the words mean: =parse/1=, =run/2=       |
+| [[file:../lib/guiltty/tabs.ex][lib/guiltty/tabs.ex]]                 | =split(pane:)=, =close_tab=, =lock=, =describe= |
+| [[file:../lib/guiltty/session/pty.ex][lib/guiltty/session/pty.ex]]          | =GUILTTY_PANE= in every shell                 |
+| [[file:../lib/guiltty/lifeline.ex][lib/guiltty/lifeline.ex]]             | the window that last had the keyboard         |
+
+* Loot
+
+- =environ(7)=: how a variable reaches every program a shell starts;
+  =/proc/PID/environ= (=proc_pid_environ(5)=) to see a process's own.
+- =unix(7)=: =SO_PEERCRED=, again; why a Unix socket is a safe door
+  where Erlang distribution isn't.
+- =getopt(3)= and the GNU long options it parses (=--name value=,
+  =--name=value=): the conventions the commands follow, without using it
+  (the server parses, not the client).
+- Elixir =Registry=: =Registry.lookup/2= returns the value a process
+  registered with, here the desk's id.
+- tmux(1), "FORMATS" and =TMUX_PANE=; kitty's remote control
+  (=kitty @=): the same idea, two other ways.
+
+* Questions
+
+1. Why does every shell get =GUILTTY_PANE=, when the server could ask
+   which window has the focus?
+2. Why is a stale =GUILTTY_PANE= an error rather than "use the focused
+   window instead"?
+3. Why does the client send the words as they are, instead of parsing
+   them?
+4. Why does every output line start with =out: =, and why are control
+   characters replaced?
+5. Why does =tab --close= never ask "press again", when the key does?
+6. Why do =release= and =version= never reach the server?
+
+** Answers
+:PROPERTIES:
+:VISIBILITY: folded
+:END:
+
+1. Because the command may not come from the focused window: a script in
+   a background tab, or another window. The environment follows a
+   command from the shell it was typed in through every program in
+   between; the focus only says where you're looking.
+2. Because a guess can do something that can't be undone: =tab --close=
+   on the tab you're working in. An error costs a retry.
+3. So the client stays logic-free: every decision is in Elixir, tested
+   without a socket, and a new command never needs a new client (or a
+   protocol version).
+4. The prefix keeps a printed line (a tab title that says "ok") from
+   being read as the end of the answer. Titles come from programs, maybe
+   over ssh; printed raw in your terminal, an escape sequence in one
+   could change your terminal's state, so they become =?=.
+5. Typed in a shell, the running program is the =guiltty= command
+   itself, so the tab always looks busy; and a command is already
+   deliberate.
+6. They must work with no guiltty running: =release stop= to stop one
+   that hangs, =version= to check an install (=dist/smoke.sh=).

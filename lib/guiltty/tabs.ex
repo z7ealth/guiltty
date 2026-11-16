@@ -43,6 +43,17 @@ defmodule Guiltty.Tabs do
       rang the bell, since you last looked at them (see
       `Guiltty.Session.Screen`, "Marks")
 
+  ## Held tabs
+
+  A pane opened with `hold: true` (the AI tool, `Guiltty.Window`) locks
+  its tab for as long as it runs, so closing the window by accident
+  doesn't end it. When that pane ends, the lock goes with it, or an
+  ordinary shell tab would stay locked, and keep guiltty running with no
+  window, long after the reason was gone. A tab already locked when the
+  pane opened stays as you left it; locking or unlocking the tab
+  yourself (`toggle_lock/2`, `lock/3`) makes the lock yours, and it
+  stays.
+
   ## Broadcast
 
   Typing in one pane of the broadcast group goes to every pane in it, to
@@ -90,7 +101,8 @@ defmodule Guiltty.Tabs do
   Opens a new tab after the active one and makes it active. Returns
   `{:ok, id}`. Options go to its session, over the config's: `:shell`
   and `:args` run a program instead of the shell (the tab closes when it
-  exits).
+  exits). With `hold: true` the tab is locked while this pane runs (see
+  "Held tabs"); `split/3` takes it too.
   """
   def new_tab(tabs, opts \\ []), do: GenServer.call(tabs, {:new_tab, opts})
 
@@ -98,7 +110,9 @@ defmodule Guiltty.Tabs do
   Splits the focused pane of the active tab: a new pane goes `:right` of it
   or `:down` (below), with half its room, and gets the focus. Returns
   `{:ok, session}`, or `{:error, :too_small}` when the pane has no room
-  for two.
+  for two. With `pane: session` in the options, that pane is split
+  instead, in whichever tab it is (the `guiltty pane` command); the
+  other options go to the new pane's session.
   """
   def split(tabs, direction, opts \\ []), do: GenServer.call(tabs, {:split, direction, opts})
 
@@ -119,10 +133,24 @@ defmodule Guiltty.Tabs do
   def close(tabs, id), do: GenServer.call(tabs, {:close, id})
 
   @doc """
+  Closes a whole tab, every pane in it. `tab` may also be one of its
+  panes. Returns `{:error, :no_tab}` if there's no such tab here.
+  """
+  def close_tab(tabs, tab), do: GenServer.call(tabs, {:close_tab, tab})
+
+  @doc """
   Locks or unlocks a tab. Closing the window closes every tab but the
   locked ones; those keep running, and the window comes back with them.
   """
   def toggle_lock(tabs, tab), do: GenServer.call(tabs, {:toggle_lock, tab})
+
+  @doc """
+  Locks (`true`) or unlocks (`false`) a tab, whatever it was: a script can
+  say it twice without undoing itself, as it would with `toggle_lock/2`.
+  `tab` may also be one of its panes. Returns `{:error, :no_tab}` if
+  there's no such tab here.
+  """
+  def lock(tabs, tab, locked?), do: GenServer.call(tabs, {:lock, tab, locked?})
 
   @doc """
   Closes every tab that isn't locked (each shell gets SIGHUP). If none is
@@ -169,6 +197,13 @@ defmodule Guiltty.Tabs do
   def list(tabs), do: GenServer.call(tabs, :list)
 
   @doc """
+  Everything about the tabs, for `guiltty window --list`: a list, in
+  order, of `%{id, title, active, locked, panes}`, where `panes` is
+  `[%{id, title, focus}]`, in the layout's order.
+  """
+  def describe(tabs), do: GenServer.call(tabs, :describe)
+
+  @doc """
   Resizes every tab, and makes it the size of tabs opened from now on:
   each pane gets its share. `cell_pixels` is one cell's `{width, height}`
   in pixels, or nil.
@@ -194,6 +229,8 @@ defmodule Guiltty.Tabs do
       names: %{},
       marks: %{},
       locked: MapSet.new(),
+      # pane => tab: tabs locked only while that pane runs (hold: true)
+      held: %{},
       # the broadcast group: session => {pgid, host}, the foreground
       # process it joined with and where that ssh goes, or :local
       group: %{},
@@ -256,7 +293,7 @@ defmodule Guiltty.Tabs do
   defp save(%{table: nil} = state), do: state
 
   defp save(state) do
-    saved = Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :marks, :active])
+    saved = Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :held, :marks, :active])
     :ets.insert(state.table, {:saved, saved})
     state
   end
@@ -291,6 +328,8 @@ defmodule Guiltty.Tabs do
         focus: focus,
         names: Map.take(saved.names, tabs),
         locked: MapSet.filter(saved.locked, &(&1 in tabs)),
+        held:
+          Map.filter(Map.get(saved, :held, %{}), fn {pane, tab} -> alive[pane] && tab in tabs end),
         marks: Map.take(saved.marks, tabs),
         active: if(saved.active in tabs, do: saved.active, else: List.first(tabs))
     }
@@ -345,41 +384,21 @@ defmodule Guiltty.Tabs do
 
   @impl true
   def handle_call({:new_tab, opts}, _from, state) do
+    {hold, opts} = Keyword.pop(opts, :hold, false)
+
     case open_tab(state, opts) do
-      {:ok, id, state} -> {:reply, {:ok, id}, notify_windows(state)}
+      {:ok, id, state} -> {:reply, {:ok, id}, state |> hold(hold, id, id) |> notify_windows()}
       {:error, _} = error -> {:reply, error, state}
     end
   end
 
-  def handle_call({:split, _dir, _opts}, _from, %{active: nil} = state),
-    do: {:reply, {:error, :no_tab}, state}
-
   def handle_call({:split, dir, opts}, _from, state) when dir in [:right, :down] do
-    tab = state.active
-    pane = state.focus[tab]
-    {_x, _y, w, h} = rects(state, tab) |> elem(0) |> Map.fetch!(pane)
+    {pane, opts} = Keyword.pop(opts, :pane, focused(state))
+    {hold, opts} = Keyword.pop(opts, :hold, false)
 
-    if (dir == :right and w < 3) or (dir == :down and h < 3) do
-      {:reply, {:error, :too_small}, state}
-    else
-      id = new_id()
-      layout = Layout.split(state.layouts[tab], pane, dir, id)
-      {rects, _} = Layout.rects(layout, full(state))
-      {_x, _y, nw, nh} = rects[id]
-
-      case open_session(state, id, {nw, nh}, opts) do
-        {:ok, state} ->
-          state = %{
-            state
-            | layouts: Map.put(state.layouts, tab, layout),
-              focus: Map.put(state.focus, tab, id)
-          }
-
-          {:reply, {:ok, id}, state |> resize_tab(tab) |> notify_windows()}
-
-        {:error, _} = error ->
-          {:reply, error, state}
-      end
+    case pane && tab_of(state, pane) do
+      nil -> {:reply, {:error, :no_tab}, state}
+      tab -> split(state, tab, pane, dir, hold, opts)
     end
   end
 
@@ -430,7 +449,22 @@ defmodule Guiltty.Tabs do
             do: MapSet.delete(state.locked, tab),
             else: MapSet.put(state.locked, tab)
 
-        {:reply, :ok, notify_windows(%{state | locked: locked})}
+        {:reply, :ok, notify_windows(make_yours(%{state | locked: locked}, tab))}
+    end
+  end
+
+  def handle_call({:lock, id, locked?}, _from, state) do
+    case tab_for(state, id) do
+      nil ->
+        {:reply, {:error, :no_tab}, state}
+
+      tab ->
+        locked =
+          if locked?,
+            do: MapSet.put(state.locked, tab),
+            else: MapSet.delete(state.locked, tab)
+
+        {:reply, :ok, notify_windows(make_yours(%{state | locked: locked}, tab))}
     end
   end
 
@@ -475,6 +509,23 @@ defmodule Guiltty.Tabs do
     end
   end
 
+  def handle_call({:close_tab, id}, _from, state) do
+    case tab_for(state, id) do
+      nil ->
+        {:reply, {:error, :no_tab}, state}
+
+      tab ->
+        # Each pane's end arrives as a :DOWN, which removes it (and then
+        # the tab), as when you close them one by one.
+        for pane <- Layout.panes(state.layouts[tab]),
+            pid = GenServer.whereis(Session.via(pane, :supervisor)),
+            pid != nil,
+            do: DynamicSupervisor.terminate_child(@sessions, pid)
+
+        {:reply, :ok, state}
+    end
+  end
+
   def handle_call({:switch, to}, _from, state) do
     {:reply, :ok, state |> switch_to(to) |> notify_windows()}
   end
@@ -509,6 +560,29 @@ defmodule Guiltty.Tabs do
 
   def handle_call(:active, _from, state), do: {:reply, focused(state), state}
   def handle_call(:list, _from, state), do: {:reply, {tab_list(state), state.active}, state}
+
+  def handle_call(:describe, _from, state) do
+    tabs =
+      Enum.map(tab_list(state), fn {tab, title} ->
+        panes =
+          for pane <- Layout.panes(state.layouts[tab]),
+              do: %{
+                id: pane,
+                title: Map.get(state.titles, pane, ""),
+                focus: pane == state.focus[tab]
+              }
+
+        %{
+          id: tab,
+          title: title,
+          active: tab == state.active,
+          locked: MapSet.member?(state.locked, tab),
+          panes: panes
+        }
+      end)
+
+    {:reply, tabs, state}
+  end
 
   def handle_call({:resize, cols, rows, cell_pixels}, _from, state) do
     state = %{state | size: {cols, rows}, cell_pixels: cell_pixels}
@@ -592,6 +666,55 @@ defmodule Guiltty.Tabs do
   end
 
   ## Opening
+
+  defp split(state, tab, pane, dir, hold, opts) do
+    {_x, _y, w, h} = rects(state, tab) |> elem(0) |> Map.fetch!(pane)
+
+    if (dir == :right and w < 3) or (dir == :down and h < 3) do
+      {:reply, {:error, :too_small}, state}
+    else
+      id = new_id()
+      layout = Layout.split(state.layouts[tab], pane, dir, id)
+      {rects, _} = Layout.rects(layout, full(state))
+      {_x, _y, nw, nh} = rects[id]
+
+      case open_session(state, id, {nw, nh}, opts) do
+        {:ok, state} ->
+          state = %{
+            state
+            | layouts: Map.put(state.layouts, tab, layout),
+              focus: Map.put(state.focus, tab, id)
+          }
+
+          {:reply, {:ok, id}, state |> resize_tab(tab) |> hold(hold, id, tab) |> notify_windows()}
+
+        {:error, _} = error ->
+          {:reply, error, state}
+      end
+    end
+  end
+
+  # Locks the tab while the pane runs, unless it was locked already: then
+  # the lock is yours, and stays when the pane ends.
+  defp hold(state, false, _pane, _tab), do: state
+
+  defp hold(state, true, pane, tab) do
+    if MapSet.member?(state.locked, tab),
+      do: state,
+      else: %{state | locked: MapSet.put(state.locked, tab), held: Map.put(state.held, pane, tab)}
+  end
+
+  # The pane that held its tab ended: the lock goes too.
+  defp release(state, pane) do
+    case Map.pop(state.held, pane) do
+      {nil, _} -> state
+      {tab, held} -> %{state | held: held, locked: MapSet.delete(state.locked, tab)}
+    end
+  end
+
+  # You locked or unlocked the tab yourself: no pane lifts it any more.
+  defp make_yours(state, tab),
+    do: %{state | held: Map.reject(state.held, fn {_pane, held} -> held == tab end)}
 
   defp config_opts(state) do
     config = Config.get()
@@ -698,7 +821,8 @@ defmodule Guiltty.Tabs do
   ## Closing
 
   defp remove_pane(state, id) do
-    state = state |> leave_group(id) |> Map.update!(:titles, &Map.delete(&1, id))
+    state =
+      state |> leave_group(id) |> release(id) |> Map.update!(:titles, &Map.delete(&1, id))
 
     case tab_of(state, id) do
       nil ->

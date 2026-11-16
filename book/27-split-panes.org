@@ -262,6 +262,25 @@ opened for the tool (=ai_panes=) and passes them to =Tabs.toggle_broadcast/4= as
 =except:=; Tabs leaves them out. An AI tab of its own has nothing else to join, and
 Ctrl+Shift+B there just says so.
 
+*Its tab is locked while it runs* (since v0.27.0). An agent's conversation lives only
+in its process: close the window by accident and it's gone. So the tab the AI opens in
+gets a 🔒, like Ctrl+Shift+L gives it, and closing the window keeps it running; the
+next =guiltty= brings it back. The Window asks for it with =hold: true= when it opens
+the tool, and Tabs keeps the lock in =held= (pane => tab) beside the ordinary ones
+([[file:../lib/guiltty/tabs.ex::defp hold][Tabs.hold/4]]):
+
+#+begin_example
+  AI key        Tabs.split(:right, hold: true)  -> locked, held: %{ai => tab}
+  AI exits      :DOWN for ai -> release/2       -> unlocked, held: %{}
+
+  tab locked by you first   hold/4 does nothing      -> stays locked after
+  Ctrl+Shift+L meanwhile    make_yours/2 drops held  -> the lock is yours now
+#+end_example
+
+The lock goes when the tool ends: a shell tab still locked for an agent that quit long
+ago would keep guiltty running with no window, for nothing. =ai: [lock: false]= turns
+it off.
+
 * Loot
 
 - tmux(1): =split-window=, =select-pane=, =resize-pane= (the model the
@@ -286,6 +305,8 @@ Ctrl+Shift+B there just says so.
 5. You drag to select in the left pane and the pointer crosses into the
    right one. Why doesn't the selection follow?
 6. Tabs crashes. What comes back, and what doesn't?
+7. The AI's tab was locked for it. You quit the agent. Why does the lock
+   go, and why wouldn't it if you had pressed Ctrl+Shift+L in between?
 
 ** Answers
 :PROPERTIES:
@@ -307,3 +328,7 @@ Ctrl+Shift+B there just says so.
    past its edge the position is held at the edge.
 6. Every session, still running, each as a tab of its own: the layouts
    (which pane was next to which) lived only in the old Tabs.
+7. guiltty locked it only for the agent (=held=), so the agent's end
+   takes it off: otherwise a plain shell tab would keep guiltty running
+   with no window. Pressing the key makes the lock yours (=make_yours/2=),
+   and guiltty never undoes what you chose.

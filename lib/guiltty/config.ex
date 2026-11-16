@@ -54,9 +54,11 @@ defmodule Guiltty.Config do
       broadcast group (Ctrl+Shift+B): `["ssh", "mosh-client"]`
     * `:renderer` - `:vulkan` or `:gl`, for windows opened after a change;
       Vulkan falls back to OpenGL by itself when it can't start
-    * `:ai` - `%{command: binary | nil, position: :right | :down | :tab}`: the
-      AI tool the `ai` key opens, beside you or in a tab of its own. nil opens
-      nothing: guiltty doesn't pick one for you
+    * `:ai` - `%{command: binary | nil, position: :right | :down | :tab,
+      lock: boolean}`: the AI tool the `ai` key opens, beside you or in a
+      tab of its own. nil opens nothing: guiltty doesn't pick one for you.
+      With `lock` (the default), its tab is locked while the tool runs, so
+      closing the window doesn't end it (`Guiltty.Tabs`, "Held tabs")
     * `:clipboard_write` - programs can put text on the clipboard (OSC 52),
       from the focused pane; they can never read it
     * `:link_url` - Ctrl+click opens URLs found in plain text (http, https,
@@ -152,7 +154,7 @@ defmodule Guiltty.Config do
       ligatures: true,
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan,
-      ai: %{command: nil, position: :right},
+      ai: %{command: nil, position: :right, lock: true},
       clipboard_write: true,
       link_url: true,
       screen_reports: false
@@ -170,6 +172,14 @@ defmodule Guiltty.Config do
   it has one now).
   """
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
+
+  @doc """
+  Sets one setting for every window, over the file's, until the file
+  changes (then the file's value is back). `guiltty theme --set` uses it:
+  trying a theme shouldn't rewrite your config. The value isn't checked
+  here: the caller gives one already valid (`Guiltty.Theme.named/1`).
+  """
+  def override(key, value), do: GenServer.call(__MODULE__, {:override, key, value})
 
   def path, do: System.get_env("GUILTTY_CONFIG") || Path.expand("~/.config/guiltty/config.exs")
 
@@ -193,6 +203,15 @@ defmodule Guiltty.Config do
     Process.monitor(pid)
     if state.error, do: send(pid, {:config_error, state.error})
     {:reply, :ok, %{state | subscribers: MapSet.put(state.subscribers, pid)}}
+  end
+
+  def handle_call({:override, key, value}, _from, state) when is_map_key(state.config, key) do
+    config = Map.put(state.config, key, value)
+    Enum.each(state.subscribers, &send(&1, {:config, config}))
+    # A window takes a new config as "the file loaded": a broken file must
+    # still say so.
+    if state.error, do: Enum.each(state.subscribers, &send(&1, {:config_error, state.error}))
+    {:reply, :ok, %{state | config: config}}
   end
 
   @impl true
@@ -488,12 +507,17 @@ defmodule Guiltty.Config do
 
     with true <- Keyword.keyword?(opts),
          true <- command == nil or (is_binary(command) and String.trim(command) != ""),
+         true <- is_boolean(Keyword.get(opts, :lock, d.lock)),
          {:ok, position} <-
            one_of(:"ai position", Keyword.get(opts, :position, d.position), [:right, :down, :tab]) do
-      {:ok, %{command: command, position: position}}
+      {:ok, %{command: command, position: position, lock: Keyword.get(opts, :lock, d.lock)}}
     else
-      {:error, _} = error -> error
-      false -> {:error, "ai: expected command: \"a program\" and position: :right, :down or :tab"}
+      {:error, _} = error ->
+        error
+
+      false ->
+        {:error,
+         "ai: expected command: \"a program\", position: :right, :down or :tab, and lock: true or false"}
     end
   end
 

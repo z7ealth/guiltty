@@ -1,22 +1,28 @@
 // guiltty: the command you run (and the menu entry runs). It asks the
-// running guiltty for a window, or starts guiltty if none is running. It
-// decides nothing: the running guiltty (Guiltty.Launcher, in Elixir) does.
-// Book chapter 23.
+// running guiltty for a window, or starts guiltty if none is running, or
+// passes a command on (guiltty tab --new). It decides nothing: the
+// running guiltty (Guiltty.Launcher and Guiltty.Command, in Elixir) does.
+// Book chapters 23 and 29.
 //
-//   guiltty            open a window
-//   guiltty ARGS...    anything else (stop, pid, remote...) goes to the
-//                      release's own script, as before
+//   guiltty                  open a window
+//   guiltty release ARGS...  the release's own script (stop, pid, remote...)
+//   guiltty version          the same, answered without a running guiltty
+//   guiltty ARGS...          anything else is a command for the running
+//                            guiltty, sent as it is
 //
-// The request, protocol version 1, over a Unix socket (unix(7)):
+// The request, protocol version 2, over a Unix socket (unix(7)):
 //
-//   guiltty 1 open\n
+//   guiltty 2 open\n        or "guiltty 2 cmd\n" for a command
+//   ARG=tab\n               a command's words, one line each
+//   ARG=--new\n
+//   PANE=12\n               $GUILTTY_PANE, the pane a command was typed in
 //   DISPLAY=:0\n            the display variables this command has
 //   ...\n
-//   PWD=/home/me/src\n      the folder it runs in: the new window's first
-//                           tab starts there
+//   PWD=/home/me/src\n      the folder it runs in: a new shell starts there
 //   \n                      the end
 //
-// and the answer is one line: "ok\n" or "error: why\n".
+// and the answer: lines to print, each "out: text\n", then the last
+// line, "ok\n" or "error: why\n".
 //
 // Read: unix(7), socket(2), connect(2), poll(2), execv(3), getcwd(3),
 // proc_pid_exe(5).
@@ -35,7 +41,7 @@
 #include <unistd.h>
 
 // Which protocol this client speaks; Guiltty.Launcher refuses another.
-constexpr int protocol_version = 1;
+constexpr int protocol_version = 2;
 // How long the running guiltty may take to answer (opening the window).
 constexpr int reply_timeout_ms = 10'000;
 // While a guiltty shuts down it answers "shutting down": ask again every
@@ -44,13 +50,19 @@ constexpr int retry_ms = 50;
 constexpr int max_retries = 100;
 // The longest display variable value sent along.
 constexpr size_t max_value = 1024;
-// The longest folder sent along: the server's line limit is 4 KB.
+// The longest folder or command word sent along: the server's line limit
+// is 4 KB.
 constexpr size_t max_folder = 3000;
+// The most words a command may have: the server reads at most 32 lines,
+// and the variables, the folder and the pane take up to 6.
+constexpr int max_words = 24;
+// The longest answer read: guiltty window --list for many windows fits.
+constexpr size_t max_answer = 256 * 1024;
 
 static const char *const display_vars[] = {"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
                                            "XDG_RUNTIME_DIR"};
 
-enum outcome { OPENED, NOBODY, SHUTTING_DOWN, FAILED };
+enum outcome { DONE, NOBODY, SHUTTING_DOWN, FAILED };
 
 // Where the socket is, as Guiltty.Launcher.socket_path/0 says: the
 // override, or the runtime folder systemd makes private to you at login,
@@ -93,32 +105,60 @@ enum outcome { OPENED, NOBODY, SHUTTING_DOWN, FAILED };
     return n > 0 && (size_t)n < size;
 }
 
-// The request: the first line, then each display variable this command
-// has (one whose value would break a line is left out), then a blank line.
-static size_t build_request(char *out, size_t size) {
-    size_t used = (size_t)snprintf(out, size, "guiltty %d open\n", protocol_version);
+// Adds one line to the request; false if it won't fit.
+[[nodiscard]] static bool add_line(char *out, size_t size, size_t *used, const char *name,
+                                   const char *value) {
+    int n = snprintf(out + *used, size - *used, "%s%s\n", name, value);
+    if (n < 0 || (size_t)n >= size - *used)
+        return false;
+    *used += (size_t)n;
+    return true;
+}
+
+// The request: the first line, a command's words, then each display
+// variable this command has (one whose value would break a line is left
+// out), then a blank line. Returns its length, 0 if a word can't be sent.
+static size_t build_request(char *out, size_t size, int words, char *word[]) {
+    size_t used = (size_t)snprintf(out, size, "guiltty %d %s\n", protocol_version,
+                                   words > 0 ? "cmd" : "open");
+    // A command's words must all go, unchanged, or not at all: a word cut
+    // or left out would be another command.
+    if (words > max_words) {
+        fprintf(stderr, "guiltty: too many arguments\n");
+        return 0;
+    }
+    for (int i = 0; i < words; i++) {
+        if (strpbrk(word[i], "\r\n") != nullptr || strlen(word[i]) > max_folder ||
+            !add_line(out, size, &used, "ARG=", word[i])) {
+            fprintf(stderr, "guiltty: an argument is too long, or has a line break\n");
+            return 0;
+        }
+    }
+    // The pane a command was typed in. Only for commands: a window opens
+    // the same from anywhere. The server checks it's a number.
+    const char *pane = getenv("GUILTTY_PANE");
+    if (words > 0 && pane != nullptr && strpbrk(pane, "\r\n") == nullptr &&
+        strlen(pane) <= 32 && !add_line(out, size, &used, "PANE=", pane))
+        return 0;
     for (size_t i = 0; i < sizeof display_vars / sizeof display_vars[0]; i++) {
         const char *value = getenv(display_vars[i]);
         // No display needs more than this, and a line too long for the
         // server's limit (4 KB) would just get the connection closed.
         if (value == nullptr || strpbrk(value, "\r\n") != nullptr || strlen(value) > max_value)
             continue;
-        int n = snprintf(out + used, size - used, "%s=%s\n", display_vars[i], value);
-        if (n < 0 || (size_t)n >= size - used)
-            continue; // too long for any display: leave it out
-        used += (size_t)n;
+        char name[32];
+        snprintf(name, sizeof name, "%s=", display_vars[i]);
+        (void)add_line(out, size, &used, name, value); // too long for any display: left out
     }
     // Where this command runs, from getcwd(3) rather than $PWD, which a
     // program can leave stale. A folder that won't fit just isn't sent.
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof cwd) != nullptr && strpbrk(cwd, "\r\n") == nullptr &&
-        strlen(cwd) <= max_folder) {
-        int n = snprintf(out + used, size - used, "PWD=%s\n", cwd);
-        if (n > 0 && (size_t)n < size - used)
-            used += (size_t)n;
-    }
-    if (used + 1 < size)
-        out[used++] = '\n';
+        strlen(cwd) <= max_folder)
+        (void)add_line(out, size, &used, "PWD=", cwd);
+    if (used + 1 >= size)
+        return 0;
+    out[used++] = '\n';
     return used;
 }
 
@@ -135,29 +175,54 @@ static size_t build_request(char *out, size_t size) {
     return true;
 }
 
-// One line of answer, waiting at most reply_timeout_ms for it (poll(2)).
-[[nodiscard]] static bool read_line(int fd, char *out, size_t size) {
+// The whole answer: the server closes the connection after it. Waits at
+// most reply_timeout_ms for each piece (poll(2)). Returns its length, -1
+// if it never came, or -2 if it didn't fit.
+[[nodiscard]] static ssize_t read_answer(int fd, char *out, size_t size) {
     size_t used = 0;
-    while (used + 1 < size) {
+    for (;;) {
         struct pollfd p = {.fd = fd, .events = POLLIN};
         int ready = poll(&p, 1, reply_timeout_ms);
         if (ready < 0 && errno == EINTR)
             continue;
         if (ready <= 0)
-            return false;
+            return -1;
+        if (used + 1 >= size)
+            return -2;
         ssize_t r = read(fd, out + used, size - 1 - used);
         if (r < 0 && errno == EINTR)
             continue;
-        if (r <= 0)
-            return false;
+        if (r < 0)
+            return -1;
+        if (r == 0)
+            break;
         used += (size_t)r;
-        char *nl = memchr(out, '\n', used);
-        if (nl != nullptr) {
-            *nl = '\0';
-            return true;
-        }
     }
-    return false;
+    out[used] = '\0';
+    return (ssize_t)used;
+}
+
+// Prints the answer's "out: " lines and says how its last line ended.
+// Lines come already made printable by the server.
+static enum outcome print_answer(char *answer) {
+    char *line = answer;
+    char *nl;
+    while ((nl = strchr(line, '\n')) != nullptr) {
+        *nl = '\0';
+        if (strncmp(line, "out: ", 5) == 0) {
+            puts(line + 5);
+        } else if (strcmp(line, "ok") == 0) {
+            return DONE;
+        } else if (strcmp(line, "error: shutting down") == 0) {
+            return SHUTTING_DOWN;
+        } else {
+            fprintf(stderr, "guiltty: %s\n", strncmp(line, "error: ", 7) == 0 ? line + 7 : line);
+            return FAILED;
+        }
+        line = nl + 1;
+    }
+    // No last line: the guiltty it reached went away.
+    return SHUTTING_DOWN;
 }
 
 static enum outcome ask(const char *path, const char *request, size_t len) {
@@ -186,16 +251,18 @@ static enum outcome ask(const char *path, const char *request, size_t len) {
         return FAILED;
     }
 
-    char reply[512];
-    bool answered = write_all(fd, request, len) && read_line(fd, reply, sizeof reply);
+    static char answer[max_answer];
+    ssize_t got = write_all(fd, request, len) ? read_answer(fd, answer, sizeof answer) : -1;
     close(fd);
+    // Never asked again: the command may have run.
+    if (got == -2) {
+        fprintf(stderr, "guiltty: the answer was too long to read\n");
+        return FAILED;
+    }
     // No answer at all: the guiltty it reached is going away.
-    if (!answered || strcmp(reply, "error: shutting down") == 0)
+    if (got < 0)
         return SHUTTING_DOWN;
-    if (strcmp(reply, "ok") == 0)
-        return OPENED;
-    fprintf(stderr, "guiltty: %s\n", reply);
-    return FAILED;
+    return print_answer(answer);
 }
 
 // Hand over to the release's own script: "daemon" to start guiltty (it
@@ -214,24 +281,44 @@ static enum outcome ask(const char *path, const char *request, size_t len) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc > 1)
-        run_release(argv);
+    // Two words never reach the server: the release's commands must work
+    // with no guiltty running (stop one that hangs, check an install).
+    if (argc > 1 && strcmp(argv[1], "release") == 0) {
+        if (argc == 2) {
+            fprintf(stderr, "guiltty: release takes a command: stop, pid, remote...\n");
+            return 1;
+        }
+        run_release(argv + 1); // argv[1] is replaced by the script's path
+    }
+    if (argc == 2 && (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0)) {
+        char *args[] = {nullptr, "version", nullptr};
+        run_release(args);
+    }
 
     char path[sizeof((struct sockaddr_un){}.sun_path) + 1];
     if (!socket_path(path, sizeof path)) {
         fprintf(stderr, "guiltty: the socket path is too long\n");
         return 1;
     }
-    char request[8192];
-    size_t len = build_request(request, sizeof request);
+    static char request[128 * 1024];
+    size_t len = build_request(request, sizeof request, argc - 1, argv + 1);
+    if (len == 0)
+        return 1;
+    bool command = argc > 1;
 
     for (int tries = 0; tries < max_retries; tries++) {
         switch (ask(path, request, len)) {
-        case OPENED:
+        case DONE:
             return 0;
         case FAILED:
             return 1;
         case NOBODY: {
+            // A command needs a running guiltty: starting one just to
+            // split a pane of a window that doesn't exist would be a guess.
+            if (command) {
+                fprintf(stderr, "guiltty: guiltty isn't running (run guiltty to start it)\n");
+                return 1;
+            }
             char *args[] = {nullptr, "daemon", nullptr};
             run_release(args);
         }

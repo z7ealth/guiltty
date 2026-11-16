@@ -64,25 +64,50 @@ defmodule Guiltty.LauncherTest do
                 cwd: nil
               }} =
                Launcher.parse_request([
-                 "guiltty 1 open\n",
+                 "guiltty 2 open\n",
                  "DISPLAY=:0\n",
                  "XAUTHORITY=/home/me/.Xauthority\n"
                ])
 
       assert {:ok, %{env: [], cwd: "/home/me/src"}} =
-               Launcher.parse_request(["guiltty 1 open\n", "PWD=/home/me/src\n"])
+               Launcher.parse_request(["guiltty 2 open\n", "PWD=/home/me/src\n"])
 
       # A folder must be an absolute path.
-      assert {:error, _} = Launcher.parse_request(["guiltty 1 open\n", "PWD=src\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 open\n", "PWD=src\n"])
 
-      assert {:error, _} = Launcher.parse_request(["guiltty 1 open\n", "LD_PRELOAD=/evil.so\n"])
-      assert {:error, _} = Launcher.parse_request(["guiltty 1 open\n", "DISPLAY=:0\e[2J\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 open\n", "LD_PRELOAD=/evil.so\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 open\n", "DISPLAY=:0\e[2J\n"])
 
-      assert {:error, "this guiltty speaks version 1" <> _} =
-               Launcher.parse_request(["guiltty 2 open\n"])
+      assert {:error, "this guiltty speaks version 2" <> _} =
+               Launcher.parse_request(["guiltty 1 open\n"])
 
-      assert {:error, _} = Launcher.parse_request(["guiltty 1 run rm -rf ~\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 run rm -rf ~\n"])
       assert {:error, _} = Launcher.parse_request([])
+    end
+
+    test "a command: its words and its pane, only in a command" do
+      assert {:ok, %{kind: :cmd, args: ["tab", "--rename", ""], pane: 12, cwd: "/tmp"}} =
+               Launcher.parse_request([
+                 "guiltty 2 cmd\n",
+                 "ARG=tab\n",
+                 "ARG=--rename\n",
+                 "ARG=\n",
+                 "PANE=12\n",
+                 "PWD=/tmp\n"
+               ])
+
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 open\n", "ARG=tab\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 open\n", "PANE=12\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 cmd\n", "PANE=twelve\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 cmd\n", "PANE=1\n", "PANE=2\n"])
+      assert {:error, _} = Launcher.parse_request(["guiltty 2 cmd\n", "ARG=a\eb\n"])
+    end
+
+    test "an answer's lines can't carry escape sequences" do
+      assert IO.iodata_to_binary(Launcher.answer({:ok, ["\e]0;evil\a", "two"]})) ==
+               "out: ?]0;evil?\nout: two\nok\n"
+
+      assert IO.iodata_to_binary(Launcher.answer({:error, "a\nb"})) == "error: a?b\n"
     end
 
     property "never raises, whatever it's given" do
@@ -91,7 +116,10 @@ defmodule Guiltty.LauncherTest do
                 StreamData.list_of(
                   StreamData.one_of([
                     StreamData.binary(max_length: 200),
-                    StreamData.constant("guiltty 1 open\n"),
+                    StreamData.constant("guiltty 2 open\n"),
+                    StreamData.constant("guiltty 2 cmd\n"),
+                    StreamData.map(StreamData.binary(max_length: 50), &("ARG=" <> &1)),
+                    StreamData.map(StreamData.binary(max_length: 10), &("PANE=" <> &1)),
                     StreamData.map(StreamData.binary(max_length: 200), &("DISPLAY=" <> &1)),
                     # anything at all, kept small: big nested terms are
                     # slow to make, and no bigger a test
@@ -136,7 +164,7 @@ defmodule Guiltty.LauncherTest do
       start_guiltty(path)
 
       assert {:ok, "error: not a guiltty request\n"} = raw(path, "hello\n\n")
-      assert {:ok, "error: unexpected line" <> _} = raw(path, "guiltty 1 open\nPATH=/x\n\n")
+      assert {:ok, "error: unexpected line" <> _} = raw(path, "guiltty 2 open\nPATH=/x\n\n")
       assert {:ok, "error: this guiltty speaks" <> _} = raw(path, "guiltty 9 open\n\n")
       # Over the line limit the socket closes before the answer can go:
       # refused either way.
@@ -146,7 +174,7 @@ defmodule Guiltty.LauncherTest do
              ]
 
       assert {:ok, "error: request too long\n"} =
-               raw(path, "guiltty 1 open\n" <> String.duplicate("DISPLAY=:0\n", 20) <> "\n")
+               raw(path, "guiltty 2 open\n" <> String.duplicate("DISPLAY=:0\n", 40) <> "\n")
 
       assert Desk.all() == []
     end
@@ -165,7 +193,7 @@ defmodule Guiltty.LauncherTest do
       start_supervised!({Launcher, path: path})
       # No Lifeline: what the Launcher sees in the moment after the last
       # window closed.
-      assert {:ok, "error: shutting down\n"} = raw(path, "guiltty 1 open\n\n")
+      assert {:ok, "error: shutting down\n"} = raw(path, "guiltty 2 open\n\n")
     end
 
     test "the socket's folder is made private" do
@@ -173,6 +201,82 @@ defmodule Guiltty.LauncherTest do
       File.chmod!(dir, 0o755)
       start_supervised!({Launcher, path: Path.join(dir, "sock")})
       assert File.stat!(dir).mode |> Bitwise.band(0o777) == 0o700
+    end
+  end
+
+  describe "commands" do
+    setup do
+      path = Path.join(short_dir(), "sock")
+      start_guiltty(path)
+      env = [{"GUILTTY_SOCKET", path}]
+      {"", 0} = client([], env)
+      [desk] = Desk.all()
+      %{env: env, tabs: Desk.tabs(desk)}
+    end
+
+    defp tab_ids(tabs), do: tabs |> Guiltty.Tabs.list() |> elem(0) |> Enum.map(&elem(&1, 0))
+
+    test "tab --new prints the new pane, in the window last used", %{env: env, tabs: tabs} do
+      assert {out, 0} = client(["tab", "--new"], env)
+      {id, ""} = out |> String.trim() |> Integer.parse()
+      assert List.last(tab_ids(tabs)) == id
+      assert Guiltty.Tabs.active(tabs) == id
+    end
+
+    test "a pane's commands act on that pane, wherever it is", %{env: env, tabs: tabs} do
+      first = Guiltty.Tabs.active(tabs)
+      {:ok, _second} = Guiltty.Tabs.new_tab(tabs)
+      here = [{"GUILTTY_PANE", to_string(first)} | env]
+
+      # The first tab isn't the one on screen: it's split all the same.
+      assert {out, 0} = client(["pane", "--split-right"], here)
+      new = out |> String.trim() |> String.to_integer()
+      [tab | _] = Guiltty.Tabs.describe(tabs)
+      assert Enum.map(tab.panes, & &1.id) == [first, new]
+
+      assert {"", 0} = client(["tab", "--rename", "build"], here)
+      assert {"", 0} = client(["tab", "--lock"], here)
+      assert {"", 0} = client(["tab", "--lock"], here)
+      assert [%{title: "build", locked: true} | _] = Guiltty.Tabs.describe(tabs)
+
+      # --pane wins over GUILTTY_PANE.
+      assert {"", 0} = client(["--pane", to_string(new), "tab", "--unlock"], here)
+      assert [%{locked: false} | _] = Guiltty.Tabs.describe(tabs)
+
+      assert {list, 0} = client(["window", "--list"], here)
+      assert list =~ "window 1 (last used)" or list =~ "window 1\n"
+      assert list =~ "  tab 1: build\n"
+      assert list =~ "    pane #{first}: "
+      assert list =~ "(here)"
+
+      assert {"", 0} = client(["tab", "--close"], here)
+      assert eventually(fn -> length(tab_ids(tabs)) == 1 end)
+
+      # Its pane is gone now: an error, not a guess at another.
+      assert {out, 1} = client(["tab", "--new"], here)
+      assert out =~ "guiltty: there's no pane #{first} (closed?)"
+    end
+
+    test "tabs by number, and mistakes said plainly", %{env: env, tabs: tabs} do
+      [first] = tab_ids(tabs)
+      {:ok, _} = Guiltty.Tabs.new_tab(tabs)
+      assert {"", 0} = client(["tab", "--go", "1"], env)
+      assert Guiltty.Tabs.active(tabs) == first
+      assert {"guiltty: there's no tab 5: this window has 2\n", 1} = client(~w(tab --go 5), env)
+      assert {"guiltty: tab has no --open" <> _, 1} = client(~w(tab --open), env)
+      assert {"guiltty: no command \"tabs\"" <> _, 1} = client(~w(tabs --new), env)
+      assert {"usage: guiltty" <> _, 0} = client(["help"], env)
+    end
+
+    test "theme --set takes a name, or the start of one", %{env: env} do
+      start_supervised!({Guiltty.Config, path: Path.join(short_dir(), "none.exs")})
+      assert {"", 0} = client(~w(theme --set drac), env)
+      assert {:ok, Guiltty.Config.get().theme} == Guiltty.Theme.named("dracula")
+      assert {out, 0} = client(~w(theme --list), env)
+      assert out =~ "dracula (in use)\n"
+
+      assert {"guiltty: catppuccin could be catppuccin-latte or catppuccin-mocha\n", 1} =
+               client(~w(theme --set catppuccin), env)
     end
   end
 
@@ -206,11 +310,23 @@ defmodule Guiltty.LauncherTest do
       assert File.read!(Path.join(dir, "ran")) == "daemon\n"
     end
 
-    test "arguments go to the release's script, as before" do
+    test "release ARGS and version go to the release's script" do
       dir = short_dir()
       env = [{"GUILTTY_SOCKET", Path.join(dir, "sock")}, {"GUILTTY_RELEASE", fake_release(dir)}]
-      assert {_, 0} = client(["stop"], env)
+      assert {_, 0} = client(["release", "stop"], env)
       assert File.read!(Path.join(dir, "ran")) == "stop\n"
+      assert {_, 0} = client(["release", "remote", "--x"], env)
+      assert File.read!(Path.join(dir, "ran")) == "remote --x\n"
+      assert {_, 0} = client(["--version"], env)
+      assert File.read!(Path.join(dir, "ran")) == "version\n"
+      assert {"guiltty: release takes" <> _, 1} = client(["release"], env)
+    end
+
+    test "a command with nobody listening is an error, and starts nothing" do
+      dir = short_dir()
+      env = [{"GUILTTY_SOCKET", Path.join(dir, "sock")}, {"GUILTTY_RELEASE", fake_release(dir)}]
+      assert {"guiltty: guiltty isn't running" <> _, 1} = client(["stop"], env)
+      refute File.exists?(Path.join(dir, "ran"))
     end
   end
 end

@@ -105,7 +105,7 @@ defmodule Guiltty.Session.Pty do
 
     shell = Keyword.get_lazy(opts, :shell, &user_shell/0)
     argv = [Path.basename(shell) | Keyword.get(opts, :args, [])]
-    env = opts |> Keyword.get(:env, %{}) |> build_env()
+    env = opts |> Keyword.get(:env, %{}) |> build_env() |> pane_env(opts[:id])
     cols = Keyword.get(opts, :cols, 80)
     rows = Keyword.get(opts, :rows, 24)
     cwd = Keyword.get(opts, :cwd) || ""
@@ -234,6 +234,14 @@ defmodule Guiltty.Session.Pty do
     |> Enum.drop_while(&(&1 in ours))
     |> Enum.join(":")
   end
+
+  # GUILTTY_PANE names the pane a shell runs in, so `guiltty tab --new` or
+  # `guiltty pane --split-right` typed there knows where "here" is (book
+  # chapter 29). It's the session's id, unique across every window. One
+  # inherited from elsewhere (guiltty started from a guiltty pane) would
+  # name the wrong pane: it's always replaced or removed.
+  defp pane_env(env, id) when is_integer(id), do: put_env(env, "GUILTTY_PANE", to_string(id))
+  defp pane_env(env, _id), do: Enum.reject(env, &String.starts_with?(&1, "GUILTTY_PANE="))
 
   defp put_env(env, name, value),
     do: [name <> "=" <> value | Enum.reject(env, &String.starts_with?(&1, name <> "="))]

@@ -59,7 +59,7 @@ heap, so those have limits of their own.
 | a whole Desk            | that desk, same id                     | that window comes back; others never notice |
 
 ** Killing a parser
-To watch a parser crash and come back, kill it from =guiltty remote= (or
+To watch a parser crash and come back, kill it from =guiltty release remote= (or
 Observer), with vim open in the active tab:
 
 #+begin_src elixir
@@ -168,7 +168,7 @@ one, the watchdog goes quiet.
 
 The guiltty you use every day is a node, =guiltty@127.0.0.1=, and any
 Erlang node that has your cookie (=~/.erlang.cookie=) and runs on this
-machine can connect to it (chapter 20). =guiltty remote= is one such node,
+machine can connect to it (chapter 20). =guiltty release remote= is one such node,
 with an iex shell. Observer is another, with windows.
 
 Observer runs in your own Erlang, not in guiltty: it needs =wx= (21 MB),
@@ -209,7 +209,7 @@ What to look at:
   level off.
 - *Table Viewer*: the Keeper's ETS table.
 
-The same module set works from =guiltty remote=. =:dbg= traces calls and
+The same module set works from =guiltty release remote=. =:dbg= traces calls and
 messages; =:msacc= says where the schedulers spend their time:
 
 #+begin_src elixir
@@ -235,7 +235,7 @@ And plain memory questions need nothing extra:
 #+end_src
 
 Carrying =runtime_tools= opens nothing new: anyone who can connect could
-already run any code in guiltty through =guiltty remote=.
+already run any code in guiltty through =guiltty release remote=.
 
 * Detach and reattach
 
@@ -350,7 +350,7 @@ reaches the shell or the pixels, is in [[file:16-config.org][the configuration c
 | =[:guiltty, :watchdog, :long_gc]=        | =ms=, =heap_mb=       |
 | =[:guiltty, :watchdog, :large_heap]=     | =ms=, =heap_mb=       |
 
-Attach a handler from =guiltty remote= (or any connected node) to watch
+Attach a handler from =guiltty release remote= (or any connected node) to watch
 guiltty work.
 
 * Keys

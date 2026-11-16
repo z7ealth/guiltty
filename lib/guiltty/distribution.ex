@@ -2,7 +2,7 @@ defmodule Guiltty.Distribution do
   @moduledoc """
   Gives the node its name, `guiltty@127.0.0.1`, once that name is free.
 
-  `guiltty stop`, `pid` and `remote` reach a running guiltty over Erlang
+  `guiltty release stop`, `pid` and `remote` reach a running guiltty over Erlang
   distribution, by that name. The release used to take it at boot
   (`-name`), and failed to start if an old guiltty, still shutting down,
   held it: open a window just as the last one closed, and nothing came.
