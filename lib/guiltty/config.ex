@@ -67,6 +67,10 @@ defmodule Guiltty.Config do
     * `:screen_reports` - answer DECRQCRA and the title reports, for test
       suites. Off: they let a program read the screen, even over ssh. For
       tabs opened after a change
+    * `:visualizer` - bars in the tab bar that move with the music your
+      speakers play (PipeWire), `Guiltty.Audio`. On by default; `false`
+      stops recording the sound output, and the redraws of the bar (30
+      a second while something plays)
   """
 
   use GenServer
@@ -158,7 +162,8 @@ defmodule Guiltty.Config do
       ai: %{command: nil, position: :right, lock: true},
       clipboard_write: true,
       link_url: true,
-      screen_reports: false
+      screen_reports: false,
+      visualizer: true
     }
   end
 
@@ -410,7 +415,9 @@ defmodule Guiltty.Config do
            one_of(:clipboard_write, get.(:clipboard_write, d.clipboard_write), [true, false]),
          {:ok, link_url} <- one_of(:link_url, get.(:link_url, d.link_url), [true, false]),
          {:ok, screen_reports} <-
-           one_of(:screen_reports, get.(:screen_reports, d.screen_reports), [true, false]) do
+           one_of(:screen_reports, get.(:screen_reports, d.screen_reports), [true, false]),
+         {:ok, visualizer} <-
+           one_of(:visualizer, get.(:visualizer, d.visualizer), [true, false]) do
       {:ok,
        %{
          theme: theme,
@@ -434,7 +441,8 @@ defmodule Guiltty.Config do
          ai: ai,
          clipboard_write: clipboard_write,
          link_url: link_url,
-         screen_reports: screen_reports
+         screen_reports: screen_reports,
+         visualizer: visualizer
        }}
     end
   end

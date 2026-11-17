@@ -216,5 +216,10 @@
 
   # Answer DECRQCRA and the title reports, for terminal test suites. Leave it
   # off: these let a program read your screen, even from the far end of ssh.
-  # screen_reports: false
+  # screen_reports: false,
+
+  # Bars in the tab bar that dance to whatever your speakers play (Spotify,
+  # a video...). Needs PipeWire. While it's on, guiltty records the sound
+  # output (never the microphone) to measure it; false turns that off.
+  # visualizer: true
 ]

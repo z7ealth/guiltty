@@ -326,6 +326,7 @@ needs something outside this list:
 |-----------------------------+----------------------------------------------------------|
 | the renderers               | libc, libm, fontconfig, FreeType, HarfBuzz, libpng, Vulkan |
 | the NIFs and the client     | libc                                                     |
+| =guiltty_audio= (chapter 30) | libc, libm; PipeWire with =dlopen=, only if it's there   |
 | the Erlang runtime (ERTS)   | libc, libm, libstdc++, libgcc_s, zlib                    |
 
 Two libraries are deliberately absent:

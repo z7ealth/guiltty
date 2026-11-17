@@ -138,6 +138,8 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Protocol.attention() == <<27>>
     assert Protocol.pointer(:default) == <<28, 0>>
     assert Protocol.pointer(:link) == <<28, 1>>
+    assert Protocol.audio(<<0, 128, 255>>) == <<29, 3, 0, 128, 255>>
+    assert Protocol.audio(<<>>) == <<29, 0>>
   end
 
   test "the palette is xterm's layout" do

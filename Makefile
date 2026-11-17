@@ -43,6 +43,11 @@ TEXT_NIF = $(PRIV)/text_nif.so
 # The `guiltty` command: a small client for the running guiltty's socket
 # (book chapter 23). It links only the C library.
 CLIENT = $(PRIV)/guiltty
+# The visualizer's ears (book chapter 30): records what the speakers play,
+# with PipeWire loaded by dlopen, so it links only libc and libm. Its
+# headers come in as -isystem: their own warnings aren't ours to fix.
+AUDIO = $(PRIV)/guiltty_audio
+AUDIO_CFLAGS = $(patsubst -I%,-isystem %,$(shell pkg-config --cflags libpipewire-0.3))
 
 RENDERER_CORE = $(wildcard c_src/renderer/core/*.c)
 RENDERER_HEADERS = $(wildcard c_src/renderer/core/*.h)
@@ -75,11 +80,15 @@ RENDERER_LIBS = $(shell pkg-config --libs --static sdl3) $(shell pkg-config --li
 DEBUG_RENDERERS =
 endif
 
-all: $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_VK) $(RENDERER_GL) $(DEBUG_RENDERERS)
+all: $(NIF) $(TEXT_NIF) $(CLIENT) $(AUDIO) $(RENDERER_VK) $(RENDERER_GL) $(DEBUG_RENDERERS)
 
 $(CLIENT): c_src/client/guiltty.c
 	@mkdir -p $(PRIV)
 	$(CC) $(CFLAGS_C23) $(EXE) -O2 -o $@ $<
+
+$(AUDIO): c_src/audio/guiltty_audio.c
+	@mkdir -p $(PRIV)
+	$(CC) $(CFLAGS_C23) $(EXE) -O2 $(AUDIO_CFLAGS) -o $@ $< -lm
 
 # A NIF is built for one Erlang (erl_nif.h's NIF version): switching
 # Erlang (asdf) must rebuild it, though no source changed, or the other
@@ -131,6 +140,8 @@ analyze: $(VK_SPV)
 	$(ANALYZE_CLANG) -I$(ERTS_INCLUDE_DIR) c_src/text_nif.c
 	$(ANALYZE_GCC) c_src/client/guiltty.c
 	$(ANALYZE_CLANG) c_src/client/guiltty.c
+	$(ANALYZE_GCC) $(AUDIO_CFLAGS) c_src/audio/guiltty_audio.c
+	$(ANALYZE_CLANG) $(AUDIO_CFLAGS) c_src/audio/guiltty_audio.c
 	for f in $(RENDERER_CORE) $(GL_SRC); do \
 	  $(ANALYZE_GCC) $(RENDERER_CFLAGS) $$f && $(ANALYZE_CLANG) $(RENDERER_CFLAGS) $$f || exit 1; \
 	done
@@ -239,6 +250,6 @@ dist-check:
 	bash dist/smoke.sh _build/dist/guiltty-*-x86_64-linux.tar.gz
 
 clean:
-	rm -f $(NIF) $(TEXT_NIF) $(CLIENT) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
+	rm -f $(NIF) $(TEXT_NIF) $(CLIENT) $(AUDIO) $(RENDERER_GL) $(RENDERER_GL)-dbg $(RENDERER_VK) $(RENDERER_VK)-dbg $(VK_SPV)
 
 .PHONY: all debug clean analyze fuzz fuzz-run valgrind bench width-table text-table icons dist dist-check

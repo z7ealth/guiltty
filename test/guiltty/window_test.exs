@@ -523,6 +523,10 @@ defmodule Guiltty.WindowTest do
 
   test "a resize from the renderer resizes every tab", %{id: id, window: window} do
     {:ok, second} = Tabs.new_tab(@tabs)
+    # The real renderer sends its own first resize at startup: let it
+    # arrive first, or it lands after this one and puts its own cell size
+    # back.
+    assert eventually(fn -> screen_state(id).grid.cell_pixels != nil end)
     renderer(window, <<6, 100::16, 30::16, 9::16, 18::16>>)
 
     assert eventually(fn ->
@@ -761,6 +765,23 @@ defmodule Guiltty.WindowTest do
     key(window, 0x1B, 0)
     assert eventually(fn -> screen_state(id).search == nil end)
     assert :sys.get_state(window).search == nil
+  end
+
+  test "the visualizer's bars wait for the handshake, and outlive a new renderer", %{
+    window: window
+  } do
+    silent = :binary.copy(<<0>>, 16)
+    path = record_port(window)
+    drain_renderer(window)
+    # As if a new renderer had just started: no hello yet.
+    :sys.replace_state(window, &%{&1 | ready: false})
+
+    send(window, {:audio, silent})
+    assert eventually(fn -> :sys.get_state(window).audio == silent end)
+    refute File.read!(path) =~ <<29, 16>> <> silent
+
+    renderer(window, <<1, Guiltty.Window.Protocol.version()::16, 2, "gl">>)
+    assert eventually(fn -> File.read!(path) =~ <<29, 16>> <> silent end)
   end
 
   test "a config error that arrives before the handshake waits for it" do

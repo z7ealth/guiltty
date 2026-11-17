@@ -213,7 +213,7 @@ check_runtime_libs() {
     # Every program and library of guiltty's own, and the VM. The NIFs
     # matter as much as the renderers: they're loaded into the VM later,
     # when a tab opens, and fail there if they can't be.
-    for f in "$priv/guiltty_vk" "$priv/guiltty_gl" "$priv/guiltty" "$priv"/*.so \
+    for f in "$priv/guiltty_vk" "$priv/guiltty_gl" "$priv/guiltty" "$priv/guiltty_audio" "$priv"/*.so \
         "$release"/erts-*/bin/beam.smp; do
         # A missing library reads "libfoo.so.1 => not found"; a C library
         # too old for us, "version `GLIBC_2.36' not found". Plain bash, no
@@ -332,7 +332,7 @@ build_from_source() {
     local -a missing=()
     for tool in mix make pkg-config glslc; do need "$tool" || missing+=("$tool"); done
     need gcc || need clang || missing+=("a C compiler (GCC 15 or Clang 19)")
-    for lib in sdl3 freetype2 fontconfig harfbuzz libpng vulkan; do
+    for lib in sdl3 freetype2 fontconfig harfbuzz libpng vulkan libpipewire-0.3; do
         pkg-config --exists "$lib" 2>/dev/null || missing+=("$lib (development files)")
     done
     if [ ${#missing[@]} -gt 0 ]; then

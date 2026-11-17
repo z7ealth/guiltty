@@ -176,6 +176,7 @@ there and installs it the same way.
 | libpng (development files)                 | pictures programs show (Kitty graphics)  |
 | Vulkan loader and headers (dev files)      | the Vulkan renderer                      |
 | glslc (from shaderc)                       | compiles the Vulkan shaders to SPIR-V    |
+| PipeWire (development files)               | the visualizer (only its headers: it's loaded when it runs) |
 
 Your distribution's packages work if they're recent enough; for Elixir
 and Erlang, a version manager such as [asdf](https://asdf-vm.com) gets
@@ -191,14 +192,16 @@ the build itself hasn't been tried.
 
 ```sh
 sudo zypper install gcc make pkg-config SDL3-devel freetype2-devel \
-  fontconfig-devel harfbuzz-devel libpng16-devel vulkan-devel shaderc elixir erlang-epmd
+  fontconfig-devel harfbuzz-devel libpng16-devel vulkan-devel shaderc pipewire-devel \
+  elixir erlang-epmd
 ```
 
 **Fedora 45 or newer**
 
 ```sh
 sudo dnf install gcc make pkgconf-pkg-config SDL3-devel freetype-devel \
-  fontconfig-devel harfbuzz-devel libpng-devel vulkan-loader-devel vulkan-headers glslc elixir
+  fontconfig-devel harfbuzz-devel libpng-devel vulkan-loader-devel vulkan-headers glslc \
+  pipewire-devel elixir
 ```
 
 If Fedora's Elixir is older than 1.18 (`elixir --version`), leave out
@@ -208,7 +211,8 @@ If Fedora's Elixir is older than 1.18 (`elixir --version`), leave out
 
 ```sh
 sudo apt install build-essential pkg-config libsdl3-dev libfreetype-dev \
-  libfontconfig-dev libharfbuzz-dev libpng-dev libvulkan-dev glslc elixir erlang-dev
+  libfontconfig-dev libharfbuzz-dev libpng-dev libvulkan-dev glslc libpipewire-0.3-dev \
+  elixir erlang-dev
 ```
 
 Older Ubuntus have neither SDL3 nor GCC 15.
@@ -217,7 +221,7 @@ Older Ubuntus have neither SDL3 nor GCC 15.
 
 ```sh
 sudo pacman -Syu --needed base-devel sdl3 freetype2 fontconfig harfbuzz libpng \
-  vulkan-icd-loader vulkan-headers shaderc elixir
+  vulkan-icd-loader vulkan-headers shaderc libpipewire elixir
 ```
 
 guiltty is developed on Elixir 1.20.5 with Erlang/OTP 29, and passes its

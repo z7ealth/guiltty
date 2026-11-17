@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 15;
+constexpr uint16_t protocol_version = 16;
 
 // Largest message we accept; anything bigger is a protocol error. An IMAGE
 // can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
@@ -107,7 +107,12 @@ enum msg_tag : uint8_t {
     // Elixir -> renderer: the mouse pointer's shape over the grid: u8
     // (enum pointer_shape)
     MSG_POINTER = 28,
+    // Elixir -> renderer: the visualizer's bands (Guiltty.Audio): u8
+    // count (at most max_audio_bands; 0 hides them), then count levels,
+    // 0 silent to 255, lowest frequencies first
+    MSG_AUDIO = 29,
 };
+constexpr uint8_t max_audio_bands = 32;
 enum pointer_shape : uint8_t { POINTER_DEFAULT = 0, POINTER_LINK = 1, pointer_shape_count };
 enum key_kind : uint8_t { KEY_PRESS = 1, KEY_REPEAT = 2, KEY_RELEASE = 3 };
 enum image_format : uint8_t { IMAGE_RGB = 0, IMAGE_RGBA = 1, IMAGE_PNG = 2 };

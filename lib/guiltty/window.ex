@@ -86,7 +86,7 @@ defmodule Guiltty.Window do
 
   require Logger
 
-  alias Guiltty.{Cheatsheet, Config, Keymap, Lifeline, Session, Tabs}
+  alias Guiltty.{Audio, Cheatsheet, Config, Keymap, Lifeline, Session, Tabs}
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.{Compose, Protocol}
 
@@ -120,6 +120,8 @@ defmodule Guiltty.Window do
     port = open_renderer(renderer, env)
 
     if Process.whereis(Config), do: Config.subscribe(self())
+    # The visualizer's levels, {:audio, levels}, whenever it's on.
+    Audio.listen()
 
     # Flash the border when a parser comes back from a crash.
     handler = {__MODULE__, self()}
@@ -143,6 +145,9 @@ defmodule Guiltty.Window do
       notice: nil,
       drawn: false,
       handler: handler,
+      # the visualizer's last levels (empty: no bars), kept to send again
+      # to a renderer that wasn't ready yet, or was replaced
+      audio: <<>>,
       ready: false,
       # the focused pane's session (what you type into), the tab it's in,
       # and how that tab's panes are stitched into one grid
@@ -400,6 +405,14 @@ defmodule Guiltty.Window do
   def handle_info({:config_error, message}, state),
     do: {:noreply, update_status(%{state | config_error: message})}
 
+  # Straight on to the renderer, which draws them in the tab bar. Before
+  # the handshake there's no bar to draw them in: they're kept, and sent
+  # once there is.
+  def handle_info({:audio, levels}, state) do
+    if state.ready, do: send_port(state, Protocol.audio(levels))
+    {:noreply, %{state | audio: levels}}
+  end
+
   def handle_info(:raise, state) do
     if state.ready, do: send_port(state, Protocol.raise_window())
     {:noreply, state}
@@ -430,6 +443,7 @@ defmodule Guiltty.Window do
       send_port(state, setup)
       send_port(state, tab_style(state.config))
       state = show_tabs(%{state | ready: true, size: {cols, rows}}, info)
+      if state.audio != <<>>, do: send_port(state, Protocol.audio(state.audio))
       # Anything that waited for the handshake (a config error, a fallback
       # notice) goes now.
       state =

@@ -2013,3 +2013,101 @@ an error, because a config is optional and shouldn't be able to stop an
 install. Testing it, the loop over "yes new", "no existing" and so on
 failed mysteriously until it turned out the shell running it was zsh,
 which doesn't split an unquoted `$args` into words.
+
+## 2026-11-16 — Bars that dance (v0.28.0)
+
+_Draft: agent, awaiting user_
+
+The question was "can guiltty do something with the Spotify I'm
+listening to?". There were two readings: know /what/ is playing (MPRIS
+over D-Bus: the title in the tab bar, play/pause keys), or react to the
+/sound itself/. We went with the sound: sixteen bars at the right of the
+tab bar that move with whatever the speakers play.
+
+The pieces fell into place quickly once one fact was clear: the tab bar
+is cells, and guiltty already draws the block elements ▁ to █ itself.
+So the bars needed no shader and nothing new in either backend, just
+sixteen cells chosen by height. All the new work is in getting the
+numbers.
+
+Those come from a new little program, `guiltty_audio`, behind a port.
+It asks PipeWire for the default sink's monitor (`stream.capture.sink`),
+passively so it never keeps the speakers awake. Every 1600 samples (30
+times a second) it runs a Hann window and a home-made radix-2 FFT, and
+sums the bins into half-octave bands. It loads PipeWire with `dlopen`
+rather than linking it, so the release still needs only libc and libm
+from it, the same trick SDL uses for its audio backends. In Elixir,
+`Guiltty.Audio` owns the port, and windows listen through a `Registry`
+with duplicate keys. That was the most "BEAM" moment of the day: the
+registration belongs to the registry, not to Audio, so a crash of
+Audio doesn't lose its listeners, and a window that ends is forgotten
+without a line of code.
+
+What broke: the first test said a 100 Hz tone lit band 2, not band 1.
+The bins had been rounded down, so 93.75 Hz landed in the band above
+it. A bin belongs where its centre is: `ceil` on both edges. The test's
+own expectation for 8 kHz was wrong too (band 14, not 13). Writing the
+edge table into the book chapter is what caught it. And calling
+`listen/0` twice registered a process twice, so every level arrived
+twice: `listen/0` is idempotent now.
+
+Valgrind on the live helper reports leaks, all in libdbus, which
+PipeWire's realtime module opens and never closes. The `--raw` path,
+which is all ours, is clean.
+
+Not yet tried: what the bars look like with real music. The ranges
+(-62 to -12 dB, 3 dB per octave of tilt, a tenth of a bar's fall per
+frame) are educated guesses, and `guiltty_audio --print` is the quick
+way to tune them.
+
+### Later
+
+- "Now playing" in the tab bar, or keys for the player: both would mean
+  MPRIS over D-Bus (tried and dropped, see above), and live updates
+  would mean subscribing to the players' PropertiesChanged signals.
+- Make the bars' look a setting: band count, colors (a gradient), or
+  the bars across the whole bar as a background.
+
+Later the same day: after trying it with real music (levels mostly at
+55–65% of the bar, peaks up to 90%, nothing stuck at the top), the
+verdict was "useless for dev purposes, but cool", and the visualizer
+went on by default. `visualizer: false` turns it off.
+
+Then a try at controlling the player: keys and a `guiltty media`
+command for play/pause, next and previous, over MPRIS, with a small
+D-Bus client written in Elixir from the specification. It worked against
+the bus, but the first real try with Firefox on YouTube showed the
+catch: next and previous do nothing on a lone video, and Firefox took
+play/pause, answered fine, and kept playing, because its MPRIS was tied
+to another tab than the one making sound. A key that only sometimes
+works isn't worth the 500 lines, so it was taken out again: guiltty
+keeps the bars and leaves the player to GNOME's own media keys.
+
+Then, with a pile of tabs open: the bars vanished and the tabs ran off
+the right edge. Both came from the same loop in `build_tab_bar`: tabs
+were drawn at full width until the edge, and the bars got whatever was
+left, which was nothing. Now the bars' room is kept first, titles all
+shrink together (24 columns down to 6), and past that the bar scrolls
+around the active tab with " ‹22 " and " 11› " counts at the ends. A
+click on a count goes to the next hidden tab, which needed no new click
+code: the count simply borrows that tab's columns. On the way, a tab
+that wasn't drawn kept its old columns, so a click there switched to a
+tab you couldn't see. A replay test with a magenta accent checks the
+bars are there with 40 tabs; turned off, it fails with 0 bar pixels.
+
+And the bars' room is now fixed while the visualizer is on. Before, it
+came and went with the sound, and with many tabs every title jumped a
+column or two when a song started. The renderer only knows "bars" or
+"no bars", so `Guiltty.Audio` now sends 16 zeros as soon as the helper
+says hello, and the empty message only when the helper stops. A window
+that opens later is told the current levels when it starts listening,
+and keeps them until its renderer has said hello.
+
+Pausing YouTube froze the bars mid-height. The fall-off only runs when
+samples arrive, and a paused stream doesn't get you silence from
+PipeWire, it gets you nothing: the graph stops for a sink nobody plays
+into. The helper now has a timer on PipeWire's own loop, armed only
+while the bars are up: after 150 ms without a buffer it feeds hops of
+zeros until they're at rest. A faint 0.3 s tone through `pw-play` shows
+it plainly: without the timer the last message is 105 forever; with it,
+105 93 67 42 16 0.

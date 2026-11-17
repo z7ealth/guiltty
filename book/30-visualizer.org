@@ -1,0 +1,432 @@
+#+TITLE: The visualizer: bars that move with the music
+#+STARTUP: overview
+
+* The idea
+
+While something plays (Spotify, a video in the browser, =mpv=),
+sixteen little bars at the right end of the tab bar rise and fall with
+it: bass on the left, treble on the right. When the sound stops, the
+bars sink and guiltty stops redrawing for them.
+
+#+begin_example
+   one  two                         ▂▄▆█▇▅▃▂▃▅▄▂▁        search: 3 of 7
+  └── tabs ───┘                    └── 16 bands ──┘      └── status ──┘
+#+end_example
+
+It's on by default. Two things to know about it: while it's on, guiltty
+records what your speakers play (never the microphone, but it is a
+recording), and the bar is redrawn up to 30 times a second while sound
+plays. Silence costs nothing (see "Silence costs nothing" below). To turn
+it off:
+
+#+begin_src elixir
+visualizer: false
+#+end_src
+
+* What sound is, to a program
+
+** Samples
+
+Sound reaches a program as /samples/: the speaker cone's position,
+measured tens of thousands of times a second. guiltty asks for 48,000
+a second (48 kHz), as 32-bit floats from -1.0 to 1.0, two channels
+(left, right) interleaved:
+
+#+begin_example
+  L0  R0  L1  R1  L2  R2 ...        each a float, 4 bytes
+  └frame┘ └frame┘ └frame┘           1 frame = 1/48000 s
+#+end_example
+
+A pure tone of 1000 Hz is a sine wave: the samples go up and down 1000
+times a second. Music is thousands of such waves added together.
+
+** From time to frequencies: the FFT
+
+The bars need the opposite view: not "where is the cone now" but "how
+much of each frequency is in this moment". That's what the /Fourier
+transform/ gives. Take N samples, and it returns N/2 useful numbers,
+/bins/: bin k is how strong the frequency k × (rate / N) is.
+
+guiltty takes N = 2048 samples (43 ms of sound), so the bins are
+48000 / 2048 = 23.4 Hz apart: bin 1 is 23.4 Hz, bin 43 is about
+1 kHz, bin 1023 is 24 kHz.
+
+Computed directly, that's N² multiplications (4 million) per slice. The
+/FFT/ (fast Fourier transform, Cooley and Tukey's radix-2 version) gets
+the same answer in N log₂ N (22,000): it splits the slice into its
+even and odd samples, transforms each half (recursively), and combines
+the two with one /butterfly/ per pair. guiltty's FFT is 30 lines of C.
+
+#+begin_example
+  2048 samples ──► window ──► FFT ──► 1024 bins ──► 16 bands ──► 16 bytes
+  (43 ms)          (Hann)            (23.4 Hz      (log spaced,   (0..255)
+                                       apart)        in dB)
+#+end_example
+
+** The window
+
+Cutting 2048 samples out of a song makes a slice with sudden edges, and
+a sudden edge is, to the FFT, a click: a little of /every/ frequency.
+That's /spectral leakage/: a pure 1 kHz tone would light up every bar.
+The fix is to fade the slice in and out first: multiply it by a /Hann
+window/, a smooth hump that's 0 at both ends and 1 in the middle.
+
+** Bands: what ears hear
+
+Ears hear pitch by ratios: 100 to 200 Hz sounds as far apart as 1000 to
+2000 Hz (an octave each). Sixteen bars of equal width in Hz would give
+the treble fifteen of them. So the bands are spaced evenly in /octaves/:
+50 Hz to 16 kHz in 16 steps, about half an octave each.
+
+| Band | From (Hz) | To (Hz) |   | Band | From (Hz) | To (Hz) |
+|------+-----------+---------+---+------+-----------+---------|
+|    0 |        50 |      72 |   |    8 |       894 |    1283 |
+|    1 |        72 |     103 |   |    9 |      1283 |    1839 |
+|    2 |       103 |     147 |   |   10 |      1839 |    2638 |
+|    3 |       147 |     211 |   |   11 |      2638 |    3783 |
+|    4 |       211 |     303 |   |   12 |      3783 |    5425 |
+|    5 |       303 |     435 |   |   13 |      5425 |    7780 |
+|    6 |       435 |     624 |   |   14 |      7780 |   11157 |
+|    7 |       624 |     894 |   |   15 |     11157 |   16000 |
+
+A band takes the bins whose frequency is inside it (=ceil= of both
+edges divided by 23.4), and its strength is its loudest bin's. The low
+bands get one bin each: at 23.4 Hz apart, that's all there is.
+
+** Loudness: decibels
+
+Ears hear loudness by ratios too, so the strength becomes decibels:
+=20 log₁₀(amplitude)=, where a full-scale sine is 0 dB and each halving
+is about -6 dB. Then:
+
+- *tilt*: music has less energy the higher it goes (about 3 dB less per
+  octave), so each band is lifted 3 dB per octave above 1 kHz (and
+  lowered below). Without that, every song's bars slope down to the
+  right.
+- *range*: -62 dB is an empty bar, -12 dB a full one.
+- *fall*: a bar jumps up at once but sinks by at most a tenth of its
+  height per frame, so it doesn't flicker. That's what makes it look
+  like a meter.
+
+The result is a byte per band, 0 to 255.
+
+* Where the sound comes from: the sink's monitor
+
+On a Linux desktop today, sound goes through *PipeWire*: a server that
+holds a graph of /nodes/ (programs playing, speakers, microphones)
+linked port to port. Your speakers are a /sink/, and every sink has a
+/monitor/: its output, offered again to anyone who wants to record it.
+
+guiltty connects a capture stream with the property
+=stream.capture.sink = true=, which tells PipeWire "record what the
+default sink plays", rather than the default microphone:
+
+#+begin_example
+  Spotify ──► ┌──────────────┐ ──► speakers
+  Firefox ──► │ default sink │
+              └──────┬───────┘
+                     │ monitor
+                     ▼
+            guiltty-visualizer        (a capture stream: passive)
+#+end_example
+
+It's also /passive/ (=node.passive = true=): this stream alone doesn't
+keep the sink running. When nothing plays, the sink suspends as it
+would without guiltty, so the helper receives no buffers and does
+nothing. You can see the stream with =wpctl status= or =pw-top= while
+it runs.
+
+guiltty asks for float, stereo, 48 kHz; PipeWire converts whatever the
+sink plays into that (=SPA_AUDIO_FORMAT_F32= in the format it offers).
+
+* The parts
+
+** Process tree
+
+#+begin_example
+  Guiltty.Supervisor (rest_for_one)
+  ├── Guiltty.Registry
+  ├── Guiltty.PubSub          Registry, duplicate keys: who listens
+  ├── ...
+  ├── Guiltty.Watchdog
+  ├── Guiltty.Audio ──port──► guiltty_audio        (only while on)
+  │                              └── PipeWire thread
+  └── (Task)
+
+  Guiltty.Desks
+  └── Desk ─ Window ──port──► guiltty_vk           (one per window)
+#+end_example
+
+Three things to notice:
+
+- *Recording is a program of its own*, =priv/guiltty_audio=, not part
+  of the renderer and not a NIF. The renderer is one per window, and
+  the sound is one per machine: one helper serves every window. And the
+  rules say C in the BEAM is two NIFs, nothing more.
+- *Audio comes late in the supervisor*. Under =rest_for_one= a crash
+  restarts the crashed child and everything after it. With Audio near
+  the end, a crash there never takes a window down.
+- *Windows don't register with Audio itself.* They register in
+  =Guiltty.PubSub=, a =Registry= with duplicate keys, under =:audio=.
+  The registry belongs to the application, so a window's registration
+  outlives a restart of Audio, and goes away by itself when the window
+  ends (the registry monitors it). Audio sends with
+  =Registry.dispatch/3=.
+
+** The data flow, 30 times a second
+
+#+begin_example
+  PipeWire thread        guiltty_audio      Guiltty.Audio      Window          renderer
+  (in guiltty_audio)     (on that thread)
+       │ process()            │                  │                │               │
+       ├─ buffer of frames ──►│                  │                │               │
+       │                      │ mono, ring       │                │               │
+       │                      │ every 1600       │                │               │
+       │                      │ frames: FFT      │                │               │
+       │                      ├── LEVELS ───────►│                │               │
+       │                      │  (stdout)        ├─ {:audio, b} ─►│               │
+       │                      │                  │  (dispatch)    ├── AUDIO ─────►│
+       │                      │                  │                │  (port)       │ tab bar:
+       │                      │                  │                │               │ row 0 redrawn
+#+end_example
+
+1600 frames at 48 kHz is 1/30 of a second: that's the rate. Each
+analysis looks at the last 2048, so slices overlap a little, which
+keeps the bars smooth.
+
+** Silence costs nothing
+
+When every band is 0, the helper sends one all-zero LEVELS (the bars
+empty) and then nothing until there's sound again. Elixir doesn't
+filter anything; the renderer doesn't redraw. The rate is "30 a second
+while sound plays", not "30 a second".
+
+** When the sound stops, nothing arrives
+
+The fall above runs once per hop of samples. So it needs samples, and
+when a song is paused or its browser tab closed, there are none:
+PipeWire stops running the graph for a sink with no stream playing into
+it, and a passive capture like ours isn't sent silence, it's sent
+nothing. The bars froze where they were.
+
+So the helper has a timer, added to PipeWire's own loop
+(=pw_loop_add_timer=, a =timerfd(2)= underneath), on the same thread
+that analyzes, so nothing needs a lock. It's armed only while the bars
+are up, and ticks once per hop (33 ms). On a tick with no buffer for
+150 ms, it feeds a hop of zeros, exactly as if PipeWire had: the bars
+fall in about ten steps, the all-zero LEVELS goes out, and the timer is
+disarmed. 150 ms, because buffers can come several hops apart (a large
+quantum) and a tick between two of them must not count as silence.
+
+Real messages, a 0.3 s tone played with =pw-play= and then nothing (the
+loudest bar of each LEVELS):
+
+#+begin_example
+  without the timer   H 37 105 105 105 105 105 105 105 105          stuck at 105
+  with it             H 37 105 105 105 105 105 105 105 105 93 67 42 16 0
+#+end_example
+
+* The messages
+
+** guiltty_audio → Guiltty.Audio
+
+Framed like every port here, ={:packet, 4}=: a 4-byte big-endian length,
+then the body.
+
+#+begin_example
+  HELLO    u8 1, u16 version              (once, on start)
+  LEVELS   u8 2, u8 count, count bytes    (lowest band first)
+#+end_example
+
+Real bytes, from =guiltty_audio --raw= on a second of a 1 kHz tone
+(=xxd=):
+
+#+begin_example
+  00000000: 0000 0003 0100 01                       HELLO, version 1
+  00000007: 00 0000 1202 1000 050e 1720 2d41 79ff   LEVELS, 16 bands: the first slice
+            5725 0500 0000 0000 0000                is half silence, half tone:
+                                                    leakage everywhere, peak in band 8
+  ...
+  00000288: 00 0000 1202 1000 0000 0000 0000 0014   a second in: band 8 (0xff) and a
+            ff00 0000 0000 0000 00                  trace in band 7 (0x14); the rest 0
+#+end_example
+
+The first slice shows what the window is for: the sudden start of the
+tone is an edge, and an edge has every frequency. Once the slice is all
+tone, only band 8 (894 to 1283 Hz) is left, with a little of its
+neighbour.
+
+** Guiltty.Audio → Window → renderer
+
+=Window= wraps the levels in a renderer message, protocol version 16:
+
+#+begin_example
+  AUDIO    u8 29, u8 count (at most 32; 0 hides the bars), count bytes
+#+end_example
+
+#+begin_src elixir
+iex> Guiltty.Window.Protocol.audio(<<0, 128, 255>>)
+<<29, 3, 0, 128, 255>>
+#+end_src
+
+* Drawing the bars
+
+The tab bar is cells (chapter 25), so the bars are cells too: one per
+band, each one of the /block elements/ =▁▂▃▄▅▆▇█= (U+2581 to U+2588,
+one eighth to eight eighths of a cell), or a space for silence. That's
+nine heights per bar: =level × 9 / 256=. Those glyphs are drawn by
+guiltty itself as sprites (chapter 14), so they fill the cell exactly
+in any font, and both backends already draw them. No shader, no new
+backend code.
+
+They're in the accent color, at the right end of the bar, just before
+the status, with a space on each side. Their room is kept before the
+tabs are placed, so any number of tabs shrink or scroll around them
+(chapter 25, "Too many tabs"); only a window so narrow that the tabs
+would have fewer than 16 columns hides them.
+
+That room is fixed for as long as the visualizer is on, sound or not,
+so the tabs don't change width when a song starts or stops. The
+renderer only knows "bars" (a count above 0) or "no bars" (AUDIO with
+count 0), so =Guiltty.Audio= sends the bars at rest, 16 zeros, as soon
+as the helper says HELLO, and the empty message only when the helper
+stops (the setting went off, or no PipeWire). In between, silence is
+the helper's last all-zero LEVELS, which keeps the room too.
+
+Two windows can miss that first message: one opened later, and one
+whose renderer hasn't said hello yet (or was replaced by the OpenGL
+fallback). So =Audio= remembers what it last sent and tells a new
+listener at once (=listen/0= casts it =:tell=), and =Window= keeps the
+last levels in its state and sends them right after the handshake.
+
+#+begin_example
+  helper   HELLO ── LEVELS … LEVELS(all 0) ─ (silence: nothing) ─ LEVELS … ── exit
+  Audio    16×0  ── levels … 16×0                                levels … ── <<>>
+  bar      ▁▁▁▁  ── ▃▆█▅ …   ▁▁▁▁   (room kept the whole time)    ▂▇▄▃ …   ── no room
+#+end_example
+
+Each
+AUDIO rebuilds row 0 and marks it dirty; the other rows aren't sent to
+the GPU again.
+
+* When it can't run
+
+=guiltty_audio= loads PipeWire with =dlopen(3)= instead of linking it,
+so it starts on any machine, and so the precompiled release still needs
+only libc and libm from it (chapter 17). How it ends tells
+=Guiltty.Audio= what happened:
+
+| Exit status | Means                                          | Guiltty.Audio                                     |
+|-------------+------------------------------------------------+---------------------------------------------------|
+|           0 | stdin closed (the port was closed)             | expected when it stops it; otherwise tries again   |
+|           2 | no =libpipewire-0.3.so.0=                      | a notice in the log; no retry until off and on    |
+|           3 | PipeWire there, but wouldn't record            | a warning; tries again in 10 s                    |
+
+Either way a window just shows no bars: nothing else depends on it.
+
+The helper stops when its stdin closes. That's how an Erlang port says
+goodbye: =Port.close/1= closes the pipe, =read(2)= returns 0, and the
+helper stops PipeWire's thread and exits. If guiltty itself dies, the
+same pipe closes, so a helper is never left behind.
+
+* Trying it without guiltty
+
+#+begin_src sh
+./priv/guiltty_audio --print     # play something; Ctrl+C to stop
+#+end_src
+
+draws the bands in your terminal, on one line redrawn in place. And
+=--raw FILE= analyzes a file of float stereo samples instead of
+recording, as fast as it can read. That's what =test/guiltty/audio_test.exs=
+does: it writes one second of a sine wave and checks the right band is
+the loudest (100 Hz in band 1, 1 kHz in band 8, 8 kHz in band 14).
+
+* Where it lives
+
+- [[file:../c_src/audio/guiltty_audio.c::load_pipewire][c_src/audio/guiltty_audio.c]]: =load_pipewire= (dlopen),
+  =analysis_init= (window, bands, tilt), =fft=, =analyze=, =record=
+  (the stream and its properties), =on_process=
+- [[file:../lib/guiltty/audio.ex][lib/guiltty/audio.ex]]: the port, =listen/0=, retries
+- [[file:../lib/guiltty/application.ex][lib/guiltty/application.ex]]: =Guiltty.PubSub= and where Audio sits
+- [[file:../lib/guiltty/window.ex::{:audio, levels}][lib/guiltty/window.ex]]: =handle_info({:audio, levels}, ...)=
+- [[file:../c_src/renderer/core/main.c::draw_visualizer][c_src/renderer/core/main.c]]: =draw_visualizer=, =MSG_AUDIO=
+- [[file:../Makefile::AUDIO][Makefile]]: built like the client, with PipeWire's headers only
+
+* Loot
+
+- *PCM samples, sample rate, interleaved channels*: the PipeWire docs,
+  "Audio" in the SPA format reference (=spa/param/audio/raw.h=).
+- *PipeWire's graph: nodes, ports, links, sinks and their monitors*:
+  docs.pipewire.org, "Overview" and "Tutorial 4: Capturing audio"
+  (=pw_stream=); =pw-top(1)=, =wpctl(1)=. The keys used are in
+  =pipewire/keys.h= (=stream.capture.sink=, =node.passive=).
+- *Loading a library at run time*: =dlopen(3)=, =dlsym(3)=, =dlerror(3)=;
+  why POSIX allows a =void *= to become a function pointer (the
+  =dlsym= rationale).
+- *The DFT and the radix-2 FFT, the Hann window, spectral leakage*:
+  Lyons, /Understanding Digital Signal Processing/, chapters 3 and 4,
+  or Smith, /The Scientist and Engineer's Guide to DSP/ (free online),
+  chapters 8, 9 and 12.
+- *Decibels and pink noise (-3 dB per octave)*: any audio text;
+  Wikipedia's "Pink noise" is enough.
+- *Erlang ports and stdin EOF as a shutdown signal*: Elixir =Port=
+  docs, "Zombie operating system processes".
+- *Registry as pub/sub*: Elixir =Registry= docs, "Using as a PubSub"
+  and =Registry.dispatch/3=.
+- *rest_for_one, and why a child's place in the list matters*:
+  =Supervisor= docs, "Strategies".
+
+* Questions
+
+1. Why does guiltty record the sink's /monitor/ and not a source?
+2. A song has a strong 100 Hz kick drum. Which bar moves, and why
+   does it get only one FFT bin?
+3. Without the Hann window, what would a pure 1 kHz tone look like on
+   the bars?
+4. Why is =guiltty_audio= a program of its own, and not part of the
+   renderer?
+5. If =Guiltty.Audio= crashes, what happens to your windows? What if it
+   came right after =Guiltty.Config= in the supervisor?
+6. Nothing is playing. How many messages per second go from the
+   helper to Elixir? From Elixir to each renderer?
+7. Why =dlopen= PipeWire instead of linking =-lpipewire-0.3=?
+8. You open a new window while nothing plays. The helper said HELLO
+   minutes ago. How does the new window know to leave room for the bars?
+9. You pause a song. Why don't the bars just fall by themselves, and
+   what makes them fall?
+
+** Answers
+:answers:
+1. A source is an input (a microphone). The monitor is the sink's
+   output, what the speakers play, offered again for recording;
+   =stream.capture.sink= asks for the default sink's monitor.
+2. Band 1 (72 to 103 Hz). Bins are 23.4 Hz apart and the band is only
+   31 Hz wide, so just one bin (93.75 Hz) falls inside it. A finer
+   bass needs a longer slice (more samples, more delay).
+3. Every bar would show something: the slice's sudden edges are clicks,
+   and a click contains every frequency (spectral leakage). With the
+   window, only band 8 lights up, and a trace of band 7.
+4. The renderer runs once per window and sound is once per machine; and
+   C inside the BEAM is two NIFs, nothing more. As a port program it
+   can also crash or fail to find PipeWire without touching anything
+   else.
+5. Nothing: under =rest_for_one= only Audio and the children after it
+   restart, and none of those is a window. A window's =:audio=
+   registration lives in =Guiltty.PubSub=, so the bars keep coming
+   after the restart. Right after Config, its crash would restart
+   Sessions and Desks: every tab and window.
+6. None, after one all-zero LEVELS that empties the bars (they keep
+   their room: the renderer still has 16 bars, all at rest). And once the
+   sink suspends, a few seconds later (the stream is passive, so it
+   doesn't hold it awake), the helper isn't even woken up.
+7. So guiltty runs on a machine without PipeWire (it just has no
+   bars), and the precompiled release needs nothing beyond libc and
+   libm from it, like SDL's own audio backends.
+8. Its =Audio.listen/0= casts =:tell= to =Guiltty.Audio=, which sends
+   it the levels it last sent everyone: 16 zeros. The window keeps them
+   and sends them to its renderer right after the handshake.
+9. The fall runs on each hop of samples, and a paused stream means
+   PipeWire sends none, not even silence. The helper's idle timer
+   notices no buffer for 150 ms and feeds it hops of zeros until the
+   bars reach 0.
+:END:

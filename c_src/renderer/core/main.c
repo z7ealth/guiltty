@@ -47,6 +47,8 @@ constexpr int min_cols = 10;
 constexpr int min_rows = 3;
 constexpr int max_tabs = 64;
 constexpr int max_tab_label = 24; // columns
+constexpr int min_tab_label = 6; // columns: tabs shrink to this before the bar scrolls
+constexpr int min_tab_room = 16; // columns the tabs keep before the visualizer gives way
 constexpr size_t max_short_text = 256; // tab titles, status, preedit (bytes, with the NUL)
 
 struct theme {
@@ -135,6 +137,8 @@ struct renderer {
     uint8_t tab_colors_set;
     uint8_t tab_colors[tab_color_count][3];
     char status[max_short_text]; // shown at the right of the tab bar
+    uint8_t audio[max_audio_bands]; // the visualizer's bands (MSG_AUDIO)
+    uint8_t audio_count; // 0: no bars
     bool status_warning; // draw it as a warning (a broken config)
     char preedit[max_short_text]; // text being composed in an input method
     uint8_t halo_rgb[3];
@@ -619,8 +623,10 @@ static struct cell bar_cell(const uint8_t bg[3], const uint8_t fg[3], uint16_t a
     return c;
 }
 
-// One tab, in the bar's style, from col. Returns the column after it.
-static int draw_tab(struct renderer *r, int i, int col, int limit,
+// One tab, in the bar's style, from col, its title cut to `label`
+// columns. `last`: no tab is drawn after it (a powerline arrow then points
+// into the bar). Returns the column after it.
+static int draw_tab(struct renderer *r, int i, int col, int limit, int label, bool last,
                     const uint8_t colors[tab_color_count][3]) {
     bool active = i == r->active_tab;
     struct cell bar = bar_cell(colors[TAB_COLOR_BAR], colors[TAB_COLOR_TEXT], 0);
@@ -641,7 +647,7 @@ static int draw_tab(struct renderer *r, int i, int col, int limit,
         if (active)
             look.attrs = CELL_ACCENT;
         col = bar_text(r, col, "  ", look, limit);
-        title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
+        title_end = col + label < limit ? col + label : limit;
         col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
         return bar_text(r, col, "  ", look, limit);
     case TAB_SEPARATORS:
@@ -649,7 +655,7 @@ static int draw_tab(struct renderer *r, int i, int col, int limit,
         if (i > 0)
             col = bar_text(r, col, "│", bar, limit);
         col = bar_text(r, col, " ", look, limit);
-        title_end = col + max_tab_label < limit ? col + max_tab_label : limit;
+        title_end = col + label < limit ? col + label : limit;
         col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
         return bar_text(r, col, " ", look, limit);
     case TAB_POWERLINE: {
@@ -657,11 +663,11 @@ static int draw_tab(struct renderer *r, int i, int col, int limit,
         // next one (or into the bar, after the last).
         look = bar_cell(block, active ? colors[TAB_COLOR_ACTIVE_TEXT] : colors[TAB_COLOR_TEXT], 0);
         col = bar_text(r, col, " ", look, limit);
-        title_end = col + max_tab_label < limit - 2 ? col + max_tab_label : limit - 2;
+        title_end = col + label < limit - 2 ? col + label : limit - 2;
         col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
         col = bar_text(r, col, " ", look, limit);
         uint8_t next[3];
-        if (i + 1 == r->tab_count)
+        if (last)
             memcpy(next, colors[TAB_COLOR_BAR], 3);
         else if (i + 1 == r->active_tab)
             memcpy(next, colors[TAB_COLOR_ACTIVE], 3);
@@ -673,7 +679,7 @@ static int draw_tab(struct renderer *r, int i, int col, int limit,
         // A pill: round ends around " title ", and a gap after it.
         look = bar_cell(block, active ? colors[TAB_COLOR_ACTIVE_TEXT] : colors[TAB_COLOR_TEXT], 0);
         col = bar_text(r, col, "\uE0B6", bar_cell(colors[TAB_COLOR_BAR], block, 0), limit);
-        title_end = col + max_tab_label < limit - 2 ? col + max_tab_label : limit - 2;
+        title_end = col + label < limit - 2 ? col + label : limit - 2;
         col = bar_text_cut(r, col, r->tabs[i].title, look, title_end);
         col = bar_text(r, col, "\uE0B4", bar_cell(colors[TAB_COLOR_BAR], block, 0), limit);
         return bar_text(r, col, " ", bar, limit);
@@ -681,6 +687,104 @@ static int draw_tab(struct renderer *r, int i, int col, int limit,
         break;
     }
     unreachable();
+}
+
+// The columns draw_tab takes for tab i with titles cut to `label`: the
+// title, and around it what the style adds. A title cut short ends in
+// "…" within the same `label` columns.
+static int tab_width(const struct renderer *r, int i, int label) {
+    int title = text_columns(r->tabs[i].title);
+    if (title > label)
+        title = label;
+    switch (r->tab_style) {
+    case TAB_FLAT:
+    case TAB_MINIMAL:
+        return title + 4; // "  title  "
+    case TAB_SEPARATORS:
+        return title + 2 + (i > 0); // "│ title "
+    case TAB_POWERLINE:
+    case TAB_ROUNDED:
+        return title + 3; // " title " and the arrow; or the two round ends and a gap
+    case tab_style_count:
+        break;
+    }
+    unreachable();
+}
+
+static int tabs_width(const struct renderer *r, int first, int last, int label) {
+    int w = 0;
+    for (int i = first; i <= last; i++)
+        w += tab_width(r, i, label);
+    return w;
+}
+
+// Which tabs fit in `room` columns, and how wide their titles can be.
+// All of them at full width if they fit; else all of them with shorter
+// titles, down to min_tab_label; else the bar scrolls: as many as fit
+// around the active tab, with room kept for a count of the hidden ones
+// at either end (" ‹3 ", " 5› ", tab_marker_w columns each).
+constexpr int tab_marker_w = 5;
+
+static void fit_tabs(const struct renderer *r, int room, int *first, int *last, int *label) {
+    *first = 0;
+    *last = r->tab_count - 1;
+    for (*label = max_tab_label; *label > min_tab_label; (*label)--)
+        if (tabs_width(r, 0, *last, *label) <= room)
+            return;
+    if (tabs_width(r, 0, *last, *label) <= room)
+        return;
+
+    int active = r->active_tab >= 0 && r->active_tab < r->tab_count ? r->active_tab : 0;
+    int inner = room - 2 * tab_marker_w;
+    *first = *last = active;
+    int used = tab_width(r, active, *label);
+    // Grow one tab at a time, alternating sides, so the active one stays
+    // near the middle.
+    for (bool grew = true; grew;) {
+        grew = false;
+        if (*last + 1 < r->tab_count && used + tab_width(r, *last + 1, *label) <= inner) {
+            used += tab_width(r, ++*last, *label);
+            grew = true;
+        }
+        if (*first > 0 && used + tab_width(r, *first - 1, *label) <= inner) {
+            used += tab_width(r, --*first, *label);
+            grew = true;
+        }
+    }
+}
+
+// A count of hidden tabs at an end of the bar, "‹3" or "5›", from col to
+// limit. Clicking it goes to the hidden tab next to the ones shown, so
+// it gets that tab's columns.
+static void draw_marker(struct renderer *r, int tab, int hidden, bool left, int col, int limit,
+                        struct cell look) {
+    char text[16];
+    snprintf(text, sizeof text, left ? "\u2039%d" : "%d\u203A", hidden);
+    int w = text_columns(text);
+    int start = left ? col + 1 : limit - w - 1;
+    if (start < col)
+        start = col;
+    bar_text(r, start, text, look, limit);
+    r->tabs[tab].start = col;
+    r->tabs[tab].end = limit;
+}
+
+// The visualizer's bars (book chapter 30), one cell per band, from
+// start, at the right end of the bar just before the status: each a
+// block from "▁" to "█", its height the band's level, in the accent
+// color. build_tab_bar keeps their room before it places the tabs.
+static void draw_visualizer(struct renderer *r, int start,
+                            const uint8_t colors[tab_color_count][3]) {
+    struct cell look = bar_cell(colors[TAB_COLOR_BAR], colors[TAB_COLOR_ACCENT], 0);
+    for (int i = 0; i < r->audio_count; i++) {
+        // 9 heights: a space (silent), then the eighth blocks U+2581 to
+        // U+2588, which guiltty draws itself as sprites (sprites.c), so
+        // they fill the cell exactly in any font.
+        int height = r->audio[i] * 9 / 256;
+        r->cells[start + i] = look;
+        r->glyphs[start + i] = height == 0 ? ' ' : 0x2580 + (uint32_t)height;
+        find_slot(r, (size_t)(start + i));
+    }
 }
 
 // Draw the tab bar into cells row 0: the tabs from the left, in the
@@ -723,10 +827,34 @@ static void build_tab_bar(struct renderer *r) {
         limit = start - 1;
     }
 
+    // The visualizer's bars, with a space on either side, come first, so
+    // tabs can't crowd them out; unless the tabs would be left with less
+    // than min_tab_room columns.
+    int bars = r->audio_count + 2;
+    bool visualizer = r->audio_count > 0 && limit - bars >= min_tab_room;
+    if (visualizer) {
+        limit -= bars;
+        draw_visualizer(r, limit + 1, colors);
+    }
+
     int col = r->tab_style == TAB_ROUNDED ? bar_text(r, 0, " ", bar, limit) : 0;
-    for (int i = 0; i < r->tab_count && col < limit; i++) {
+    int first, last, label;
+    fit_tabs(r, limit - col, &first, &last, &label);
+    // Hidden tabs can't be clicked, until a marker gives one its columns.
+    for (int i = 0; i < r->tab_count; i++)
+        r->tabs[i].start = r->tabs[i].end = -1;
+    int end = limit;
+    if (first > 0) {
+        draw_marker(r, first - 1, first, true, col, col + tab_marker_w, bar);
+        col += tab_marker_w;
+    }
+    if (last + 1 < r->tab_count) {
+        end = limit - tab_marker_w;
+        draw_marker(r, last + 1, r->tab_count - 1 - last, false, end, limit, bar);
+    }
+    for (int i = first; i <= last && col < end; i++) {
         r->tabs[i].start = col;
-        col = draw_tab(r, i, col, limit, colors);
+        col = draw_tab(r, i, col, end, label, i == last, colors);
         r->tabs[i].end = col;
     }
     find_ligatures(r, 0);
@@ -1225,6 +1353,16 @@ static void read_placements(struct renderer *r, struct reader *rd) {
         return read_font(&rd, r) && change_font(r);
     case MSG_TABS:
         return apply_tabs(r, &rd);
+    case MSG_AUDIO: {
+        uint8_t count;
+        const uint8_t *levels;
+        if (!rd_u8(&rd, &count) || count > max_audio_bands || !rd_bytes(&rd, count, &levels))
+            return false;
+        memcpy(r->audio, levels, count);
+        r->audio_count = count;
+        build_tab_bar(r);
+        return true;
+    }
     case MSG_TAB_STYLE: {
         uint8_t style, set;
         const uint8_t *colors;

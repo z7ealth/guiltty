@@ -19,7 +19,7 @@ mix release guiltty --overwrite --quiet --path "$stage/release"
 # release renderer is reproduced with a source build anyway).
 priv=$(echo "$stage"/release/lib/guiltty-*/priv)
 rm -f "$priv"/*-dbg
-binaries="$priv/guiltty $priv/guiltty_vk $priv/guiltty_gl $priv/pty_nif.so $priv/text_nif.so"
+binaries="$priv/guiltty $priv/guiltty_audio $priv/guiltty_vk $priv/guiltty_gl $priv/pty_nif.so $priv/text_nif.so"
 # shellcheck disable=SC2086
 strip --strip-unneeded $binaries
 

@@ -7,6 +7,8 @@ defmodule Guiltty.Application do
 
   #   Guiltty.Supervisor (rest_for_one)
   #   |-- Guiltty.Registry      names of every session's and desk's processes
+  #   |-- Guiltty.PubSub        who listens for what (duplicate keys): the
+  #   |                         windows, for the visualizer's levels
   #   |-- Guiltty.Config        ~/.config/guiltty/config.exs, reloaded on save
   #   |-- Guiltty.Sessions      DynamicSupervisor: one Session.Supervisor per tab
   #   |-- Guiltty.Desks         DynamicSupervisor: one Desk per window (its
@@ -15,16 +17,22 @@ defmodule Guiltty.Application do
   #   |-- Guiltty.Distribution  takes the node's name once it's free (releases)
   #   |-- Guiltty.Launcher      the socket the `guiltty` command asks for windows
   #   |-- Guiltty.Watchdog      warns of long garbage collections and huge heaps
+  #   |-- Guiltty.Audio         the visualizer's ears (guiltty_audio), when on
   #   `-- (a Task)              opens the first window at boot
   #
   # rest_for_one: each child depends on the ones before it. Lifeline is
   # significant: when the last desk ends, guiltty stops. Children stop in
   # reverse order, so the Launcher closes its socket first: a `guiltty`
-  # run during the shutdown then starts a new guiltty.
+  # run during the shutdown then starts a new guiltty. Audio comes late
+  # on purpose: if it crashes, only what's after it restarts, never a
+  # window.
   @impl true
   def start(_type, _args) do
     children =
-      [{Registry, keys: :unique, name: Guiltty.Registry}] ++
+      [
+        {Registry, keys: :unique, name: Guiltty.Registry},
+        {Registry, keys: :duplicate, name: Guiltty.PubSub}
+      ] ++
         if Application.get_env(:guiltty, :autostart, true) do
           [
             Guiltty.Config,
@@ -34,6 +42,7 @@ defmodule Guiltty.Application do
             Guiltty.Distribution,
             Guiltty.Launcher,
             Guiltty.Watchdog,
+            Guiltty.Audio,
             {Task, fn -> Guiltty.open_window() end}
           ]
         else

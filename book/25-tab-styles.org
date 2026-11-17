@@ -27,6 +27,40 @@ tabs "zsh", "ssh dns1" active, "ssh worker2"):
 (With the tab bar at the bottom, the line runs along the tab's top edge:
 the edge that faces the terminal.)
 
+* Too many tabs
+
+A tab's title takes up to 24 columns. Open enough tabs and they don't
+fit, and the bar does three things, in order, until they do
+(=fit_tabs= in [[file:../c_src/renderer/core/main.c::static void fit_tabs][main.c]]):
+
+1. *Keep the visualizer's room* (chapter 30) and the status's, before
+   placing any tab, so neither is crowded out.
+2. *Shrink every title*, one column at a time from 24 down to 6, all
+   tabs alike, until the whole row fits. A cut title ends in =…=.
+3. *Scroll.* With titles at 6 and still too many, show as many as fit
+   around the active tab, growing one tab at a time on alternate sides
+   so it stays near the middle, and count the hidden ones at each end:
+
+#+begin_example
+   ‹22  zsh ~… ▶ zsh ~… ▶ zsh ~… ▶ zsh ~… ▶ zsh ~… ▶ zsh ~… ▶  11›  ▁▂▃▄▅▆▇█
+   ───                                                        ───  ────────
+   22 hidden on the left;                   11 on the right;       the bars
+   a click goes to the 22nd                 a click, the 34th
+#+end_example
+
+The counts are clickable: a click on =‹22= goes to the hidden tab
+right next to the ones shown, so clicking it again and again walks
+along. That costs nothing in the click code: a marker just gets that
+hidden tab's columns in =tabs[i].start= and =end=, the same range a
+click is checked against. Every other hidden tab gets -1, so a click
+can never land on one (before, a tab past the edge kept the columns
+from the last time it was drawn).
+
+Measuring a tab before drawing it is =tab_width=: the title's columns
+(=wcwidth(3)=, cut to the label) plus what the style adds around it,
+four for flat's ="  title  "=, three for a powerline block and its
+arrow.
+
 * Five colors, and where the rest come from
 
 A style needs five colors:
@@ -140,6 +174,10 @@ So there are three kinds of check:
 - *The fuzzer gets TAB_STYLE.* The seeds have one message per style
   (=test/fixtures/fuzz/make_seeds.exs=), so libFuzzer starts from every
   way of drawing the bar. 60 s per target ran clean.
+- *The visualizer keeps its room.* A replay test draws 1 and then 40
+  tabs with the accent set to pure magenta, with and without full bars,
+  and counts the magenta pixels at the right end of the bar: none when
+  silent, 16 cells' worth when loud.
 - *The picture, by eye.* Each style replayed offscreen in both renderers
   and saved as a screenshot: they look as above, and Vulkan's and
   OpenGL's frames don't differ in a single pixel.
@@ -164,6 +202,8 @@ So there are three kinds of check:
 5. What would go wrong if =widen_icons= treated the arrows like icons?
 6. In a powerline arrow cell, which color is the foreground and which the
    background?
+7. You have 40 tabs and the bar shows =‹22= on the left. What happens
+   when you click it, and why didn't the click code need to change?
 
 ** Answers
 :PROPERTIES:
@@ -186,3 +226,7 @@ So there are three kinds of check:
    longer meet the block right after it.
 6. The foreground is the block on the left (the triangle is that block's
    point); the background is the block on the right.
+7. It goes to the 22nd tab, the hidden one right next to the first
+   shown, and the bar scrolls to keep it in view. The marker is given
+   that tab's columns in =tabs[i].start= and =end=, the range every
+   click is already checked against.

@@ -149,6 +149,7 @@ the renderer, some reach the shell's process:
 | =clipboard_write=              | Window          | live: whether OSC 52 reaches the clipboard (chapter 28) |
 | =link_url=                     | Window -> Screen | live: Ctrl+click and Ctrl+hover find URLs in plain text (chapter 28) |
 | =screen_reports=               | Screen          | tabs opened after a change: answer DECRQCRA (chapter 28) |
+| =visualizer= (=true=)          | Audio -> renderer (AUDIO) | live: starts or stops =guiltty_audio=; bars in the tab bar while sound plays (chapter 30) |
 | =keys=                         | Window          | live; a punctuation key is named by what it types without Shift on your layout (see below) |
 
 The renderer can't read the config itself: it's a separate program with

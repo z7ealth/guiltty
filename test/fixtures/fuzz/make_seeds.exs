@@ -69,7 +69,18 @@ seeds = %{
     Protocol.font(%{font | size: 20}),
     # A password being read: the lock in place of the cursor.
     Protocol.rows(Map.put(screen.("[sudo] password: ", 30, 4), :cursor_secret, true)),
-    Protocol.rows(screen.("after", 30, 4))
+    Protocol.rows(screen.("after", 30, 4)),
+    # The visualizer's bars, then hidden again.
+    Protocol.audio(<<0, 40, 90, 140, 200, 255, 120, 30>>),
+    Protocol.audio(<<>>)
+  ],
+  # The visualizer: 16 bands of every height in a wide enough tab bar.
+  "audio" => [
+    Protocol.setup(40, 3, Theme.default(), font, options),
+    Protocol.tabs(["one", "two"], 0),
+    Protocol.tab_style(:powerline, Theme.default()),
+    Protocol.audio(for(i <- 0..15, into: <<>>, do: <<min(i * 18, 255)>>)),
+    Protocol.rows(screen.("music", 40, 3))
   ],
   # Images (Kitty graphics): each format, placements of every shape (own
   # size, cells, one of the two, cut by the grid's edge, under and over

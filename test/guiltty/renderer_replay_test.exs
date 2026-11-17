@@ -404,5 +404,50 @@ defmodule Guiltty.RendererReplayTest do
     |> Enum.find(&(&1 =~ ~r/^JetBrains ?Mono( Nerd Font Mono)?$/))
   end
 
+  # The visualizer's bars keep their room at the right of the tab bar,
+  # however many tabs there are: with 40, the tabs shrink and scroll
+  # instead (book chapter 30). The accent is magenta here, so the bars
+  # are the only magenta in the right quarter of the bar.
+  defp tab_bar_msgs(dir, name, tabs, levels) do
+    alias Guiltty.Theme
+    alias Guiltty.Window.Protocol
+
+    theme = %{Theme.default() | tab_accent: {255, 0, 255}}
+    options = %{padding: 6, opacity: 1.0, bold_is_bright: true}
+    titles = for i <- 1..tabs, do: "zsh ~/Projects/guiltty #{i}"
+
+    messages = [
+      Protocol.setup(90, 3, theme, %{family: "monospace", size: 16}, options),
+      Protocol.tab_style(:flat, theme),
+      Protocol.tabs(titles, 0),
+      Protocol.audio(levels)
+    ]
+
+    path = Path.join(dir, name)
+    File.write!(path, Enum.map(messages, &[<<IO.iodata_length(&1)::32>>, &1]))
+    path
+  end
+
+  defp bar_magenta({w, _h, pixels}) do
+    for y <- 0..39, x <- div(w * 3, 4)..(w - 1), reduce: 0 do
+      n ->
+        if binary_part(pixels, (y * w + x) * 3, 3) == <<255, 0, 255>>, do: n + 1, else: n
+    end
+  end
+
+  test "the visualizer keeps its room however many tabs there are", %{tmp_dir: dir} do
+    full = :binary.copy(<<255>>, 16)
+
+    for tabs <- [1, 40] do
+      silent =
+        bar_magenta(replay("guiltty_gl-dbg", dir, tab_bar_msgs(dir, "s#{tabs}", tabs, <<>>)))
+
+      loud = bar_magenta(replay("guiltty_gl-dbg", dir, tab_bar_msgs(dir, "l#{tabs}", tabs, full)))
+      assert silent == 0
+      # 16 full cells: at least 16 columns of pixels, 10 rows high.
+      assert loud > 16 * 6 * 10, "#{tabs} tabs: #{loud} bar pixels"
+    end
+  end
+
   defp chunks(pixels), do: pixels |> :binary.bin_to_list() |> Enum.chunk_every(3)
 end

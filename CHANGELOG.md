@@ -8,6 +8,35 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.28.0 — 2026-11-16 — music: a visualizer in the tab bar
+
+### Added
+- 16 bars at the right of the tab bar move with whatever your speakers
+  play (Spotify, a video, anything), bass on the left. On by default:
+  while it's on, guiltty records the sound output (never the
+  microphone) to measure it; `visualizer: false` turns it off. Needs
+  PipeWire; without it there are just no bars, and the log says why.
+- `priv/guiltty_audio --print` shows the same bars in a terminal, to try
+  it on its own.
+
+### Fixed
+- With many tabs, the tab bar no longer runs off the edge: titles
+  shrink to fit, and past that the bar scrolls to keep the active tab in
+  view, with a count of the hidden tabs at each end (`‹3`, `5›`); click
+  a count to go to the next hidden tab. Tabs that didn't fit could
+  before be clicked where they had last been drawn.
+- The visualizer's bars keep their room however many tabs are open,
+  and for as long as the visualizer is on, sound or not: the tabs don't
+  change width when a song starts or stops.
+- The bars fall to rest when a song is paused or its browser tab
+  closed, instead of freezing where they were.
+
+### Build
+- Building from source needs PipeWire's development headers
+  (`pipewire-devel` on openSUSE and Fedora, `libpipewire-0.3-dev` on
+  Debian and Ubuntu). The program only loads PipeWire when it runs, so
+  the precompiled release doesn't need it installed.
+
 ## 0.27.2 — 2026-11-16 — install.sh offers a config file
 
 ### Added

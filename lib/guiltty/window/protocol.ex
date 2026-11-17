@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 15
+  @version 16
 
   @hello 1
   @setup 2
@@ -41,6 +41,7 @@ defmodule Guiltty.Window.Protocol do
   @focus 26
   @attention 27
   @pointer 28
+  @audio 29
 
   @image_formats %{rgb: 0, rgba: 1, png: 2}
 
@@ -240,6 +241,14 @@ defmodule Guiltty.Window.Protocol do
   @doc "The mouse pointer over the grid: `:default`, or `:link` (a hand)."
   def pointer(:default), do: <<@pointer, 0>>
   def pointer(:link), do: <<@pointer, 1>>
+
+  @doc """
+  The visualizer's bands (`Guiltty.Audio`): u8 count, then one level
+  per band, 0 to 255, lowest frequencies first. Empty hides the bars.
+  At most 32 bands (the renderer's max_audio_bands).
+  """
+  def audio(levels) when byte_size(levels) <= 32,
+    do: <<@audio, byte_size(levels), levels::binary>>
 
   @mouse_kinds %{0 => :press, 1 => :release, 2 => :motion, 3 => :wheel}
   @key_kinds %{1 => :press, 2 => :repeat, 3 => :release}
