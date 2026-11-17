@@ -109,7 +109,7 @@ struct gl {
     struct {
         GLint viewport, origin, cell, cols, atlas_cols, cursor, cursor2, pass, atlas,
             cursor_color, underline_y, strike_y, line_thickness, cursor_shape, accent, opacity,
-            rows, first_row_last;
+            rows, first_row_last, bar_right;
     } u; // uniform locations
 };
 
@@ -196,6 +196,7 @@ struct gl {
     LOC(opacity, "u_opacity");
     LOC(rows, "u_rows");
     LOC(first_row_last, "u_first_row_last");
+    LOC(bar_right, "u_bar_right");
 #undef LOC
     return true;
 }
@@ -409,6 +410,17 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->ClearColor(unit(frame->clear_rgb[0]) * a, unit(frame->clear_rgb[1]) * a,
                   unit(frame->clear_rgb[2]) * a, a);
     f->Clear(GL_COLOR_BUFFER_BIT);
+    // The bar's band, a clear limited by the scissor box: GL counts its
+    // rows from the bottom. Opaque, like the bar's cells.
+    int strip_y = SDL_clamp(frame->strip_y, 0, gl->height);
+    int strip_h = SDL_clamp(frame->strip_h, 0, gl->height - strip_y);
+    if (strip_h > 0) {
+        f->Enable(GL_SCISSOR_TEST);
+        f->Scissor(0, gl->height - strip_y - strip_h, gl->width, strip_h);
+        f->ClearColor(unit(frame->strip_rgb[0]), unit(frame->strip_rgb[1]), unit(frame->strip_rgb[2]), 1);
+        f->Clear(GL_COLOR_BUFFER_BIT);
+        f->Disable(GL_SCISSOR_TEST);
+    }
 
     // Damage tracking: the GPU keeps last frame's cells, so upload only the
     // rows that changed. A new grid size changes every cell's position in
@@ -452,6 +464,7 @@ static void gl_draw_frame(void *state, const struct frame *frame) {
     f->Uniform1f(gl->u.opacity, frame->opacity);
     f->Uniform1i(gl->u.rows, frame->rows);
     f->Uniform1i(gl->u.first_row_last, frame->first_row_last ? 1 : 0);
+    f->Uniform1i(gl->u.bar_right, frame->bar_right);
 
     f->BindVertexArray(gl->vao);
     f->ActiveTexture(GL_TEXTURE0);

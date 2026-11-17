@@ -56,11 +56,12 @@ struct push {
     int32_t pass;
     int32_t cols, atlas_cols, cursor, cursor2;
     int32_t rows, first_row_last, underline_y, strike_y;
-    int32_t line_thickness, cursor_shape, pad[2];
+    int32_t line_thickness, cursor_shape, pad, bar_right;
     float cursor_color[4];
     float accent[4];
 };
-static_assert(sizeof(struct push) == 112 && offsetof(struct push, cursor_color) == 80);
+static_assert(sizeof(struct push) == 112 && offsetof(struct push, bar_right) == 76 &&
+              offsetof(struct push, cursor_color) == 80);
 
 // The image pipeline's push constants (shaders/image.vert's `Image`
 // block). Same pipeline layout as the cells: it fits in their range.
@@ -1204,6 +1205,7 @@ static void fill_push(const struct vk *vk, const struct frame *frame, struct pus
         .cursor2 = cursor >= 0 && frame->cursor_wide ? cursor + 1 : -1,
         .rows = frame->rows,
         .first_row_last = frame->first_row_last ? 1 : 0,
+        .bar_right = frame->bar_right,
         // Underline just below the baseline; strikethrough through the
         // middle of lowercase letters. As in the GL backend.
         .underline_y = vk->baseline + 1,
@@ -1333,6 +1335,24 @@ static void vk_draw_frame(void *state, const struct frame *frame) {
     VkRect2D scissor = {{0, 0}, vk->extent};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
+    // The bar's band: a clear of just that rectangle, inside the render
+    // pass (vkCmdClearAttachments). Opaque, like the bar's cells.
+    int extent_h = (int)vk->extent.height;
+    int strip_y = SDL_clamp(frame->strip_y, 0, extent_h);
+    int strip_h = SDL_clamp(frame->strip_h, 0, extent_h - strip_y);
+    if (strip_h > 0) {
+        VkClearAttachment band = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .colorAttachment = 0,
+            .clearValue.color.float32 = {unit(frame->strip_rgb[0]), unit(frame->strip_rgb[1]),
+                                         unit(frame->strip_rgb[2]), 1},
+        };
+        VkClearRect rect = {
+            .rect = {{0, strip_y}, {vk->extent.width, (uint32_t)strip_h}},
+            .layerCount = 1,
+        };
+        vkCmdClearAttachments(cmd, 1, &band, 1, &rect);
+    }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk->layout, 0, 1, &vk->set, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &slot->cells.buffer, &offset);

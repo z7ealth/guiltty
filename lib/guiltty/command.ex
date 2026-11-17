@@ -6,6 +6,8 @@ defmodule Guiltty.Command do
       guiltty tab --new
       guiltty pane --split-right
       guiltty theme --set dracula
+      guiltty ai --set-command claude
+      guiltty tab-bar --set-position bottom
       guiltty window --list
 
   The C client (`c_src/client/guiltty.c`) sends its arguments as they
@@ -66,8 +68,22 @@ defmodule Guiltty.Command do
      [
        {"--set", :set, "NAME", "use a built-in theme until the config file changes"},
        {"--list", :list, nil, "list the built-in themes"}
+     ]},
+    {"ai", :ai,
+     [
+       {"--set-command", :set_command, "PROGRAM", "the program the AI key opens"},
+       {"--set-position", :set_position, "POSITION", "open it on the right, down or in a tab"}
+     ]},
+    {"tab-bar", :tab_bar,
+     [
+       {"--set-position", :set_position, "SIDE", "put the tab bar at the top or the bottom"},
+       {"--set-style", :set_style, "STYLE", "draw the tabs flat, powerline, rounded..."}
      ]}
   ]
+
+  # What the words mean, as the config file spells them (Guiltty.Config).
+  @ai_positions %{"right" => :right, "down" => :down, "tab" => :tab}
+  @sides %{"top" => :top, "bottom" => :bottom}
 
   @directions %{"left" => :left, "right" => :right, "up" => :up, "down" => :down}
   @max_name 40
@@ -185,8 +201,34 @@ defmodule Guiltty.Command do
 
   defp argument("NAME", [name], _what), do: {:ok, name}
 
+  # As the config checks ai: [command: ...]: any text but blank. It runs
+  # through the shell, so "claude --continue" is one PROGRAM, quoted.
+  defp argument("PROGRAM", [program], what) do
+    if String.trim(program) == "",
+      do: {:error, "#{what} takes a program to run, like claude"},
+      else: {:ok, program}
+  end
+
+  defp argument("POSITION", [position], what), do: one_word(@ai_positions, position, what)
+  defp argument("SIDE", [side], what), do: one_word(@sides, side, what)
+
+  defp argument("STYLE", [style], what),
+    do: one_word(Map.new(Config.tab_styles(), &{Atom.to_string(&1), &1}), style, what)
+
   defp argument(arg, _many, what),
     do: {:error, "#{what} takes one #{arg} (quote it if it has spaces)"}
+
+  defp one_word(words, word, what) do
+    case Map.fetch(words, word) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, "#{what} takes #{words |> Map.keys() |> Enum.sort() |> or_list()}"}
+    end
+  end
+
+  defp or_list(words) do
+    {last, rest} = List.pop_at(words, -1)
+    if rest == [], do: last, else: Enum.join(rest, ", ") <> " or " <> last
+  end
 
   @doc """
   The help text, as lines.
@@ -204,7 +246,7 @@ defmodule Guiltty.Command do
       Enum.flat_map(@commands, fn {noun, _, actions} ->
         for {flag, _, arg, what} <- actions do
           left = Enum.join(["guiltty", noun, flag | List.wrap(arg)], " ")
-          "  " <> String.pad_trailing(left, 36) <> what
+          "  " <> String.pad_trailing(left, 38) <> what
         end
       end)
 
@@ -226,6 +268,9 @@ defmodule Guiltty.Command do
   def run(%{command: {:help, _, _}}, _context), do: {:ok, help()}
   def run(%{command: {:window, :list, _}}, context), do: {:ok, list(context.pane)}
   def run(%{command: {:theme, action, name}}, _context), do: theme(action, name)
+  def run(%{command: {:ai, action, value}}, _context), do: ai(action, value)
+  def run(%{command: {:tab_bar, :set_position, side}}, _context), do: override(:tab_bar, side)
+  def run(%{command: {:tab_bar, :set_style, style}}, _context), do: override(:tab_style, style)
 
   def run(%{command: {:window, :new, _}}, context) do
     case Lifeline.open(window: context.window, cwd: context.cwd, fresh: true) do
@@ -323,10 +368,24 @@ defmodule Guiltty.Command do
   defp theme(:set, name) do
     with {:ok, name} <- theme_name(name),
          {:ok, theme} <- Theme.named(name) do
-      if Process.whereis(Config),
-        do: done(Config.override(:theme, theme)),
-        else: {:error, "no config process to tell"}
+      override(:theme, theme)
     end
+  end
+
+  ## ai, tab-bar
+
+  # One part of the ai setting; the others stay as they are.
+  defp ai(action, value) do
+    key = if action == :set_command, do: :command, else: :position
+    override(:ai, Map.put(Config.get().ai, key, value))
+  end
+
+  # Like theme --set: for every window, until the config file changes.
+  # parse/1 already checked the value as the config would.
+  defp override(key, value) do
+    if Process.whereis(Config),
+      do: done(Config.override(key, value)),
+      else: {:error, "no config process to tell"}
   end
 
   # The full name, or one that starts a single name ("dra" is dracula).

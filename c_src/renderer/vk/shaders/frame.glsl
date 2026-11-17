@@ -3,7 +3,7 @@
 // guarantees at least 128 bytes). Must match struct push in vk_backend.c.
 layout(push_constant, std430) uniform Frame {
     vec2 viewport;      // window size in pixels
-    vec2 origin;        // top-left padding in pixels
+    vec2 origin;        // where the first row on screen starts, in pixels
     vec2 cell;          // cell size in pixels
     float opacity;      // of default backgrounds; 1 = opaque
     int pass;           // 0 = backgrounds, 1 = glyphs
@@ -17,6 +17,8 @@ layout(push_constant, std430) uniform Frame {
     int strike_y;
     int line_thickness;
     int cursor_shape;   // 0 block, 1 underline, 2 bar, 3 hollow block
+    int pad;
+    int bar_right;      // the bar's columns before this start at the left edge, the rest end at the right
     vec4 cursor_color;
     vec4 accent;        // the line under the active tab
 } u;

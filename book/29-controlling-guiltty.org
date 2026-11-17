@@ -10,6 +10,9 @@ guiltty tab --new                # Ctrl+Shift+T
 guiltty pane --split-right       # Ctrl+Shift+O
 guiltty tab --rename build       # Ctrl+Shift+R, without the typing
 guiltty theme --set dracula      # no key for this one
+guiltty ai --set-command claude  # what the AI key opens
+guiltty tab-bar --set-position bottom  # the tab bar moves, in every window
+guiltty tab-bar --set-style rounded    # and changes its look
 guiltty window --list            # what's open, with the ids
 #+end_src
 
@@ -31,6 +34,10 @@ switched from a cron job at sunset.
 | =guiltty pane --close=                       | close the pane                                    |
 | =guiltty pane --focus left/right/up/down=    | move the window's focus                           |
 | =guiltty theme --set NAME= / =--list=        | a built-in theme, until the config file changes   |
+| =guiltty ai --set-command PROGRAM=           | what the AI key opens, until the file changes     |
+| =guiltty ai --set-position right/down/tab=   | where the AI tool opens, until the file changes   |
+| =guiltty tab-bar --set-position top/bottom=  | where the tab bar is, until the file changes      |
+| =guiltty tab-bar --set-style STYLE=          | how the tabs look, until the file changes         |
 | =guiltty help=                               | all of the above                                  |
 | =guiltty release stop= (=pid=, =remote=...)  | the release's own commands (chapter 23)           |
 
@@ -202,6 +209,16 @@ window starts where =guiltty= was run, when =working_directory= is
   ([[file:../lib/guiltty/config.ex::def override][Config.override/2]]). Trying a theme shouldn't rewrite your
   config: put it in =config.exs= to keep it. A name can be shortened to
   any start that only one theme has: =drac=, =tok=.
+- =ai --set-command=, =ai --set-position=, =tab-bar --set-position=
+  and =tab-bar --set-style= work the same way: one setting, over the file's, for every window, until the
+  file changes. They take what the config file takes, checked the same
+  way, so =tab-bar --set-position left= is an error, never a guess. Each =ai=
+  action changes its part of the =ai= setting and keeps the others: a
+  new command keeps its position and its lock. A program with arguments
+  is one word to the shell, so quote it:
+  =guiltty ai --set-command "claude --continue"=. A tab bar that moves
+  is drawn in its new place right away (chapter 6), as when the file
+  changes.
 
 * Why not the release's =rpc=?
 

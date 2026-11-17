@@ -109,6 +109,7 @@ struct renderer {
     // The tab bar is drawn at the bottom. It's still row 0 of the cell
     // mirror; only where it's drawn (and where clicks land) changes.
     bool tab_bar_bottom;
+    int pixel_h; // the drawable's height: where the grid goes (grid_y)
     bool ligatures; // join "->", "!=" and friends when the font has them
     int cell_w, cell_h;
     // The cell size last told to Elixir in a RESIZE (0 before the first):
@@ -131,6 +132,9 @@ struct renderer {
     struct theme theme;
     struct tab tabs[max_tabs];
     int tab_count, active_tab;
+    // The bar's first column from the right end: the visualizer and the
+    // status, drawn against the window's right edge. cols when none.
+    int bar_right;
     enum tab_style tab_style;
     // Tab bar colors from the config (MSG_TAB_STYLE): bit i of
     // tab_colors_set says tab_colors[i] is one; the rest come from the theme.
@@ -827,15 +831,19 @@ static void build_tab_bar(struct renderer *r) {
         limit = start - 1;
     }
 
-    // The visualizer's bars, with a space on either side, come first, so
+    // The visualizer's bars, with a space on either side (none after them
+    // when they're last, so they reach the window's edge), come first, so
     // tabs can't crowd them out; unless the tabs would be left with less
     // than min_tab_room columns.
-    int bars = r->audio_count + 2;
+    int bars = r->audio_count + (status_w > 0 ? 2 : 1);
     bool visualizer = r->audio_count > 0 && limit - bars >= min_tab_room;
     if (visualizer) {
         limit -= bars;
         draw_visualizer(r, limit + 1, colors);
     }
+    // Everything after limit (the bars, the status) is drawn against the
+    // window's right edge, past the padding and the leftover columns.
+    r->bar_right = limit + 1;
 
     int col = r->tab_style == TAB_ROUNDED ? bar_text(r, 0, " ", bar, limit) : 0;
     int first, last, label;
@@ -927,10 +935,30 @@ static void clean_text(const uint8_t *src, size_t len, char *dst, size_t size) {
     return true;
 }
 
-// How many cells fit in a drawable of w x h pixels, below the tab bar.
+// Where grid row 0 starts, in pixels from the window's top. The tab bar
+// sits on the window's edge and the grid against the bar, with no padding
+// on that side, so the tabs, the visualizer and the panes' borders all
+// reach. The padding is on the grid's far side only. The window's height
+// is rarely a whole number of cells (grid_for_pixels rounds down): the
+// pixels left over go to that far side too, under the grid with the bar
+// on top, above it with the bar at the bottom.
+static int grid_y(const struct renderer *r) {
+    if (!r->tab_bar_bottom)
+        return r->cell_h;
+    // Never above the window's top, even when it's too small for one row.
+    return SDL_max(r->pixel_h - (r->rows + 1) * r->cell_h, 0);
+}
+
+// Where the tab bar starts: the window's top, or right under the grid.
+static int bar_y(const struct renderer *r) {
+    return r->tab_bar_bottom ? grid_y(r) + r->rows * r->cell_h : 0;
+}
+
+// How many cells fit in a drawable of w x h pixels, beside the tab bar:
+// padding on both sides across, on the far side from the bar down.
 static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *cols, uint16_t *rows) {
     int c = (w - 2 * r->padding) / r->cell_w;
-    int n = (h - 2 * r->padding) / r->cell_h - 1;
+    int n = (h - r->padding) / r->cell_h - 1;
     *cols = (uint16_t)SDL_clamp(c, 1, max_grid);
     *rows = (uint16_t)SDL_clamp(n, 1, max_grid);
 }
@@ -1045,7 +1073,7 @@ static void set_minimum_size(struct renderer *r) {
     float density = SDL_GetWindowPixelDensity(r->window);
     if (density <= 0)
         density = 1;
-    int w = min_cols * r->cell_w + 2 * r->padding, h = (min_rows + 1) * r->cell_h + 2 * r->padding;
+    int w = min_cols * r->cell_w + 2 * r->padding, h = (min_rows + 1) * r->cell_h + r->padding;
     SDL_SetWindowMinimumSize(r->window, (int)((float)w / density), (int)((float)h / density));
 }
 
@@ -1085,8 +1113,7 @@ static void update_text_area(struct renderer *r) {
         density = 1;
     SDL_Rect area = {
         .x = (int)((float)(r->padding + r->cursor_col * r->cell_w) / density),
-        .y = (int)((float)(r->padding + (r->cursor_row + (r->tab_bar_bottom ? 0 : 1)) * r->cell_h) /
-                   density),
+        .y = (int)((float)(grid_y(r) + r->cursor_row * r->cell_h) / density),
         .w = (int)((float)r->cell_w / density),
         .h = (int)((float)r->cell_h / density),
     };
@@ -1259,8 +1286,7 @@ static void read_placements(struct renderer *r, struct reader *rd) {
         h = p->cells_h * ch;
         w = h * sw / sh;
     }
-    // Grid row 0 is below the tab bar, unless the bar is at the bottom.
-    double top = r->padding + (r->tab_bar_bottom ? 0 : ch);
+    double top = grid_y(r);
     *out = (struct image_draw){
         .image = img->texture,
         .x = (float)(r->padding + p->col * cw + p->offset_x),
@@ -1620,14 +1646,22 @@ static void draw(struct renderer *r) {
         .opacity = r->transparent ? (float)r->opacity / 100.0f : 1.0f,
         .capture = r->capture,
         .first_row_last = r->tab_bar_bottom,
+        .bar_right = r->bar_right,
         .cursor_wide = (r->cells[cursor].attrs & ATTR_WIDE) != 0 && r->cursor_col + 1 < r->cols,
         .origin_x = r->padding,
-        .origin_y = r->padding,
+        // Where the first row on screen goes: the bar on top, or grid row 0.
+        .origin_y = r->tab_bar_bottom ? grid_y(r) : 0,
     };
     memcpy(frame.cursor_rgb, r->theme.cursor, 3);
     uint8_t tab[tab_color_count][3];
     tab_colors(r, tab);
     memcpy(frame.accent_rgb, tab[TAB_COLOR_ACCENT], 3);
+    // The bar's band, across the whole width, so the padding and the
+    // leftover columns beside the bar take its color. The tabs stay on
+    // the grid's columns.
+    memcpy(frame.strip_rgb, tab[TAB_COLOR_BAR], 3);
+    frame.strip_y = bar_y(r);
+    frame.strip_h = r->cell_h;
     // The halo is the padding around the grid, lit up for a moment.
     memcpy(frame.clear_rgb, halo_on(r) ? r->halo_rgb : r->theme.bg, 3);
 
@@ -1647,7 +1681,7 @@ static void draw(struct renderer *r) {
         frame.above_count = above;
     }
     frame.clip_x = r->padding;
-    frame.clip_y = r->padding + (r->tab_bar_bottom ? 0 : r->cell_h);
+    frame.clip_y = grid_y(r);
     frame.clip_w = r->cols * r->cell_w;
     frame.clip_h = r->rows * r->cell_h;
 
@@ -1679,6 +1713,7 @@ static void draw(struct renderer *r) {
 
 [[nodiscard]] static bool on_pixel_size(struct renderer *r, int w, int h) {
     renderer_backend.resize(r->backend, w, h);
+    r->pixel_h = h;
     r->dirty = true;
     uint16_t cols, rows;
     grid_for_pixels(r, w, h, &cols, &rows);
@@ -1710,11 +1745,19 @@ static void cell_at(const struct renderer *r, float x, float y, int *col, int *c
     if (density <= 0)
         density = 1;
     int px = (int)(x * density), py = (int)(y * density);
+    // The bar is mirror row 0, wherever it's drawn (bar_y). Its tabs start
+    // at the window's left edge, without the padding (the vertex shader
+    // moves them); only the tabs take clicks. Anywhere else, even in the
+    // padding or the leftover, is the nearest grid row: grid row i is
+    // mirror row i + 1.
+    int bar = bar_y(r);
+    if (r->tab_bar_bottom ? py >= bar : py < bar + r->cell_h) {
+        *col = SDL_clamp(px / r->cell_w, 0, r->cols - 1);
+        *cells_row = 0;
+        return;
+    }
     *col = SDL_clamp((px - r->padding) / r->cell_w, 0, r->cols - 1);
-    int shown = SDL_clamp((py - r->padding) / r->cell_h, 0, r->rows);
-    // The row on screen to the row in the mirror: with the bar at the
-    // bottom, the last row on screen is mirror row 0.
-    *cells_row = !r->tab_bar_bottom ? shown : shown == r->rows ? 0 : shown + 1;
+    *cells_row = SDL_clamp((py - grid_y(r)) / r->cell_h, 0, r->rows - 1) + 1;
 }
 
 // SDL numbers buttons 1 left, 2 middle, 3 right; the protocol 0, 1, 2.
@@ -2048,7 +2091,7 @@ int main(int argc, char *argv[]) {
 
     int width, height;
     if (ckd_mul(&width, (int)r.cols, r.cell_w) || ckd_add(&width, width, 2 * r.padding) ||
-        ckd_mul(&height, (int)r.rows + 1, r.cell_h) || ckd_add(&height, height, 2 * r.padding))
+        ckd_mul(&height, (int)r.rows + 1, r.cell_h) || ckd_add(&height, height, r.padding))
         goto out_font;
     if (!renderer_backend.configure())
         goto out_font;

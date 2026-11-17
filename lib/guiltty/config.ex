@@ -179,6 +179,9 @@ defmodule Guiltty.Config do
   """
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
+  @doc "The tab styles `tab_style` takes."
+  def tab_styles, do: @tab_styles
+
   @doc """
   Sets one setting for every window, over the file's, until the file
   changes (then the file's value is back). `guiltty theme --set` uses it:

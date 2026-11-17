@@ -2111,3 +2111,104 @@ while the bars are up: after 150 ms without a buffer it feeds hops of
 zeros until they're at rest. A faint 0.3 s tone through `pw-play` shows
 it plainly: without the timer the last message is 105 forever; with it,
 105 93 67 42 16 0.
+
+## 2026-11-17 — The bar that floated (v0.28.1)
+
+_Draft: agent, awaiting user_
+
+A screenshot showed it: with the tab bar at the bottom there was a band
+of background under the bar, 25 pixels on a window where the padding is
+6. The other 19 were the leftover: cells come in 20-pixel slices, a
+window is rarely a whole number of them tall, so the grid rounds down
+and whatever doesn't fit falls off the end. The renderer draws from the top-left
+corner, and the bar is just the last row, so the leftover landed under
+it.
+
+With the bar on top this is what you want: the bar hugs the top and the
+leftover sits under the last line of text, where nobody looks. At the
+bottom, the bar should hug the edge like a status line. So now only the
+bottom bar moves down by the leftover (`bar_gap`), in both vertex
+shaders. The Vulkan push constants had 8 bytes of padding before the
+cursor color, so the new field fits without the block growing.
+
+To see it without resizing a window by hand, a replay sets up a window
+for padding 6 and then asks for padding 9: same window, one row fewer,
+and 15 pixels to spare. The GL and Vulkan screenshots agree to the
+pixel, apart from one pixel of anti-aliasing, and the top-bar one looks
+the same as before.
+
+That wasn't the end of it. Even sitting on the edge, the bar still had
+the window's padding around it: 6 pixels of background below and on the
+left, and more on the right, where the columns that don't fit are left
+over. It read as a box floating in the window rather than a bar. The
+cells can't fix that, because the bar is a grid row and has to keep the
+grid's columns, or the tab text stops lining up with the terminal. So
+the backends now fill a band in the bar's color first, edge to edge, and
+the bar's cells are drawn over it. In GL that's a `glClear` limited by
+the scissor box; in Vulkan, `vkCmdClearAttachments`, which clears a
+rectangle without leaving the render pass.
+
+Which only moved the problem: now the band was the bar's color, but the
+tabs and the visualizer were still one cell tall inside it, floating
+6 pixels above the edge. The fix was to stop giving the bar any padding
+on its edge side. The padding belongs to the grid; the bar is pinned to
+the edge (`bar_y`), and the shaders move just that row there
+(`bar_shift`, negative for a bar on top). The band shrank to one cell
+and only covers the sides now. `cell_at` became simpler for it: is the
+point in the bar's row? A tab. Anything else is the nearest grid row.
+
+Last, the visualizer's right end: it stopped a space, the padding and
+the leftover columns short of the edge. The shader already knows
+everything needed to close that (the window's width, the origin, the
+cell size, the column count), so it only had to be told where the right
+end of the bar starts (`bar_right`). That took the Vulkan push block's
+last spare four bytes. The status, when there is one, rides along to
+the edge with it.
+
+Then the mirror image: with powerline tabs, the first tab's color
+stopped 6 pixels short of the left edge. The same `bar_right` column
+splits the bar in two, so the tabs before it now move left by the
+padding, in the same shader line. The tabs no longer sit exactly over
+the grid's columns, but nobody lines up a tab title with a letter in
+the terminal. `cell_at` had to learn it, though: on the bar row, a
+column is counted from the window's edge, not from the padding.
+
+And then, with split panes, the gap showed up somewhere new: the line
+between two panes stopped short of the bar, because the grid's padding
+and the leftover now sat between them. Pinning the bar to the edge had
+only moved the gap inward. The fix was to pin the grid to the bar as
+well, and send the padding and leftover to the grid's far side. That
+turned out to be the simpler model: one function, `grid_y`, says where
+grid row 0 starts, and everything else (the shader's origin, images,
+the clip, the input-method box, clicks) asks it. The bar lands exactly
+where the rows put it, so `bar_shift` from earlier today went away.
+Two image tests had worked out the cell height as "the image's top
+minus the padding"; with the grid now right under the bar, it's just
+the image's top.
+
+That left the far side: the padding and the leftover still sat between
+the grid and the window's other edge. I tried stretching the edge row
+into it, as Ghostty's `window-padding-color = extend` does: backgrounds
+fill the strip and glyphs repeat their edge pixel row, so a `│` reaches
+the edge. It worked, but the stretched row looked stretched, and a
+small gap on the far side bothers nobody. It came out again.
+
+## 2026-11-17 — Two more knobs from the shell (v0.29.0)
+
+_Draft: agent, awaiting user_
+
+`guiltty ai --set-command`, `ai --set-position`, `tab-bar --set-position`
+and `tab-bar --set-style`. The style names come from `Config.tab_styles/0`,
+so the command and the config file can't disagree about them.
+The first question was whether they should write `config.exs`. They
+don't: the file is Elixir you write by hand, and rewriting one key
+without losing comments or layout is its own project. So they work as
+`theme --set` does, an override in `Guiltty.Config` until the file
+changes. Most of the work was already done: a window that gets a new
+config sends the renderer its options, and the renderer already knew how
+to move the bar when the file changed.
+
+The values are checked where the words are parsed, with the same rules
+as the config file, because `Config.override/2` trusts its caller. An
+`ai` action changes one part of the `ai` setting, so setting the program
+doesn't reset where it opens.

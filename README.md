@@ -290,6 +290,7 @@ Hold Shift to select in programs that use the mouse (vim, htop).
 The same things work from a shell or a script, on the pane they're typed
 in (or `--pane ID`): `guiltty tab --new`, `guiltty pane --split-right`,
 `guiltty tab --rename build`, `guiltty theme --set dracula`,
+`guiltty ai --set-command claude`, `guiltty tab-bar --set-style rounded`,
 `guiltty window --list`. `guiltty help` lists them all. The release's own
 commands are under `release`: `guiltty release stop`.
 

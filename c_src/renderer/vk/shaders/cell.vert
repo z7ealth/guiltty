@@ -24,9 +24,16 @@ void main() {
     if (u.first_row_last == 1)
         row = row == 0 ? u.rows - 1 : row - 1;
     vec2 cell = vec2(gl_InstanceIndex % u.cols, row);
+    bool is_bar = row == (u.first_row_last == 1 ? u.rows - 1 : 0);
+    // Its ends against the window's sides, past the padding: the tabs
+    // from the left edge, the right end (the visualizer, the status) up
+    // to the right edge, past the pixels left over after the last column.
+    float right = !is_bar                              ? 0.0
+                  : gl_InstanceIndex % u.cols < u.bar_right ? -u.origin.x
+                  : max(u.viewport.x - u.origin.x - float(u.cols) * u.cell.x, 0.0);
 
     // Vulkan's y axis points down, like pixel rows: no flip, unlike GL.
-    vec2 px = u.origin + (cell + corner) * u.cell;
+    vec2 px = u.origin + (cell + corner) * u.cell + vec2(right, 0.0);
     gl_Position = vec4(px / u.viewport * 2.0 - 1.0, 0.0, 1.0);
 
     int slot = int(a_slot);

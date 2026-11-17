@@ -280,7 +280,11 @@ in any font, and both backends already draw them. No shader, no new
 backend code.
 
 They're in the accent color, at the right end of the bar, just before
-the status, with a space on each side. Their room is kept before the
+the status, with a space on each side (only before them when nothing
+follows). The right end of the bar, the bars and the status, is drawn
+against the window's right edge, past the padding (=bar_right=,
+[[file:06-renderer.org][chapter 6]]), so with no status the last bar
+touches the edge. Their room is kept before the
 tabs are placed, so any number of tabs shrink or scroll around them
 (chapter 25, "Too many tabs"); only a window so narrow that the tabs
 would have fewer than 16 columns hides them.

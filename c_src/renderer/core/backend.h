@@ -85,9 +85,19 @@ struct frame {
     uint8_t *capture;
     // Draw cells row 0 (the tab bar) below the others instead of above.
     bool first_row_last;
+    // The bar's cells before this column (the tabs) start at the window's
+    // left edge; the ones from it on (the visualizer, the status) end at
+    // its right edge. Past cols when there are none of those.
+    int bar_right;
+    // A band across the whole width, strip_y to strip_y + strip_h (window
+    // pixels from the top; strip_h 0 = none), filled with strip_rgb before
+    // the cells: the bar's color reaching the window's sides, so the
+    // padding doesn't show beside the bar.
+    int strip_y, strip_h;
+    uint8_t strip_rgb[3];
     uint8_t cursor_rgb[3];
     uint8_t clear_rgb[3]; // the padding around the grid
-    int origin_x, origin_y; // padding from the window's top-left, in pixels
+    int origin_x, origin_y; // where the first row on screen starts, in pixels
     // Images (Kitty graphics): those with z below 0 go over the
     // backgrounds and under the text, the others over the text. Each list
     // is drawn in order, clipped to the grid (clip_*, in window pixels,

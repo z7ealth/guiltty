@@ -8,7 +8,7 @@ layout(location = 2) in vec3 a_fg; // final colors, 0..1
 layout(location = 3) in vec3 a_bg;
 
 uniform vec2 u_viewport; // window size in pixels
-uniform vec2 u_origin; // top-left padding in pixels
+uniform vec2 u_origin; // where the first row on screen starts, in pixels
 uniform vec2 u_cell; // cell size in pixels
 uniform int u_cols; // grid columns
 uniform int u_atlas_cols; // slots per atlas row
@@ -16,6 +16,7 @@ uniform int u_cursor; // instance index of the cursor cell, -1 if hidden
 uniform int u_cursor2; // its right half when it's on a wide character, or -1
 uniform int u_rows; // rows of cells, the tab bar's included
 uniform int u_first_row_last; // 1: draw row 0 (the tab bar) at the bottom
+uniform int u_bar_right; // the bar's columns before this start at the left edge, the rest end at the right
 
 out vec2 v_texel; // position in the atlas, in texels
 out vec2 v_local; // position inside the cell, in pixels
@@ -31,8 +32,15 @@ void main() {
     if (u_first_row_last == 1)
         row = row == 0 ? u_rows - 1 : row - 1;
     vec2 cell = vec2(gl_InstanceID % u_cols, row);
+    bool is_bar = row == (u_first_row_last == 1 ? u_rows - 1 : 0);
+    // Its ends against the window's sides, past the padding: the tabs
+    // from the left edge, the right end (the visualizer, the status) up
+    // to the right edge, past the pixels left over after the last column.
+    float right = !is_bar                              ? 0.0
+                  : gl_InstanceID % u_cols < u_bar_right ? -u_origin.x
+                  : max(u_viewport.x - u_origin.x - float(u_cols) * u_cell.x, 0.0);
 
-    vec2 px = u_origin + (cell + corner) * u_cell;
+    vec2 px = u_origin + (cell + corner) * u_cell + vec2(right, 0.0);
     vec2 ndc = px / u_viewport * 2.0 - 1.0;
     gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0); // pixels grow down, NDC grows up
 

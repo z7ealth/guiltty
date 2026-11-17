@@ -281,6 +281,26 @@ defmodule Guiltty.LauncherTest do
       assert {"guiltty: catppuccin could be catppuccin-latte or catppuccin-mocha\n", 1} =
                client(~w(theme --set catppuccin), env)
     end
+
+    test "ai and tab-bar set one setting, the rest of it kept", %{env: env} do
+      start_supervised!({Guiltty.Config, path: Path.join(short_dir(), "none.exs")})
+      assert {"", 0} = client(["ai", "--set-command", "claude --continue"], env)
+      assert {"", 0} = client(~w(ai --set-position tab), env)
+
+      assert Guiltty.Config.get().ai == %{
+               command: "claude --continue",
+               position: :tab,
+               lock: true
+             }
+
+      assert {"", 0} = client(~w(tab-bar --set-position bottom), env)
+      assert Guiltty.Config.get().tab_bar == :bottom
+      assert {"", 0} = client(~w(tab-bar --set-style rounded), env)
+      assert Guiltty.Config.get().tab_style == :rounded
+
+      assert {"guiltty: tab-bar --set-position takes bottom or top\n", 1} =
+               client(~w(tab-bar --set-position left), env)
+    end
   end
 
   describe "the client on its own" do

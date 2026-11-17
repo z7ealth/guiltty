@@ -27,6 +27,28 @@ defmodule Guiltty.CommandTest do
     assert parsed(~w(pane --focus left)) == {{:pane, :focus, :left}, nil}
   end
 
+  test "ai and tab-bar take the config's values" do
+    assert parsed(["ai", "--set-command", "claude --continue"]) ==
+             {{:ai, :set_command, "claude --continue"}, nil}
+
+    assert parsed(~w(ai --set-position tab)) == {{:ai, :set_position, :tab}, nil}
+    assert parsed(~w(tab-bar --set-position bottom)) == {{:tab_bar, :set_position, :bottom}, nil}
+    assert parsed(~w(tab-bar --set-position=top)) == {{:tab_bar, :set_position, :top}, nil}
+    assert parsed(~w(tab-bar --set-style rounded)) == {{:tab_bar, :set_style, :rounded}, nil}
+
+    assert {:error, "ai --set-command takes a program" <> _} =
+             Command.parse(["ai", "--set-command", " "])
+
+    assert {:error, "ai --set-position takes down, right or tab"} =
+             Command.parse(~w(ai --set-position left))
+
+    assert {:error, "tab-bar --set-position takes bottom or top"} =
+             Command.parse(~w(tab-bar --set-position side))
+
+    assert {:error, "tab-bar --set-style takes flat, minimal, powerline, rounded or separators"} =
+             Command.parse(~w(tab-bar --set-style round))
+  end
+
   test "--pane goes anywhere, once" do
     assert parsed(~w(--pane 7 tab --close)) == {{:tab, :close, nil}, 7}
     assert parsed(~w(tab --close --pane=7)) == {{:tab, :close, nil}, 7}

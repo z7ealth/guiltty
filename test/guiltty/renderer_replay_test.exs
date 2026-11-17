@@ -267,8 +267,9 @@ defmodule Guiltty.RendererReplayTest do
     {_x, top, _w, _h} =
       red_box(replay("guiltty_gl-dbg", dir, image_msgs(dir, "a", red_image(:rgba), %{})))
 
-    # The grid's first row starts one cell below the padding (the tab bar).
-    cell_h = top - 6
+    # The grid's first row starts right under the tab bar, which sits on
+    # the window's top edge: one cell down.
+    cell_h = top
     up = image_msgs(dir, "b", red_image(:rgba), %{row: -1})
     assert {_x, ^top, @red_w, h} = red_box(replay("guiltty_gl-dbg", dir, up))
     assert h == @red_h - cell_h
@@ -279,7 +280,7 @@ defmodule Guiltty.RendererReplayTest do
     {_x, top, _w, _h} =
       red_box(replay("guiltty_gl-dbg", dir, image_msgs(dir, "a", red_image(:rgba), %{})))
 
-    cell_h = top - 6
+    cell_h = top
     msgs = image_msgs(dir, "c", red_image(:rgba), %{cells: {0, 3}})
     {_x, _y, w, h} = red_box(replay("guiltty_gl-dbg", dir, msgs))
     assert h == 3 * cell_h

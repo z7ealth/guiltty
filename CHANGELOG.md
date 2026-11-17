@@ -8,6 +8,34 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.29.0 — 2026-11-17 — set the AI tool and the tab bar from a shell
+
+### Added
+- `guiltty ai --set-command PROGRAM` sets what the AI key opens, and
+  `guiltty ai --set-position right|down|tab` where it opens. Quote a
+  program with arguments: `guiltty ai --set-command "claude --continue"`.
+- `guiltty tab-bar --set-position top|bottom` moves the tab bar in every
+  window, and `guiltty tab-bar --set-style STYLE` changes how the tabs
+  look (flat, powerline, rounded, minimal, separators).
+- Like `guiltty theme --set`, these last until the config file changes;
+  put them in `config.exs` to keep them.
+
+## 0.28.1 — 2026-11-17 — the tab bar reaches the edges
+
+### Fixed
+- The tab bar sits on the window's edge, like a status line: the tabs
+  and the visualizer reach the edge, and the bar's color fills the
+  padding on either side of it, instead of leaving a frame of
+  background around it.
+- The terminal sits right against the tab bar, so the panes and their
+  borders reach the bar. The padding, and the few pixels left over when
+  the window isn't a whole number of rows tall, are on the other side:
+  at the top with `tab_bar: :bottom`, at the bottom with the bar on
+  top. A window may fit one more row than before.
+- The first tab starts at the window's left edge, and the visualizer
+  ends at its right edge, with no padding beside them. A status message
+  (search, config warning) ends at the right edge too.
+
 ## 0.28.0 — 2026-11-16 — music: a visualizer in the tab bar
 
 ### Added

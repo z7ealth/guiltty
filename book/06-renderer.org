@@ -129,6 +129,58 @@ terminal. Grid
 row i is mirror row i + 1; the cursor and mouse rows are shifted to match,
 and a click on row 0 becomes a TAB_CLICK.
 
+The bar sits on the window's edge, like a status line, and the grid sits
+right against the bar: there's no padding on the bar's side of the grid.
+So the active tab, its accent line and the visualizer's bars reach the
+window's edge, and the panes' borders reach the bar. The padding is only
+on the grid's far side (and on its left and right).
+
+A window's height is rarely a whole number of cells. =grid_for_pixels=
+rounds the row count down, so a few pixels are left over. They go to the
+grid's far side too, with the padding: under the last row with the bar
+on top, as in most terminals; above the first row with the bar at the
+bottom, since there the grid hangs from the bar.
+
+=grid_y= in the core says where grid row 0 starts: one cell down with
+the bar on top, the window's height minus the grid and the bar with the
+bar at the bottom. Everything that places things on the grid works from
+it: the frame's =origin_y= (where the vertex shader starts its rows),
+images, the clip rectangle, the input method's cursor box and =cell_at=.
+=bar_y= is just the other end: 0, or right under the grid.
+
+The bar has as many columns as the grid, so the window's sides would
+show as background around it: the padding on the left, the padding and
+the leftover columns on the right. Before the cells, the backend fills
+a *band* across the whole window, one cell tall, in the bar's color
+(=strip_y=, =strip_h=, =strip_rgb= in the frame). GL clears just that
+rectangle with the scissor test on; Vulkan uses =vkCmdClearAttachments=
+inside the render pass. And the bar's ends go to the window's sides:
+
+#+begin_example
+   tab_bar: :top                 tab_bar: :bottom
+  +---------------------+       +---------------------+
+  |[ zsh | two    ##▃▅▇▂]|       |      padding        |
+  |      padding        |       | second              |
+  | second              |       | third               |
+  | third               |       | last row            |
+  | last row            |       |      leftover       |
+  |      leftover       |       |      padding        |
+  |      padding        |       |[ zsh | two    ##▃▅▇▂]|
+  +---------------------+       +---------------------+
+   # = the band, in the bar's color, side to side
+#+end_example
+
+The tabs (the bar's columns before =bar_right=) move left by the
+padding, so the first one starts at the window's left edge; a powerline
+tab's color reaches it. The right end (the visualizer and the status,
+from =bar_right= on) moves right by what's past the last column,
+=viewport.x - origin.x - cols × cell.x=: the padding plus the leftover.
+=cell_at= undoes the tabs' move for a click on the bar.
+
+=cell_at= works from the same =bar_y= and =grid_y=: a point in the bar's
+row is a TAB_CLICK, and any other point, even in the padding or the
+leftover, goes to the nearest grid row.
+
 The halo is the padding around the grid: while it's lit, the frame
 is cleared with the halo color instead of the background. The main loop
 waits with a timeout so it can turn it off.
