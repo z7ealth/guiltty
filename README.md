@@ -11,7 +11,7 @@ cells), a renderer (Vulkan, or OpenGL) that runs as its own process, and
 the small `guiltty` command.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="guiltty with three tabs; the active one runs yazi, previewing the guiltty logo as an image" width="800">
+  <img src="docs/screenshot.png" alt="guiltty with a tab split into two panes: a shell on the left and Claude Code on the right, above a powerline tab bar with the music visualizer" width="800">
 </p>
 
 Linux only. Tried on openSUSE Tumbleweed, on X11 and on Wayland (GNOME), with
