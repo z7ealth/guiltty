@@ -11,7 +11,7 @@ defmodule Guiltty.Window.Protocol do
 
   alias Guiltty.Theme
 
-  @version 16
+  @version 17
 
   @hello 1
   @setup 2
@@ -42,6 +42,7 @@ defmodule Guiltty.Window.Protocol do
   @attention 27
   @pointer 28
   @audio 29
+  @fullscreen 30
 
   @image_formats %{rgb: 0, rgba: 1, png: 2}
 
@@ -83,14 +84,22 @@ defmodule Guiltty.Window.Protocol do
   @doc """
   Window options, live: u16 padding (pixels at scale 1), u8 opacity
   (percent), u8 flags (bit 0: bold is bright, bit 1: tab bar at the
-  bottom, bit 2: ligatures).
+  bottom, bit 2: ligatures, bit 3: start maximized, bit 4: start
+  fullscreen). The start bits only count in the setup, before the window
+  exists.
   """
   def options(options), do: [<<@options>>, option_bytes(options)]
 
   defp option_bytes(%{padding: padding, opacity: opacity, bold_is_bright: bright} = o) do
     bottom = Map.get(o, :tab_bar, :top) == :bottom
     ligatures = Map.get(o, :ligatures, false)
-    <<padding::16, round(opacity * 100), bool(bright) + 2 * bool(bottom) + 4 * bool(ligatures)>>
+    start = Map.get(o, :start, :normal)
+
+    flags =
+      bool(bright) + 2 * bool(bottom) + 4 * bool(ligatures) + 8 * bool(start == :maximized) +
+        16 * bool(start == :fullscreen)
+
+    <<padding::16, round(opacity * 100), flags>>
   end
 
   @doc "Ask the renderer to open a URL (a file:// one opens the file in its app)."
@@ -231,6 +240,9 @@ defmodule Guiltty.Window.Protocol do
 
   @doc "Bring the window to the front."
   def raise_window, do: <<@raise>>
+
+  @doc "Into fullscreen, or out of it: whichever the window isn't."
+  def fullscreen, do: <<@fullscreen>>
 
   @doc """
   Ask the desktop to show that the window wants you, until it's focused

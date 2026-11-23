@@ -413,6 +413,70 @@ defmodule Guiltty.TabsTest do
       assert {:error, :no_tab} = Tabs.close_tab(@tabs, first)
     end
 
+    test "zoom shows the focused pane over the whole tab; the others keep their size" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [tab] = ids()
+      assert Tabs.toggle_zoom(@tabs) == :single
+      {:ok, right} = Tabs.split(@tabs, :right)
+      Tabs.attach_window(@tabs, self())
+
+      assert Tabs.toggle_zoom(@tabs) == :zoomed
+      assert_receive {:tabs, %{zoomed: %{^tab => ^right}, panes: %{rects: rects, separators: []}}}
+      assert rects == %{right => {0, 0, 81, 24}}
+      assert Session.size(right) == {81, 24}
+      assert Session.size(tab) == {40, 24}
+      # Nothing to resize: the layout stays as it was.
+      :ok = Tabs.resize_pane(@tabs, :left, 10)
+
+      assert Tabs.toggle_zoom(@tabs) == :unzoomed
+      assert_receive {:tabs, %{zoomed: zoomed, panes: %{rects: %{^tab => _, ^right => _}}}}
+      assert zoomed == %{}
+      assert Session.size(right) == {40, 24}
+    end
+
+    test "the zoom ends when the other panes are needed: focus, split, the zoomed pane closing" do
+      :ok = Tabs.resize(@tabs, 81, 24)
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      zoomed = fn -> :sys.get_state(@tabs).zoomed end
+
+      :zoomed = Tabs.toggle_zoom(@tabs)
+      :ok = Tabs.focus(@tabs, :left)
+      assert zoomed.() == %{}
+      assert Tabs.active(@tabs) == tab
+      assert Session.size(right) == {40, 24}
+
+      :zoomed = Tabs.toggle_zoom(@tabs)
+      {:ok, below} = Tabs.split(@tabs, :down)
+      assert zoomed.() == %{}
+      assert Tabs.active(@tabs) == below
+
+      :zoomed = Tabs.toggle_zoom(@tabs)
+      Session.write(below, "exit\r")
+      assert eventually(fn -> zoomed.() == %{} end)
+      assert eventually(fn -> Session.size(tab) == {40, 24} end)
+    end
+
+    test "a read-only pane is skipped by a broadcast, and forgotten when it ends" do
+      [tab] = ids()
+      {:ok, right} = Tabs.split(@tabs, :right)
+      assert Tabs.toggle_read_only(@tabs, right) == true
+      assert %{read_only: read_only} = Tabs.attach_window(@tabs, self())
+      assert MapSet.to_list(read_only) == [right]
+
+      {:ok, :joined} = Tabs.toggle_broadcast(@tabs, tab, ["bash"], local: true)
+      :sent = Tabs.send_input(@tabs, tab, "echo REACHED\r")
+      assert eventually(fn -> Screen.dump(tab) =~ "REACHED" end)
+      Process.sleep(200)
+      refute Screen.dump(right) =~ "REACHED"
+
+      assert Tabs.toggle_read_only(@tabs, right) == false
+      assert Tabs.toggle_read_only(@tabs, right) == true
+      Session.write(right, "exit\r")
+      assert eventually(fn -> MapSet.size(:sys.get_state(@tabs).read_only) == 0 end)
+      assert Tabs.toggle_read_only(@tabs, right) == {:error, :no_pane}
+    end
+
     test "too small to split: nothing happens" do
       :ok = Tabs.resize(@tabs, 2, 24)
       assert {:error, :too_small} = Tabs.split(@tabs, :right)

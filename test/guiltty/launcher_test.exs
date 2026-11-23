@@ -260,6 +260,33 @@ defmodule Guiltty.LauncherTest do
       assert out =~ "guiltty: there's no pane #{first} (closed?)"
     end
 
+    test "pane --zoom and --read-only set it, whatever it was", %{env: env, tabs: tabs} do
+      first = Guiltty.Tabs.active(tabs)
+      here = [{"GUILTTY_PANE", to_string(first)} | env]
+
+      assert {"guiltty: the pane is alone in its tab: nothing to zoom\n", 1} =
+               client(~w(pane --zoom), here)
+
+      {:ok, right} = Guiltty.Tabs.split(tabs, :right)
+
+      # The pane it's typed in, though the focus is on the other one.
+      assert {"", 0} = client(~w(pane --zoom), here)
+      assert {"", 0} = client(~w(pane --zoom), here)
+      assert :sys.get_state(tabs).zoomed == %{first => first}
+      assert Guiltty.Tabs.active(tabs) == first
+
+      assert {"", 0} = client(["--pane", to_string(right), "pane", "--read-only"], here)
+      assert {list, 0} = client(~w(window --list), here)
+      assert list =~ "  tab 1: "
+      assert list =~ "zoomed)"
+      assert list =~ "    pane #{right}: " and list =~ "(read-only)"
+
+      assert {"", 0} = client(~w(pane --unzoom), here)
+      assert {"", 0} = client(["--pane", to_string(right), "pane", "--writable"], here)
+      assert :sys.get_state(tabs).zoomed == %{}
+      assert MapSet.size(:sys.get_state(tabs).read_only) == 0
+    end
+
     test "tabs by number, and mistakes said plainly", %{env: env, tabs: tabs} do
       [first] = tab_ids(tabs)
       {:ok, _} = Guiltty.Tabs.new_tab(tabs)

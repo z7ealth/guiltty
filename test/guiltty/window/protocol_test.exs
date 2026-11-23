@@ -96,6 +96,20 @@ defmodule Guiltty.Window.ProtocolTest do
     assert Protocol.open_url("file:///tmp/x.exs") == <<21, "file:///tmp/x.exs">>
   end
 
+  test "how a window starts rides in the option flags; fullscreen is a toggle" do
+    flags = fn start ->
+      <<20, _::16, _, flags>> =
+        IO.iodata_to_binary(Protocol.options(Map.put(@options, :start, start)))
+
+      flags
+    end
+
+    assert flags.(:normal) == 0b1
+    assert flags.(:maximized) == 0b1001
+    assert flags.(:fullscreen) == 0b10001
+    assert Protocol.fullscreen() == <<30>>
+  end
+
   test "encodes the tab style: which colors are set, and those colors" do
     # A theme that leaves every tab color to the renderer.
     theme = tomorrow_night()

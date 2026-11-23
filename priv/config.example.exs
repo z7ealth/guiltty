@@ -55,7 +55,10 @@
     rows: 24,
     # The background's opacity, 0.1 to 1.0. Needs a compositor; applies to
     # windows opened after a change.
-    opacity: 1.0
+    opacity: 1.0,
+    # How a new window first shows: :normal (columns x rows), :maximized
+    # or :fullscreen (the fullscreen key leaves it).
+    start: :normal
   ],
 
   # The program each new tab runs. Without a command: your login shell.
@@ -184,6 +187,15 @@
     # half its room.
     split_right: ["ctrl+shift+o"],
     split_down: ["ctrl+shift+e"],
+    # The focused pane over the whole tab, and back. The others keep
+    # running, hidden; moving the focus or splitting brings them back.
+    zoom_pane: ["ctrl+shift+enter"],
+    # What you type, paste or click stops reaching the focused pane, and
+    # comes back on the same key: for a pane tailing a log, or a production
+    # shell you only want to watch.
+    read_only: ["ctrl+shift+i"],
+    # The window over the whole screen, and back.
+    fullscreen: ["f11"],
     # The focus to the pane in that direction (a click works too).
     focus_left: ["ctrl+shift+left"],
     focus_right: ["ctrl+shift+right"],

@@ -272,6 +272,7 @@ the renderer, some reach the shell's process:
 | =window: padding=              | renderer (OPTIONS) | live: new grid             |
 | =window: opacity=              | renderer        | windows opened after a change |
 | =window: columns, rows=        | Tabs            | the first tab of a new window |
+| =window: start= (=:normal=, =:maximized=, =:fullscreen=) | renderer (SETUP's flags) | windows opened after a change; the =fullscreen= key (F11) leaves it |
 | =bold_is_bright=               | renderer (OPTIONS) | live: every row sent again |
 | =tab_bar= (=:bottom=, =:top=)  | renderer (OPTIONS) | live                       |
 | =tab_style= (=:flat=, =:powerline=, =:rounded=, =:minimal=, =:separators=) | renderer (TAB_STYLE) | live (chapter 25) |
@@ -315,6 +316,24 @@ tests):
 The options ride in SETUP too because the renderer needs them *before* it
 creates the window: its size depends on the padding, and whether it can
 be translucent has to be decided at creation.
+
+=window: start= (since v0.31.0) uses that: flag bits 3 (maximized) and 4
+(fullscreen) of the same byte. =start: :maximized= with the settings
+above is =... 5a 09 ...=. The renderer makes the window at its normal
+size first, then asks for the state, before drawing anything: so
+unmaximizing or leaving fullscreen comes back to =columns= x =rows=, and
+on Wayland the normal size never shows. An OPTIONS message carries the
+bits too, and the renderer ignores them there: the window already
+exists. Both are ordinary requests every desktop understands (X11's
+=_NET_WM_STATE=, Wayland's =xdg_toplevel.set_maximized= and
+=set_fullscreen=), so they need nothing XFCE or GNOME doesn't have.
+
+The =fullscreen= key is a FULLSCREEN message with no body: a toggle,
+since the desktop can change it too (GNOME's Super+Up, a double click
+on the title) and only the renderer can ask SDL which it is now. It's
+SDL's "borderless desktop" fullscreen: the screen keeps its resolution
+and the window covers it, which arrives back in Elixir as an ordinary
+RESIZE.
 
 * Themes
 

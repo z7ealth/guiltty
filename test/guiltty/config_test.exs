@@ -48,7 +48,7 @@ defmodule Guiltty.ConfigTest do
 
     assert {:ok, c} = Config.load(path)
     assert c.cursor == %{style: :bar, blink: true, password_lock: true}
-    assert c.window == %{padding: 10, columns: 120, rows: 40, opacity: 0.85}
+    assert c.window == %{padding: 10, columns: 120, rows: 40, opacity: 0.85, start: :normal}
     assert c.shell == %{command: "/bin/bash", args: ["-l"]}
     assert c.working_directory == Path.expand("~/src")
     assert {c.copy_on_select, c.wheel_lines, c.bold_is_bright} == {:clipboard, 5, false}
@@ -152,6 +152,16 @@ defmodule Guiltty.ConfigTest do
 
     assert {:error, "cursor password_lock" <> _} =
              Config.load(write(dir, "c.exs", "[cursor: [password_lock: :yes]]"))
+  end
+
+  test "how a window starts: normal, maximized or fullscreen", %{tmp_dir: dir} do
+    assert {:ok, %{window: %{start: :normal}}} = Config.load(write(dir, "a.exs", "[]"))
+
+    assert {:ok, %{window: %{start: :maximized, columns: 80}}} =
+             Config.load(write(dir, "b.exs", "[window: [start: :maximized]]"))
+
+    assert {:error, "window start: expected one of" <> _} =
+             Config.load(write(dir, "c.exs", "[window: [start: :minimized]]"))
   end
 
   test "the AI tool: its command and where it opens", %{tmp_dir: dir} do

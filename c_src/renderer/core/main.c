@@ -111,6 +111,7 @@ struct renderer {
     bool tab_bar_bottom;
     int pixel_h; // the drawable's height: where the grid goes (grid_y)
     bool ligatures; // join "->", "!=" and friends when the font has them
+    uint8_t start; // OPTION_START_* from the setup: how the window first shows
     int cell_w, cell_h;
     // The cell size last told to Elixir in a RESIZE (0 before the first):
     // a new font can change it while cols and rows stay the same.
@@ -1007,6 +1008,7 @@ static void grid_for_pixels(const struct renderer *r, int w, int h, uint16_t *co
     r->bold_is_bright = flags & OPTION_BOLD_IS_BRIGHT;
     r->tab_bar_bottom = flags & OPTION_TAB_BAR_BOTTOM;
     r->ligatures = flags & OPTION_LIGATURES;
+    r->start = flags & (OPTION_START_MAXIMIZED | OPTION_START_FULLSCREEN);
     return true;
 }
 
@@ -1425,6 +1427,16 @@ static void read_placements(struct renderer *r, struct reader *rd) {
     case MSG_RAISE:
         SDL_RaiseWindow(r->window);
         return true;
+    case MSG_FULLSCREEN: {
+        // With no display mode set (SDL_SetWindowFullscreenMode), this is
+        // "borderless desktop" fullscreen: the screen keeps its own
+        // resolution, and the window is resized to cover it, which comes
+        // back as an ordinary resize. X11 and Wayland both have it.
+        bool on = (SDL_GetWindowFlags(r->window) & SDL_WINDOW_FULLSCREEN) == 0;
+        if (!SDL_SetWindowFullscreen(r->window, on))
+            SDL_Log("renderer: can't change fullscreen: %s", SDL_GetError());
+        return true;
+    }
     case MSG_ATTENTION:
         // Wayland: an xdg-activation request (GNOME shows "is ready");
         // X11: the urgency hint. Either way it stops once the window is
@@ -2113,6 +2125,17 @@ int main(int argc, char *argv[]) {
     if (density > 1.0f)
         SDL_SetWindowSize(r.window, (int)((float)width / density), (int)((float)height / density));
     set_minimum_size(&r);
+    // window: [start: ...]. Asked for now, right after the window is made
+    // and given its normal size, so leaving fullscreen or unmaximizing
+    // comes back to that size. On Wayland nothing has been drawn yet, so
+    // it never shows at the normal size first.
+    if (r.start & OPTION_START_FULLSCREEN) {
+        if (!SDL_SetWindowFullscreen(r.window, true))
+            SDL_Log("renderer: can't start fullscreen: %s", SDL_GetError());
+    } else if (r.start & OPTION_START_MAXIMIZED) {
+        if (!SDL_MaximizeWindow(r.window))
+            SDL_Log("renderer: can't start maximized: %s", SDL_GetError());
+    }
     set_window_icon(r.window);
     r.backend = renderer_backend.init(r.window);
     if (r.backend == nullptr || !renderer_backend.upload_atlas(r.backend, &r.atlas))

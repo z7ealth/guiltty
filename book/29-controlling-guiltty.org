@@ -33,6 +33,8 @@ switched from a cron job at sunset.
 | =guiltty pane --split-right= / =--split-down= | split the pane                                    |
 | =guiltty pane --close=                       | close the pane                                    |
 | =guiltty pane --focus left/right/up/down=    | move the window's focus                           |
+| =guiltty pane --zoom= / =--unzoom=           | the pane over its whole tab, or the split back (chapter 27) |
+| =guiltty pane --read-only= / =--writable=    | your typing stops reaching the pane, or reaches it again |
 | =guiltty theme --set NAME= / =--list=        | a built-in theme, until the config file changes   |
 | =guiltty ai --set-command PROGRAM=           | what the AI key opens, until the file changes     |
 | =guiltty ai --set-position right/down/tab=   | where the AI tool opens, until the file changes   |
@@ -205,6 +207,14 @@ window starts where =guiltty= was run, when =working_directory= is
   is already on purpose.
 - =tab --lock= and =--unlock= say what they want, where the key toggles.
   A script that locks twice still has a locked tab ([[file:../lib/guiltty/tabs.ex::def lock][Tabs.lock/3]]).
+  The same goes for =pane --zoom= / =--unzoom= and =--read-only= /
+  =--writable= (since v0.31.0, [[file:../lib/guiltty/tabs.ex::def zoom][Tabs.zoom/3]] and [[file:../lib/guiltty/tabs.ex::def read_only][Tabs.read_only/3]]).
+  And =pane --zoom= zooms the pane it's typed in, giving it the focus,
+  where the key zooms whichever pane has the focus. =window --list=
+  marks a tab "zoomed" and a pane "read-only".
+- A read-only pane still takes commands: =pane --split-right=,
+  =--zoom= and =--close= work on it. Read-only is about what you type,
+  and none of these types anything.
 - =theme --set= lasts until the config file changes
   ([[file:../lib/guiltty/config.ex::def override][Config.override/2]]). Trying a theme shouldn't rewrite your
   config: put it in =config.exs= to keep it. A name can be shortened to

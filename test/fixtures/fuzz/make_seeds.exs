@@ -64,6 +64,9 @@ seeds = %{
     Protocol.clipboard(:clipboard, "copied"),
     Protocol.raise_window(),
     Protocol.attention(),
+    # Into fullscreen and out again.
+    Protocol.fullscreen(),
+    Protocol.fullscreen(),
     Protocol.pointer(:link),
     Protocol.pointer(:default),
     Protocol.font(%{font | size: 20}),

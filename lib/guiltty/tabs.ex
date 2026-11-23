@@ -42,6 +42,28 @@ defmodule Guiltty.Tabs do
       printed something, finished a command (with or without an error), or
       rang the bell, since you last looked at them (see
       `Guiltty.Session.Screen`, "Marks")
+    * `:zoomed` - `%{tab => session}`: tabs showing one pane over the whole
+      tab (`toggle_zoom/1`); `:panes` then has that pane alone
+    * `:read_only` - the panes your typing doesn't reach
+      (`toggle_read_only/2`)
+
+  ## Zoom and read-only panes
+
+  Zooming a tab shows its focused pane over the whole tab, as tmux's
+  `resize-pane -Z` does. The layout stays as it was: the other panes keep
+  running at their old size, out of sight, and come back when the zoom
+  ends. It ends on the same key, and by itself when you'd need the other
+  panes: moving the focus, splitting, or closing the zoomed pane.
+  Resizing does nothing while zoomed, since there's no separator to move.
+
+  A read-only pane still shows everything its program prints, but what
+  you type, paste or click never reaches it (the window checks), and a
+  broadcast skips it. The terminal's own answers to the program still
+  go: the lock is against your typing, for a pane tailing a log or
+  sitting on a production shell.
+
+  Both live here rather than in the window, so a window opened again
+  finds them, like locks and names.
 
   ## Held tabs
 
@@ -157,6 +179,33 @@ defmodule Guiltty.Tabs do
   def toggle_lock(tabs, tab), do: GenServer.call(tabs, {:toggle_lock, tab})
 
   @doc """
+  Zooms the active tab's focused pane over the whole tab, or ends the
+  zoom (see "Zoom and read-only panes"). Returns `:zoomed`, `:unzoomed`,
+  or `:single` when the tab has one pane, so there's nothing to zoom.
+  """
+  def toggle_zoom(tabs), do: GenServer.call(tabs, :toggle_zoom)
+
+  @doc """
+  Makes pane `id` read-only, or lets typing reach it again. Returns the
+  new value: `true` for read-only, or `{:error, :no_pane}`.
+  """
+  def toggle_read_only(tabs, id), do: GenServer.call(tabs, {:toggle_read_only, id})
+
+  @doc """
+  Zooms pane `id` over its tab (`true`, giving it the focus), or ends
+  that tab's zoom (`false`), whatever it was: for scripts, like `lock/3`.
+  Returns `:ok`, `{:error, :single}` for a tab of one pane, or
+  `{:error, :no_tab}`.
+  """
+  def zoom(tabs, id, on?), do: GenServer.call(tabs, {:zoom, id, on?})
+
+  @doc """
+  Makes pane `id` read-only (`true`) or not (`false`), whatever it was.
+  Returns `:ok` or `{:error, :no_pane}`.
+  """
+  def read_only(tabs, id, on?), do: GenServer.call(tabs, {:read_only, id, on?})
+
+  @doc """
   Locks (`true`) or unlocks (`false`) a tab, whatever it was: a script can
   say it twice without undoing itself, as it would with `toggle_lock/2`.
   `tab` may also be one of its panes. Returns `{:error, :no_tab}` if
@@ -245,6 +294,10 @@ defmodule Guiltty.Tabs do
       held: %{},
       # key => pane: the AI tool's pane, per tab or :tab (the ai: option)
       ai: %{},
+      # tab => the pane shown over the whole tab (toggle_zoom/1)
+      zoomed: %{},
+      # panes your typing doesn't reach (toggle_read_only/2)
+      read_only: MapSet.new(),
       # the broadcast group: session => {pgid, host}, the foreground
       # process it joined with and where that ssh goes, or :local
       group: %{},
@@ -309,7 +362,19 @@ defmodule Guiltty.Tabs do
 
   defp save(state) do
     saved =
-      Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :held, :ai, :marks, :active])
+      Map.take(state, [
+        :tabs,
+        :layouts,
+        :focus,
+        :names,
+        :locked,
+        :held,
+        :ai,
+        :zoomed,
+        :read_only,
+        :marks,
+        :active
+      ])
 
     :ets.insert(state.table, {:saved, saved})
     state
@@ -351,6 +416,12 @@ defmodule Guiltty.Tabs do
           Map.filter(Map.get(saved, :ai, %{}), fn {key, pane} ->
             alive[pane] && (key == :tab or key in tabs)
           end),
+        zoomed:
+          Map.filter(Map.get(saved, :zoomed, %{}), fn {tab, pane} ->
+            tab in tabs and pane in Layout.panes(layouts[tab]) and
+              length(Layout.panes(layouts[tab])) > 1
+          end),
+        read_only: MapSet.filter(Map.get(saved, :read_only, MapSet.new()), &alive[&1]),
         marks: Map.take(saved.marks, tabs),
         active: if(saved.active in tabs, do: saved.active, else: List.first(tabs))
     }
@@ -437,22 +508,75 @@ defmodule Guiltty.Tabs do
     tab = state.active
 
     if Layout.member?(state.layouts[tab], id) and state.focus[tab] != id,
-      do: {:reply, :ok, notify_windows(put_in(state.focus[tab], id))},
+      do: {:reply, :ok, state |> unzoom(tab) |> put_in([:focus, tab], id) |> notify_windows()},
       else: {:reply, :ok, state}
   end
 
+  # Zoomed, the other panes are out of sight, but still where they were:
+  # moving the focus ends the zoom and goes to the one that way.
   def handle_call({:focus, direction}, _from, state) do
     tab = state.active
     {rects, _} = rects(state, tab)
 
     case Layout.neighbor(rects, state.focus[tab], direction) do
       nil -> {:reply, :ok, state}
-      id -> {:reply, :ok, notify_windows(put_in(state.focus[tab], id))}
+      id -> {:reply, :ok, state |> unzoom(tab) |> put_in([:focus, tab], id) |> notify_windows()}
+    end
+  end
+
+  def handle_call(:toggle_zoom, _from, %{active: nil} = state), do: {:reply, :single, state}
+
+  def handle_call(:toggle_zoom, _from, state) do
+    tab = state.active
+
+    if Map.has_key?(state.zoomed, tab) do
+      {:reply, :unzoomed, state |> unzoom(tab) |> notify_windows()}
+    else
+      case zoom_on(state, tab, state.focus[tab]) do
+        {:ok, state} -> {:reply, :zoomed, notify_windows(state)}
+        {:error, :single} -> {:reply, :single, state}
+      end
+    end
+  end
+
+  def handle_call({:zoom, id, on?}, _from, state) do
+    case {tab_of(state, id), on?} do
+      {nil, _} ->
+        {:reply, {:error, :no_tab}, state}
+
+      {tab, false} ->
+        {:reply, :ok, state |> unzoom(tab) |> notify_windows()}
+
+      {tab, true} ->
+        case zoom_on(state, tab, id) do
+          {:ok, state} -> {:reply, :ok, notify_windows(state)}
+          error -> {:reply, error, state}
+        end
+    end
+  end
+
+  def handle_call({:toggle_read_only, id}, _from, state) do
+    on? = not MapSet.member?(state.read_only, id)
+
+    case set_read_only(state, id, on?) do
+      {:ok, state} -> {:reply, on?, notify_windows(state)}
+      error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:read_only, id, on?}, _from, state) do
+    case set_read_only(state, id, on?) do
+      {:ok, state} -> {:reply, :ok, notify_windows(state)}
+      error -> {:reply, error, state}
     end
   end
 
   def handle_call({:resize_pane, _dir, _cells}, _from, %{active: nil} = state),
     do: {:reply, :ok, state}
+
+  def handle_call({:resize_pane, _dir, _cells}, _from, state)
+      when is_map_key(state.zoomed, state.active),
+      do: {:reply, :ok, state}
 
   def handle_call({:resize_pane, direction, cells}, _from, state) do
     tab = state.active
@@ -509,7 +633,10 @@ defmodule Guiltty.Tabs do
       state = check_group(state)
 
       if MapSet.size(state.lost) == 0 do
-        for {member, _} <- state.group, do: Pty.write(member, bytes)
+        for {member, _} <- state.group,
+            not MapSet.member?(state.read_only, member),
+            do: Pty.write(member, bytes)
+
         {:reply, :sent, state}
       else
         {:reply, {:paused, MapSet.to_list(state.lost)}, state}
@@ -598,7 +725,8 @@ defmodule Guiltty.Tabs do
               do: %{
                 id: pane,
                 title: Map.get(state.titles, pane, ""),
-                focus: pane == state.focus[tab]
+                focus: pane == state.focus[tab],
+                read_only: MapSet.member?(state.read_only, pane)
               }
 
         %{
@@ -606,6 +734,7 @@ defmodule Guiltty.Tabs do
           title: title,
           active: tab == state.active,
           locked: MapSet.member?(state.locked, tab),
+          zoomed: Map.has_key?(state.zoomed, tab),
           panes: panes
         }
       end)
@@ -697,6 +826,8 @@ defmodule Guiltty.Tabs do
   ## Opening
 
   defp split(state, tab, pane, dir, {hold, ai}, opts) do
+    # The new pane must show: a split ends the zoom.
+    state = unzoom(state, tab)
     {_x, _y, w, h} = rects(state, tab) |> elem(0) |> Map.fetch!(pane)
 
     if (dir == :right and w < 3) or (dir == :down and h < 3) do
@@ -863,6 +994,7 @@ defmodule Guiltty.Tabs do
       |> release(id)
       |> Map.update!(:titles, &Map.delete(&1, id))
       |> Map.update!(:ai, fn ai -> Map.reject(ai, fn {_key, pane} -> pane == id end) end)
+      |> Map.update!(:read_only, &MapSet.delete(&1, id))
 
     case tab_of(state, id) do
       nil ->
@@ -885,6 +1017,12 @@ defmodule Guiltty.Tabs do
               | layouts: Map.put(state.layouts, tab, layout),
                 focus: Map.put(state.focus, tab, if(focus == id, do: heir, else: focus))
             }
+
+            # The zoomed pane closed, or only one is left: no zoom.
+            state =
+              if state.zoomed[tab] == id or match?([_], Layout.panes(layout)),
+                do: %{state | zoomed: Map.delete(state.zoomed, tab)},
+                else: state
 
             {:noreply, state |> resize_tab(tab) |> notify_windows()}
         end
@@ -922,6 +1060,7 @@ defmodule Guiltty.Tabs do
           focus: Map.delete(state.focus, tab),
           names: Map.delete(state.names, tab),
           marks: Map.delete(state.marks, tab),
+          zoomed: Map.delete(state.zoomed, tab),
           active: active
       }
       |> seen()
@@ -966,11 +1105,47 @@ defmodule Guiltty.Tabs do
   ## Sizes
 
   defp full(%{size: {cols, rows}}), do: {0, 0, cols, rows}
+  # Where the layout puts every pane, zoomed or not: for finding neighbors.
   defp rects(state, tab), do: Layout.rects(state.layouts[tab], full(state))
 
-  # Every pane of the tab gets the size of its place in the layout.
+  # What shows: the zoomed pane alone over the whole tab, or the layout.
+  defp shown(state, tab) do
+    case state.zoomed do
+      %{^tab => pane} -> {%{pane => full(state)}, []}
+      _ -> rects(state, tab)
+    end
+  end
+
+  # Zooming on another pane than the one zoomed: the first goes back to
+  # its place before the second takes the tab.
+  defp zoom_on(state, tab, pane) do
+    if match?([_], Layout.panes(state.layouts[tab])) do
+      {:error, :single}
+    else
+      state = state |> unzoom(tab) |> put_in([:focus, tab], pane) |> put_in([:zoomed, tab], pane)
+      {:ok, resize_tab(state, tab)}
+    end
+  end
+
+  defp set_read_only(state, id, on?) do
+    cond do
+      tab_of(state, id) == nil -> {:error, :no_pane}
+      on? -> {:ok, %{state | read_only: MapSet.put(state.read_only, id)}}
+      true -> {:ok, %{state | read_only: MapSet.delete(state.read_only, id)}}
+    end
+  end
+
+  # The other panes come back, each to its place.
+  defp unzoom(state, tab) do
+    if Map.has_key?(state.zoomed, tab),
+      do: resize_tab(%{state | zoomed: Map.delete(state.zoomed, tab)}, tab),
+      else: state
+  end
+
+  # Every pane that shows gets the size of its place; zoomed, the others
+  # keep theirs, out of sight, until the zoom ends.
   defp resize_tab(state, tab) do
-    {rects, _} = rects(state, tab)
+    {rects, _} = shown(state, tab)
 
     for {id, {_x, _y, w, h}} <- rects,
         do: try(do: Session.resize(id, w, h, state.cell_pixels), catch: (:exit, _ -> :ok))
@@ -1112,7 +1287,7 @@ defmodule Guiltty.Tabs do
           nil
 
         tab ->
-          {rects, separators} = rects(state, tab)
+          {rects, separators} = shown(state, tab)
           %{focus: state.focus[tab], rects: rects, separators: separators}
       end
 
@@ -1130,6 +1305,8 @@ defmodule Guiltty.Tabs do
         end),
       lost: state.lost,
       ai: state.ai,
+      zoomed: state.zoomed,
+      read_only: state.read_only,
       marks: state.marks
     }
   end

@@ -62,7 +62,11 @@ defmodule Guiltty.Command do
        {"--split-right", :split_right, nil, "split the pane, the new one on the right"},
        {"--split-down", :split_down, nil, "split the pane, the new one below"},
        {"--close", :close, nil, "close the pane"},
-       {"--focus", :focus, "DIRECTION", "move the window's focus left, right, up or down"}
+       {"--focus", :focus, "DIRECTION", "move the window's focus left, right, up or down"},
+       {"--zoom", :zoom, nil, "show the pane over its whole tab (and focus it)"},
+       {"--unzoom", :unzoom, nil, "bring the tab's other panes back"},
+       {"--read-only", :read_only, nil, "stop your typing from reaching the pane"},
+       {"--writable", :writable, nil, "let typing reach the pane again"}
      ]},
     {"theme", :theme,
      [
@@ -346,12 +350,24 @@ defmodule Guiltty.Command do
   defp act(:pane, :close, _, tabs, pane, _opts), do: done(Tabs.close(tabs, pane))
   defp act(:pane, :focus, direction, tabs, _pane, _opts), do: done(Tabs.focus(tabs, direction))
 
+  defp act(:pane, :zoom, _, tabs, pane, _opts) do
+    case Tabs.zoom(tabs, pane, true) do
+      {:error, :single} -> {:error, "the pane is alone in its tab: nothing to zoom"}
+      result -> done(result)
+    end
+  end
+
+  defp act(:pane, :unzoom, _, tabs, pane, _opts), do: done(Tabs.zoom(tabs, pane, false))
+  defp act(:pane, :read_only, _, tabs, pane, _opts), do: done(Tabs.read_only(tabs, pane, true))
+  defp act(:pane, :writable, _, tabs, pane, _opts), do: done(Tabs.read_only(tabs, pane, false))
+
   defp opened({:ok, id}), do: {:ok, [to_string(id)]}
   defp opened(error), do: done(error)
 
   defp done(:ok), do: {:ok, []}
   defp done({:error, :no_tab}), do: {:error, "that pane's tab is gone"}
   defp done({:error, :no_such_tab}), do: {:error, "that pane is gone"}
+  defp done({:error, :no_pane}), do: {:error, "that pane is gone"}
   defp done({:error, reason}), do: {:error, inspect(reason)}
 
   ## theme
@@ -431,12 +447,18 @@ defmodule Guiltty.Command do
     |> Tabs.describe()
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {tab, n} ->
-      line = "  tab #{n}: #{tab.title}" <> notes([tab.active && "active", tab.locked && "locked"])
+      line =
+        "  tab #{n}: #{tab.title}" <>
+          notes([tab.active && "active", tab.locked && "locked", tab.zoomed && "zoomed"])
 
       panes =
         for pane <- tab.panes do
           "    pane #{pane.id}: #{pane.title}" <>
-            notes([pane.focus && "focus", pane.id == here && "here"])
+            notes([
+              pane.focus && "focus",
+              pane.read_only && "read-only",
+              pane.id == here && "here"
+            ])
         end
 
       [line | panes]

@@ -240,6 +240,67 @@ still checks each pane on its own: if one ssh ends, the group pauses and
 that tab gets the ⚠. If a pane isn't running ssh, the first press says so
 and nothing joins; a second press adds it as a local pane.
 
+* Zoom: one pane over the whole tab
+
+Ctrl+Shift+Enter (=zoom_pane=, since v0.31.0) shows the focused pane over
+the whole tab, as tmux's =resize-pane -Z= and Ghostty's
+=toggle_split_zoom= do. Press it again and the split is back.
+
+Nothing in the layout changes. Tabs keeps one more map, =zoomed: %{tab
+=> pane}=, and decides what *shows* from it:
+
+#+begin_example
+  layout (kept)                 shown, zoomed on 2         sizes
+  {:split, :right, 0.5,         %{2 => {0, 0, 81, 24}}     1: 40 x 24 (as it was)
+    {:pane, 1}, {:pane, 2}}     separators: []             2: 81 x 24
+#+end_example
+
+=shown/2= is the one place that knows: the Window gets those rects in
+=:panes=, as for any layout, so Compose stitches one pane and needs no
+change. Only the panes that show are resized (=resize_tab/2=). The
+hidden ones keep their size and their programs keep running: a build
+in pane 1 goes on printing into its own 40 columns, and when the zoom
+ends it's resized back to the same size, so nothing reflows. The Window
+leaves out of the compose any pane the rects don't have, so it stops
+viewing the hidden ones (they don't send rows nobody sees).
+
+The zoom ends by itself when you'd need the others: moving the focus
+(the pane "to the left" is still where the layout put it, so
+=Layout.neighbor/3= uses the real rects, not the shown ones),
+splitting (the new pane must show), or the zoomed pane closing.
+Resizing does nothing while zoomed: there's no separator on screen to
+move. The tab's title gets a 🔍, so a tab that looks like one pane but
+has three says so.
+
+* Read-only panes
+
+Ctrl+Shift+I (=read_only=) makes the focused pane read-only: it still
+shows everything its program prints, but what you type, paste or click
+doesn't reach it. It's for a pane tailing a production log, or an ssh
+you only want to watch, where a stray keystroke would cost something.
+The same key lets typing through again, and the tab gets an 👁 while one
+of its panes is read-only.
+
+The check is in the Window, where your input becomes bytes:
+
+- typing and pasting go through =input/2=, which refuses, and the tab
+  bar says =read-only pane: Ctrl+Shift+I to type again=;
+- a program's mouse reports go through =write_to/3=, which drops them
+  quietly (selecting and copying are guiltty's, not the program's, and
+  still work);
+- a broadcast (chapter 18) skips read-only panes, in =Tabs.send_input/3=.
+
+What it doesn't stop is what guiltty itself sends the program: the
+terminal's answers to its questions (a cursor position report), focus
+reports (=CSI I= / =CSI O=, mode 1004), and the AI key's paste, which you
+asked for with a key of guiltty's. The lock is against your typing, not
+against the terminal doing its job. (guiltty has no command that types
+into a pane, so there's no script path to stop either.)
+
+Like the zoom and the AI panes, the set lives in Tabs (=read_only:
+MapSet=), saved with the layout, so a window opened again, or a Tabs
+restarted after a crash, finds both as you left them.
+
 * The AI key
 
 A pane runs any program, so an AI tool is just one more. Press Ctrl+Shift+Space (=ai= in
@@ -346,6 +407,7 @@ whose it was, and an AI key pressed then would open a second tool.
   managers (i3, sway).
 - ioctl_tty(2) =TIOCSWINSZ=: each pane's own size, and its =SIGWINCH=.
 - Unicode box drawing, U+2500 to U+257F.
+- tmux(1) =resize-pane -Z= (zoom), and Ghostty's =toggle_split_zoom=.
 - The laptop AI key: =evtest(1)= shows =KEY_LEFTSHIFT=, =KEY_LEFTMETA=,
   =KEY_F23=; SDL3 wiki, =SDL_Keycode= (=SDLK_F23=) and =SDL_Keymod=
   (=SDL_KMOD_GUI=).
@@ -366,6 +428,12 @@ whose it was, and an AI key pressed then would open a second tool.
    go, and why wouldn't it if you had pressed Ctrl+Shift+L in between?
 8. How do the panes without the focus get dimmed, with no change to the
    renderer, and why isn't a lone pane dimmed?
+9. A tab is split in two and zoomed on the right pane; a build runs in
+   the left one. What size does the build's terminal have while zoomed,
+   and why does that matter when the zoom ends?
+10. A pane is read-only and in the broadcast group. You type in another
+    pane of the group: does the read-only one get it? And when its
+    program asks for the cursor position?
 
 ** Answers
 :PROPERTIES:
@@ -394,3 +462,9 @@ whose it was, and an AI key pressed then would open a second tool.
 8. Compose sets the dim attribute (SGR 2) on their cells as it stitches
    them in, and the renderer already draws dim text, halfway to the
    background. A lone pane has nothing to be told apart from.
+9. Its old 40 columns: only the panes that show are resized. When the
+   zoom ends it gets the same size back, so the program sees no
+   =SIGWINCH= and nothing it printed reflows.
+10. No: =send_input= skips read-only members. The cursor report does get
+    there: it's the Screen answering, straight to the pane's terminal,
+    and the lock is only in the Window's paths for your input.

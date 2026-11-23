@@ -24,10 +24,11 @@ defmodule Guiltty.Config do
       password_lock: boolean}` (programs can change the style while they
       run, as vim does in insert mode; `password_lock` shows a lock in
       place of the cursor while a program reads a password)
-    * `:window` - `%{padding: px, columns: n, rows: n, opacity: 0.1..1.0}`;
-      `columns` and `rows` are the size of a new window, `opacity` the
-      background's (it needs a compositor, and applies to windows opened
-      after a change)
+    * `:window` - `%{padding: px, columns: n, rows: n, opacity: 0.1..1.0,
+      start: :normal | :maximized | :fullscreen}`; `columns` and `rows`
+      are the size of a new window, `opacity` the background's (it needs a
+      compositor, and applies to windows opened after a change), `start`
+      how a new window first shows
     * `:shell` - `%{command: path | nil, args: [binary]}`; nil runs your
       login shell
     * `:working_directory` - `:inherit` (a new tab starts where the active
@@ -125,6 +126,11 @@ defmodule Guiltty.Config do
     ai: ["ctrl+shift+space", "super+shift+f23"],
     split_right: ["ctrl+shift+o"],
     split_down: ["ctrl+shift+e"],
+    # Ghostty's key for it. Ctrl+Shift+Z (tmux's prefix z) is prev_prompt.
+    zoom_pane: ["ctrl+shift+enter"],
+    # I for input.
+    read_only: ["ctrl+shift+i"],
+    fullscreen: ["f11"],
     focus_left: ["ctrl+shift+left"],
     focus_right: ["ctrl+shift+right"],
     focus_up: ["ctrl+shift+up"],
@@ -153,7 +159,7 @@ defmodule Guiltty.Config do
       keys: @default_keys,
       scrollback: 10_000,
       cursor: %{style: :block, blink: false, password_lock: true},
-      window: %{padding: 6, columns: 80, rows: 24, opacity: 1.0},
+      window: %{padding: 6, columns: 80, rows: 24, opacity: 1.0, start: :normal},
       shell: %{command: nil, args: []},
       working_directory: :inherit,
       copy_on_select: true,
@@ -508,8 +514,14 @@ defmodule Guiltty.Config do
          {:ok, columns} <-
            number(:"window columns", Keyword.get(opts, :columns, d.columns), 10..1000),
          {:ok, rows} <- number(:"window rows", Keyword.get(opts, :rows, d.rows), 3..1000),
+         {:ok, start} <-
+           one_of(:"window start", Keyword.get(opts, :start, d.start), [
+             :normal,
+             :maximized,
+             :fullscreen
+           ]),
          true <- is_number(opacity) and opacity >= 0.1 and opacity <= 1.0 do
-      {:ok, %{padding: padding, columns: columns, rows: rows, opacity: opacity / 1}}
+      {:ok, %{padding: padding, columns: columns, rows: rows, opacity: opacity / 1, start: start}}
     else
       false -> {:error, "window opacity: expected a number from 0.1 to 1.0"}
       error -> error

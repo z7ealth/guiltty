@@ -206,6 +206,9 @@ defmodule Guiltty.Window do
       locked: MapSet.new(),
       group: %{},
       lost: [],
+      # Tabs' too: tab => its zoomed pane, and the panes typing can't reach
+      zoomed: %{},
+      read_only: MapSet.new(),
       # a short-lived warning in the status
       flash: nil,
       # the tab waiting for a second Ctrl+Shift+B to join as a local tab
@@ -628,13 +631,25 @@ defmodule Guiltty.Window do
   defp input(%{active: nil} = state, _bytes), do: state
 
   defp input(state, bytes) do
-    if Map.has_key?(state.group, state.active) do
-      if state.scroll > 0 or state.view_moved, do: on_screen(state, &Screen.scroll(&1, :bottom))
-      catch_exit(fn -> Tabs.send_input(state.desk_tabs, state.active, bytes) end)
-      %{state | view_moved: false}
-    else
-      write(state, bytes)
+    cond do
+      MapSet.member?(state.read_only, state.active) -> refuse_read_only(state)
+      Map.has_key?(state.group, state.active) -> input_group(state, bytes)
+      true -> write(state, bytes)
     end
+  end
+
+  defp input_group(state, bytes) do
+    if state.scroll > 0 or state.view_moved, do: on_screen(state, &Screen.scroll(&1, :bottom))
+    catch_exit(fn -> Tabs.send_input(state.desk_tabs, state.active, bytes) end)
+    %{state | view_moved: false}
+  end
+
+  # Typing into a read-only pane: nothing goes, and the status says why
+  # (and how to undo it, since the pane looks like any other).
+  defp refuse_read_only(state) do
+    key = state.config.keys |> Map.get(:read_only, []) |> List.first()
+    undo = if key, do: ": #{Guiltty.Cheatsheet.pretty(key)} to type again", else: ""
+    flash(state, "read-only pane#{undo}")
   end
 
   # Anything sent to the program brings the view back to the live screen.
@@ -648,9 +663,18 @@ defmodule Guiltty.Window do
 
   # To one pane's program (a mouse report): its view goes back to live.
   defp write_to(state, _id, nil), do: state
-  defp write_to(%{active: id} = state, id, bytes), do: write(state, bytes)
 
+  # A click or the wheel in a read-only pane: guiltty's own (selecting,
+  # scrolling) still works, the program's mouse reports don't go.
   defp write_to(state, id, bytes) do
+    cond do
+      MapSet.member?(state.read_only, id) -> state
+      id == state.active -> write(state, bytes)
+      true -> write_other(state, id, bytes)
+    end
+  end
+
+  defp write_other(state, id, bytes) do
     if pane_value(state, id, :scroll, 0) > 0, do: on_pane(id, &Screen.scroll(&1, :bottom))
     Pty.write(id, bytes)
     state
@@ -1148,6 +1172,32 @@ defmodule Guiltty.Window do
     state
   end
 
+  # The focused pane over the whole tab, and back (Guiltty.Tabs, "Zoom
+  # and read-only panes"). Not the font's zoom, which is zoom_in.
+  defp run(:zoom_pane, state) do
+    case catch_exit(fn -> Tabs.toggle_zoom(state.desk_tabs) end) do
+      :single -> flash(state, "one pane: nothing to zoom")
+      _ -> state
+    end
+  end
+
+  defp run(:read_only, %{active: nil} = state), do: state
+
+  defp run(:read_only, state) do
+    case catch_exit(fn -> Tabs.toggle_read_only(state.desk_tabs, state.active) end) do
+      true -> flash(state, "read-only: what you type doesn't reach this pane")
+      false -> flash(state, "typing reaches this pane again")
+      _ -> state
+    end
+  end
+
+  # The renderer knows whether the window is fullscreen (the desktop can
+  # change it too), so it's a toggle, not a value.
+  defp run(:fullscreen, state) do
+    send_port(state, Protocol.fullscreen())
+    state
+  end
+
   defp run(:zoom_in, state), do: zoom(state, state.zoom + 1)
   defp run(:zoom_out, state), do: zoom(state, state.zoom - 1)
   defp run(:zoom_reset, state), do: zoom(state, 0)
@@ -1482,6 +1532,8 @@ defmodule Guiltty.Window do
         group: info.group,
         # Tabs keeps it, so a window opened again finds its AI panes
         ai_panes: Map.get(info, :ai, %{}),
+        zoomed: Map.get(info, :zoomed, %{}),
+        read_only: Map.get(info, :read_only, MapSet.new()),
         lost: MapSet.to_list(info.lost),
         members: Map.get(info, :members, %{})
     }
@@ -1491,6 +1543,7 @@ defmodule Guiltty.Window do
     titles =
       Enum.map(tabs, fn {id, title} ->
         title = if title == "", do: "shell", else: title
+        title = pane_markers(state, id) <> title
         title = if MapSet.member?(state.locked, id), do: "🔒 " <> title, else: title
         title = broadcast_marker(state, id) <> title
 
@@ -1509,6 +1562,15 @@ defmodule Guiltty.Window do
     %{state | tabs: tabs}
     |> show_panes(active, info)
     |> update_status()
+  end
+
+  # 🔍 a tab zoomed to one pane (the others are hidden, not gone); 👁 one
+  # with a read-only pane, which only watches.
+  defp pane_markers(state, tab) do
+    panes = Map.get(state.members, tab, [tab])
+    zoom = if Map.has_key?(state.zoomed, tab), do: "🔍 ", else: ""
+    watch = if Enum.any?(panes, &MapSet.member?(state.read_only, &1)), do: "👁 ", else: ""
+    zoom <> watch
   end
 
   # A tab's panes in the broadcast group: ⚠ if one lost its connection,
@@ -1532,7 +1594,12 @@ defmodule Guiltty.Window do
 
   defp show_panes(state, tab, info) do
     panes = info.panes
-    order = Map.get(state.members, tab, Map.keys(panes.rects))
+    # Zoomed, only one pane has a place; the others aren't viewed.
+    order =
+      state.members
+      |> Map.get(tab, Map.keys(panes.rects))
+      |> Enum.filter(&Map.has_key?(panes.rects, &1))
+
     key = {tab, panes.rects, info.size, order}
 
     cond do
@@ -1926,6 +1993,7 @@ defmodule Guiltty.Window do
 
   defp options(config) do
     %{
+      start: config.window.start,
       padding: config.window.padding,
       opacity: config.window.opacity,
       bold_is_bright: config.bold_is_bright,

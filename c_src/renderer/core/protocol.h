@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-constexpr uint16_t protocol_version = 16;
+constexpr uint16_t protocol_version = 17;
 
 // Largest message we accept; anything bigger is a protocol error. An IMAGE
 // can carry 64 MB of pixels (4096 x 4096 RGBA), plus its header.
@@ -76,7 +76,8 @@ enum msg_tag : uint8_t {
     // Elixir -> renderer: paste the primary selection (answered with a PASTE)
     MSG_PASTE_PRIMARY = 19,
     // Elixir -> renderer: window options: u16 padding (pixels at scale 1),
-    // u8 background opacity (percent), u8 flags (option_flag)
+    // u8 background opacity (percent), u8 flags (option_flag; the start
+    // flags only count in the setup, when the window is made)
     MSG_OPTIONS = 20,
     // Elixir -> renderer: open a URL with the desktop's app for it, UTF-8
     MSG_OPEN_URL = 21,
@@ -111,6 +112,9 @@ enum msg_tag : uint8_t {
     // count (at most max_audio_bands; 0 hides them), then count levels,
     // 0 silent to 255, lowest frequencies first
     MSG_AUDIO = 29,
+    // Elixir -> renderer: into fullscreen, or out of it (no body: the
+    // desktop can change it too, so only the renderer knows which it is)
+    MSG_FULLSCREEN = 30,
 };
 constexpr uint8_t max_audio_bands = 32;
 enum pointer_shape : uint8_t { POINTER_DEFAULT = 0, POINTER_LINK = 1, pointer_shape_count };
@@ -130,6 +134,8 @@ enum option_flag : uint8_t {
     OPTION_BOLD_IS_BRIGHT = 0x01,
     OPTION_TAB_BAR_BOTTOM = 0x02,
     OPTION_LIGATURES = 0x04,
+    OPTION_START_MAXIMIZED = 0x08,
+    OPTION_START_FULLSCREEN = 0x10,
 };
 constexpr size_t options_size = sizeof(uint16_t) + 2;
 enum tab_style : uint8_t {

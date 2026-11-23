@@ -2305,3 +2305,51 @@ says so.
 
 ### Later
 - A fuzz target for the text NIF, now that its buffer has an edge to hit.
+
+## 2026-11-23 — v0.31.0: zoom, read-only panes, fullscreen
+
+_Draft: agent, awaiting user_
+
+Two ideas came first and were dropped. A wallpaper behind the text was
+cheap to build, since the renderer already decodes PNGs for Kitty
+images, but its costs added up: readability, a pass to keep working in
+two backends, and a new JPEG library in five distributions. It's
+something other terminals already have, and you said you wouldn't use
+it. A Yakuake-style dropdown ran into Wayland: no app may grab a global
+key, place its own window or stay on top, and GNOME has no layer shell.
+Doing it properly meant forcing X11 for that window. So the question
+became which modes work the same on XFCE and on Wayland with no
+workaround, and four did.
+
+Zoom turned out to be one map and one function. The layout tree never
+changes: Tabs keeps `zoomed: %{tab => pane}`, and `shown/2` decides what
+the window sees. The Window and Compose didn't need to know, apart from
+one filter, because Compose fetches a rect for every pane it's told
+about. The subtle part was which rects to use for what. "The pane to the
+left" has to come from the real layout, or moving the focus while zoomed
+would find nothing. Sizes have to come from what shows, so the hidden
+panes keep their old size and nothing reflows when the zoom ends.
+
+Read-only is a guard in the Window's two write paths. Typing and paste
+flash a message saying how to undo it, since the pane looks like any
+other; mouse reports are dropped quietly. A broadcast also skips these
+panes, in Tabs. What guiltty itself sends the program (its answers to
+cursor reports, focus reports) still goes, on purpose.
+
+Fullscreen and the start state were the only renderer changes. The
+start state rides in two spare bits of the options byte, which SETUP
+already carries before the window exists. The renderer makes the window
+at its normal size first and asks for the state before drawing, so
+unmaximizing comes back to columns x rows. Fullscreen is an empty
+message, a toggle, because the desktop can change it too. Protocol 17.
+
+Then the commands: `guiltty pane --zoom`, `--unzoom`, `--read-only`
+and `--writable`. They say what they want, like `tab --lock`, because
+running a toggle twice from a script undoes it. Writing their docs
+caught a mistake of the first draft: it said scripts could still type
+into a read-only pane through `guiltty pane`, but no command types into
+a pane at all. What really still reaches the program is guiltty's own
+traffic: answers to its questions and focus reports.
+
+### Later
+- Hide the tab bar when there's one tab (it was on the list, left out).

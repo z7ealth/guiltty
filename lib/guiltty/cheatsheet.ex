@@ -77,6 +77,8 @@ defmodule Guiltty.Cheatsheet do
          {"Move focus", arrows(config.keys, :focus)},
          {"Resize", arrows(config.keys, :resize)},
          {"Focus a pane", "click it"},
+         {"Zoom a pane, and back", k.(:zoom_pane)},
+         {"Read-only pane, and back", k.(:read_only)},
          {"AI, and back", k.(:ai)}
        ]},
       {"Broadcast",
@@ -93,6 +95,7 @@ defmodule Guiltty.Cheatsheet do
        ]},
       {"guiltty",
        [
+         {"Fullscreen, and back", k.(:fullscreen)},
          {"Open the config", k.(:open_config)},
          {"This cheatsheet", k.(:cheatsheet)}
        ]}

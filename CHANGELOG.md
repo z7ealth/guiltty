@@ -8,6 +8,36 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.31.0 — 2026-11-23 — zoom, read-only panes, fullscreen
+
+### Added
+- Ctrl+Shift+Enter (`zoom_pane`) shows the focused pane over the whole
+  tab, and brings the split back. The other panes keep running, hidden,
+  at their old size; moving the focus, splitting or closing the zoomed
+  pane ends the zoom too. The tab shows a 🔍 while zoomed.
+- Ctrl+Shift+I (`read_only`) makes the focused pane read-only: it shows
+  everything, but what you type, paste or click doesn't reach its
+  program, and a broadcast skips it. The same key undoes it; the tab
+  shows an 👁 meanwhile.
+- F11 (`fullscreen`) puts the window over the whole screen, and back.
+- `window: [start: :maximized]` (or `:fullscreen`) opens new windows
+  maximized or fullscreen. `:normal`, the default, keeps `columns` x
+  `rows`.
+- `guiltty pane --zoom` / `--unzoom` and `--read-only` / `--writable`
+  do the same from a shell, for the pane they're typed in (or
+  `--pane ID`). `guiltty window --list` marks zoomed tabs and read-only
+  panes.
+- Zoom and read-only panes are kept like locks and names: a window
+  opened again, or guiltty's tabs restarting after a crash, finds them
+  as they were.
+
+### Changed
+- Ctrl+Shift+Enter, Ctrl+Shift+I and F11 are now guiltty's, so they no
+  longer reach programs, and an `exec` entry on one of them is now an
+  error in the tab bar. Rebind them in `keys` (`zoom_pane`, `read_only`,
+  `fullscreen`) to get them back.
+- The renderer protocol is version 17.
+
 ## 0.30.1 — 2026-11-23 — fixes
 
 ### Fixed

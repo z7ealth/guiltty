@@ -4,6 +4,7 @@ defmodule Guiltty.DeskTest do
   use ExUnit.Case, async: false
 
   alias Guiltty.{Desk, Lifeline, Tabs}
+  alias Guiltty.Session.Screen
 
   @env [
     {~c"SDL_VIDEO_DRIVER", ~c"offscreen"},
@@ -173,6 +174,41 @@ defmodule Guiltty.DeskTest do
     Process.exit(old, :kill)
     assert eventually(fn -> GenServer.whereis(tabs) not in [nil, old] end)
     assert eventually(fn -> :sys.get_state(tabs).ai == %{tab: ai} end)
+  end
+
+  test "a read-only pane ignores typing; zoom and read-only outlive the window and Tabs" do
+    a = open_desk()
+    tabs = Desk.tabs(a)
+    pid = window(a)
+    assert eventually(fn -> :sys.get_state(pid).ready end)
+    [tab] = ids(a)
+    {:ok, right} = Tabs.split(tabs, :right)
+    assert eventually(fn -> :sys.get_state(pid).active == right end)
+    port = :sys.get_state(pid).port
+
+    # Ctrl+Shift+I (SDL's keycode for i, with Ctrl and Shift), then typing.
+    send(pid, {port, {:data, <<5, ?i::32, 0x0041::16, ?i::32, 1>>}})
+    assert eventually(fn -> MapSet.member?(:sys.get_state(pid).read_only, right) end)
+    send(pid, {port, {:data, <<4, "echo TYPED\r">>}})
+    assert eventually(fn -> :sys.get_state(pid).flash =~ "read-only" end)
+    Process.sleep(200)
+    refute Screen.dump(right) =~ "TYPED"
+
+    # Ctrl+Shift+Enter: the focused pane alone.
+    send(pid, {port, {:data, <<5, 0x0D::32, 0x0041::16, 0x0D::32, 1>>}})
+    assert eventually(fn -> Map.keys(:sys.get_state(pid).panes.rects) == [right] end)
+
+    # Locked, so closing the window keeps it.
+    :ok = Tabs.lock(tabs, tab, true)
+    close_window(a)
+    {:ok, ^a} = Lifeline.open(window: [env: @env])
+    assert eventually(fn -> :sys.get_state(window(a)).zoomed == %{tab => right} end)
+
+    old = GenServer.whereis(tabs)
+    Process.exit(old, :kill)
+    assert eventually(fn -> GenServer.whereis(tabs) not in [nil, old] end)
+    assert eventually(fn -> :sys.get_state(tabs).zoomed == %{tab => right} end)
+    assert MapSet.member?(:sys.get_state(tabs).read_only, right)
   end
 
   test "Ctrl+Shift+N in a window opens another, independent one" do

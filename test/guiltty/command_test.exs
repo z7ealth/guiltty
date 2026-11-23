@@ -14,6 +14,8 @@ defmodule Guiltty.CommandTest do
   test "a noun and its action" do
     assert parsed(~w(tab --new)) == {{:tab, :new, nil}, nil}
     assert parsed(~w(pane --split-down)) == {{:pane, :split_down, nil}, nil}
+    assert parsed(~w(pane --zoom)) == {{:pane, :zoom, nil}, nil}
+    assert parsed(~w(pane --read-only --pane 7)) == {{:pane, :read_only, nil}, 7}
     assert parsed(~w(window --list)) == {{:window, :list, nil}, nil}
     assert parsed(~w(theme --set nord)) == {{:theme, :set, "nord"}, nil}
     assert parsed(["--help"]) == {{:help, nil, nil}, nil}
