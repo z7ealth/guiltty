@@ -91,8 +91,10 @@ defmodule Guiltty.Tabs do
   @doc """
   Options: `:desk` (the desk's id; its sessions are registered with it),
   `:name`, `:keeper` (a `Guiltty.Tabs.Keeper`, to survive a crash), `:cwd` (where the first tab starts, when the config's
-  `working_directory` is `:inherit`: the folder `guiltty` was run in) and
-  `:session_opts` (merged into every session's, for tests).
+  `working_directory` is `:inherit`: the folder `guiltty` was run in),
+  `:first_tab` (options for the first tab's session, like `new_tab/2`'s: an
+  `exec` key's program in a window of its own) and `:session_opts`
+  (merged into every session's, for tests).
   """
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
@@ -101,8 +103,9 @@ defmodule Guiltty.Tabs do
   Opens a new tab after the active one and makes it active. Returns
   `{:ok, id}`. Options go to its session, over the config's: `:shell`
   and `:args` run a program instead of the shell (the tab closes when it
-  exits). With `hold: true` the tab is locked while this pane runs (see
-  "Held tabs"); `split/3` takes it too.
+  exits), and `:name` is its title until it sets one (the tab bar shows
+  "shell" for a session with neither). With `hold: true` the tab is
+  locked while this pane runs (see "Held tabs"); `split/3` takes these too.
   """
   def new_tab(tabs, opts \\ []), do: GenServer.call(tabs, {:new_tab, opts})
 
@@ -115,6 +118,13 @@ defmodule Guiltty.Tabs do
   other options go to the new pane's session.
   """
   def split(tabs, direction, opts \\ []), do: GenServer.call(tabs, {:split, direction, opts})
+
+  @doc """
+  Where a new tab would start now, by the `working_directory` setting
+  (nil if that can't be known). The `exec` setting's programs start there
+  too.
+  """
+  def start_directory(tabs), do: GenServer.call(tabs, :start_directory)
 
   @doc """
   Moves the focus in the active tab: to the pane `:left`, `:right`, `:up`
@@ -245,6 +255,7 @@ defmodule Guiltty.Tabs do
       monitors: %{},
       session_opts: Keyword.get(opts, :session_opts, []),
       first_cwd: Keyword.get(opts, :cwd),
+      first_tab: Keyword.get(opts, :first_tab, []),
       # the Keeper's ETS table this process owns, or nil
       table: take_table(opts[:keeper])
     }
@@ -256,7 +267,7 @@ defmodule Guiltty.Tabs do
   def handle_continue(:first_tab, state) do
     case running_sessions(state.desk) do
       [] ->
-        case open_tab(state) do
+        case open_tab(state, state.first_tab) do
           {:ok, _id, state} -> {:noreply, state}
           {:error, reason} -> {:stop, {:first_tab_failed, reason}, state}
         end
@@ -391,6 +402,9 @@ defmodule Guiltty.Tabs do
       {:error, _} = error -> {:reply, error, state}
     end
   end
+
+  def handle_call(:start_directory, _from, state),
+    do: {:reply, start_dir(Config.get().working_directory, state), state}
 
   def handle_call({:split, dir, opts}, _from, state) when dir in [:right, :down] do
     {pane, opts} = Keyword.pop(opts, :pane, focused(state))
@@ -765,7 +779,7 @@ defmodule Guiltty.Tabs do
     host == to_string(name)
   end
 
-  defp open_tab(state, extra \\ []) do
+  defp open_tab(state, extra) do
     # Unique across every desk, and increasing: the Registry names sessions
     # by id, and running_sessions/1 sorts by it.
     id = new_id()
@@ -804,7 +818,8 @@ defmodule Guiltty.Tabs do
 
     case DynamicSupervisor.start_child(@sessions, {Session.Supervisor, opts}) do
       {:ok, pid} ->
-        {:ok, %{state | titles: Map.put(state.titles, id, "")} |> monitor_session(id, pid)}
+        title = Keyword.get(opts, :name, "")
+        {:ok, %{state | titles: Map.put(state.titles, id, title)} |> monitor_session(id, pid)}
 
       {:error, reason} ->
         Logger.error("tabs: couldn't open a session: #{inspect(reason)}")

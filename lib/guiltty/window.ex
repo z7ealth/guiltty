@@ -86,7 +86,7 @@ defmodule Guiltty.Window do
 
   require Logger
 
-  alias Guiltty.{Audio, Cheatsheet, Config, Keymap, Lifeline, Session, Tabs}
+  alias Guiltty.{Audio, Cheatsheet, Config, Desk, Exec, Keymap, Lifeline, Session, Tabs}
   alias Guiltty.Session.{Pty, Screen}
   alias Guiltty.Window.{Compose, Protocol}
 
@@ -179,7 +179,7 @@ defmodule Guiltty.Window do
       input: @default_input,
       title: nil,
       config: config,
-      bindings: parse_bindings(config.keys),
+      bindings: parse_bindings(config),
       # font size steps added by zooming
       zoom: 0,
       # the left button is down and selecting
@@ -431,6 +431,8 @@ defmodule Guiltty.Window do
     do: {:noreply, deliver_ai_paste(state)}
 
   def handle_info({:ai_paste_late, _pane}, state), do: {:noreply, state}
+
+  def handle_info({:exec_failed, message}, state), do: {:noreply, flash(state, message, 6_000)}
 
   ## Renderer events
 
@@ -1149,7 +1151,75 @@ defmodule Guiltty.Window do
   defp run(:zoom_out, state), do: zoom(state, state.zoom - 1)
   defp run(:zoom_reset, state), do: zoom(state, 0)
 
+  defp run({:exec, index}, state) do
+    case Enum.at(state.config.exec, index) do
+      nil -> state
+      entry -> exec(state, entry)
+    end
+  end
+
   defp run(_unknown, state), do: state
+
+  ## The exec setting: your own keys
+
+  defp exec(state, %{command: command, position: position}) do
+    with [program | args] <- OptionParser.split(command),
+         path when is_binary(path) <- Exec.find(program) do
+      exec_at(position, state, path, args)
+    else
+      _ -> flash(state, "#{command}: not found. Try its full path in the exec setting", 6_000)
+    end
+  end
+
+  # No terminal: it runs where a new tab would start, with a shell's
+  # environment for the pane you're in (GUILTTY_PANE), on this window's display.
+  defp exec_at(:background, state, path, args) do
+    Exec.background(path, args,
+      cd: start_directory(state),
+      env: Pty.child_env(Desk.display_env(state.env), state.active),
+      notify: self()
+    )
+
+    state
+  end
+
+  defp exec_at(:window, state, path, args) do
+    opts = [window: [env: state.env], fresh: true, cwd: start_directory(state)]
+
+    first_tab = [shell: path, args: args, name: Path.basename(path)]
+
+    case Lifeline.open(opts ++ [first_tab: first_tab]) do
+      {:ok, _desk} -> state
+      {:error, _} -> flash(state, "couldn't open #{Path.basename(path)}")
+    end
+  end
+
+  defp exec_at(position, state, path, args) do
+    case open_program(state, position, shell: path, args: args, name: Path.basename(path)) do
+      {:ok, _pane} -> state
+      _ -> flash(state, "couldn't open #{Path.basename(path)}")
+    end
+  end
+
+  defp start_directory(state) do
+    case catch_exit(fn -> Tabs.start_directory(state.desk_tabs) end) do
+      dir when is_binary(dir) -> dir
+      _ -> nil
+    end
+  end
+
+  # A program in a tab, or beside the focused pane: the AI key's and the
+  # exec setting's.
+  defp open_program(state, :tab, opts),
+    do: catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
+
+  defp open_program(state, direction, opts) do
+    case catch_exit(fn -> Tabs.split(state.desk_tabs, direction, opts) end) do
+      # No room for a pane: a tab is better than nothing.
+      {:error, :too_small} -> catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
+      result -> result
+    end
+  end
 
   ## The AI key
 
@@ -1194,19 +1264,8 @@ defmodule Guiltty.Window do
   defp open_ai_session(state, path, args) do
     # Locked while it runs: closing the window by accident shouldn't end
     # an agent's work (Guiltty.Tabs, "Held tabs").
-    opts = [shell: path, args: args, hold: state.config.ai.lock]
-
-    case state.config.ai.position do
-      :tab ->
-        catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
-
-      direction ->
-        case catch_exit(fn -> Tabs.split(state.desk_tabs, direction, opts) end) do
-          # No room for a pane: a tab is better than nothing.
-          {:error, :too_small} -> catch_exit(fn -> Tabs.new_tab(state.desk_tabs, opts) end)
-          result -> result
-        end
-    end
+    opts = [shell: path, args: args, name: Path.basename(path), hold: state.config.ai.lock]
+    open_program(state, state.config.ai.position, opts)
   end
 
   defp enter_ai(state, pane) do
@@ -1375,10 +1434,13 @@ defmodule Guiltty.Window do
     }
   end
 
-  defp parse_bindings(keys) do
+  # guiltty's own keys first, then the exec setting's, as {:exec, index}.
+  # The config refuses an exec key one of guiltty's already has.
+  defp parse_bindings(config) do
     go_to = for n <- 1..9, do: {{:go_to_tab, n - 1}, ["ctrl+shift+#{n}"]}
+    exec = config.exec |> Enum.with_index() |> Enum.map(fn {e, i} -> {{:exec, i}, e.keys} end)
 
-    for {action, names} <- Map.to_list(keys) ++ go_to,
+    for {action, names} <- Map.to_list(config.keys) ++ go_to ++ exec,
         name <- names,
         {:ok, binding} <- [Keymap.parse_key(name)],
         do: {action, binding}
@@ -1801,7 +1863,7 @@ defmodule Guiltty.Window do
 
     old_font = font(state)
     old = state.config
-    state = %{state | config: config, bindings: parse_bindings(config.keys)}
+    state = %{state | config: config, bindings: parse_bindings(config)}
     if font(state) != old_font, do: send_port(state, Protocol.font(font(state)))
     if options(config) != options(old), do: send_port(state, Protocol.options(options(config)))
     if tab_style(config) != tab_style(old), do: send_port(state, tab_style(config))

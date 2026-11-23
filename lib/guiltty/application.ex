@@ -9,6 +9,8 @@ defmodule Guiltty.Application do
   #   |-- Guiltty.Registry      names of every session's and desk's processes
   #   |-- Guiltty.PubSub        who listens for what (duplicate keys): the
   #   |                         windows, for the visualizer's levels
+  #   |-- Guiltty.Background    Task.Supervisor: the exec setting's programs
+  #   |                         that run with no terminal (Guiltty.Exec)
   #   |-- Guiltty.Config        ~/.config/guiltty/config.exs, reloaded on save
   #   |-- Guiltty.Sessions      DynamicSupervisor: one Session.Supervisor per tab
   #   |-- Guiltty.Desks         DynamicSupervisor: one Desk per window (its
@@ -31,7 +33,8 @@ defmodule Guiltty.Application do
     children =
       [
         {Registry, keys: :unique, name: Guiltty.Registry},
-        {Registry, keys: :duplicate, name: Guiltty.PubSub}
+        {Registry, keys: :duplicate, name: Guiltty.PubSub},
+        {Task.Supervisor, name: Guiltty.Background}
       ] ++
         if Application.get_env(:guiltty, :autostart, true) do
           [

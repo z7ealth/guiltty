@@ -243,6 +243,14 @@ defmodule Guiltty.Session.Pty do
   defp pane_env(env, id) when is_integer(id), do: put_env(env, "GUILTTY_PANE", to_string(id))
   defp pane_env(env, _id), do: Enum.reject(env, &String.starts_with?(&1, "GUILTTY_PANE="))
 
+  @doc """
+  The environment a program started for pane `id` gets, as `"NAME=value"`
+  strings: what a shell in that pane has, with `overrides` on top. The
+  `exec` setting's background programs get it too (`Guiltty.Exec`), so
+  one can call `guiltty pane ...` and mean the pane you were in.
+  """
+  def child_env(overrides, id), do: overrides |> build_env() |> pane_env(id)
+
   defp put_env(env, name, value),
     do: [name <> "=" <> value | Enum.reject(env, &String.starts_with?(&1, name <> "="))]
 

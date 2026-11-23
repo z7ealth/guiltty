@@ -16,7 +16,7 @@ defmodule Guiltty.Config do
   A config is a map:
 
     * `:theme` - a `Guiltty.Theme`
-    * `:font` - `%{family: "monospace", size: 12}`
+    * `:font` - `%{family: "monospace", size: 14}`
     * `:keys` - `%{action => [key]}`, see `Guiltty.Keymap.parse_key/1`
     * `:scrollback` - rows each tab keeps (applies to tabs opened after a
       change)
@@ -60,6 +60,13 @@ defmodule Guiltty.Config do
       tab of its own. nil opens nothing: guiltty doesn't pick one for you.
       With `lock` (the default), its tab is locked while the tool runs, so
       closing the window doesn't end it (`Guiltty.Tabs`, "Held tabs")
+    * `:exec` - `[%{keys: [key], command: binary, position: atom}]`: your
+      own keys, each running a program `:right` or `:down` of the focused
+      pane, in a `:tab`, in a `:window` of its own, or in the
+      `:background` with no terminal (`Guiltty.Exec`). In the file, each
+      is a map (or keyword list) with `key:` (a name or a list of them),
+      `command:` and `position:` (`:right` by default). A key one of
+      guiltty's own keys already uses is an error, never a silent winner
     * `:clipboard_write` - programs can put text on the clipboard (OSC 52),
       from the focused pane; they can never read it
     * `:link_url` - Ctrl+click opens URLs found in plain text (http, https,
@@ -77,7 +84,7 @@ defmodule Guiltty.Config do
 
   require Logger
 
-  alias Guiltty.Theme
+  alias Guiltty.{Keymap, Theme}
 
   @poll_ms 1_000
 
@@ -142,7 +149,7 @@ defmodule Guiltty.Config do
   def defaults do
     %{
       theme: Theme.default(),
-      font: %{family: "monospace", size: 12},
+      font: %{family: "monospace", size: 14},
       keys: @default_keys,
       scrollback: 10_000,
       cursor: %{style: :block, blink: false, password_lock: true},
@@ -160,6 +167,7 @@ defmodule Guiltty.Config do
       broadcast_programs: ["ssh", "mosh-client"],
       renderer: :vulkan,
       ai: %{command: nil, position: :right, lock: true},
+      exec: [],
       clipboard_write: true,
       link_url: true,
       screen_reports: false,
@@ -414,6 +422,7 @@ defmodule Guiltty.Config do
          {:ok, programs} <- programs(get.(:broadcast_programs, d.broadcast_programs)),
          {:ok, renderer} <- one_of(:renderer, get.(:renderer, d.renderer), [:vulkan, :gl]),
          {:ok, ai} <- ai(get.(:ai, []), d.ai),
+         {:ok, exec} <- exec(get.(:exec, d.exec), keys),
          {:ok, clipboard_write} <-
            one_of(:clipboard_write, get.(:clipboard_write, d.clipboard_write), [true, false]),
          {:ok, link_url} <- one_of(:link_url, get.(:link_url, d.link_url), [true, false]),
@@ -442,6 +451,7 @@ defmodule Guiltty.Config do
          broadcast_programs: programs,
          renderer: renderer,
          ai: ai,
+         exec: exec,
          clipboard_write: clipboard_write,
          link_url: link_url,
          screen_reports: screen_reports,
@@ -540,6 +550,106 @@ defmodule Guiltty.Config do
   end
 
   defp ai(_, _), do: {:error, "ai: expected a keyword list"}
+
+  @exec_fields [:key, :command, :position]
+  @exec_positions [:right, :down, :tab, :window, :background]
+
+  # Each entry is checked on its own, and claims its keys: a key that
+  # guiltty or an earlier entry already has is an error. Bindings are
+  # tried in order, so a key bound twice would only ever run the first.
+  defp exec(entries, keys) when is_list(entries) do
+    entries
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({[], taken_keys(keys)}, fn {entry, n}, {done, taken} ->
+      case exec_entry(entry, "exec #{n}", taken) do
+        {:ok, checked, taken} -> {:cont, {[checked | done], taken}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:error, _} = error -> error
+      {done, _taken} -> {:ok, Enum.reverse(done)}
+    end
+  end
+
+  defp exec(_, _),
+    do: {:error, ~s(exec: expected a list, like [%{key: "ctrl+shift+m", command: "btop"}])}
+
+  defp exec_entry(entry, where, taken) do
+    with {:ok, entry} <- exec_map(entry, where),
+         :ok <- exec_fields(entry, where),
+         {:ok, names} <- exec_keys(Map.get(entry, :key), where),
+         {:ok, command} <- exec_command(Map.get(entry, :command), where),
+         {:ok, position} <-
+           one_of(:"#{where} position", Map.get(entry, :position, :right), @exec_positions),
+         {:ok, taken} <- claim(names, taken, where, command) do
+      {:ok, %{keys: names, command: command, position: position}, taken}
+    end
+  end
+
+  defp exec_map(entry, _where) when is_map(entry), do: {:ok, entry}
+
+  defp exec_map(entry, where) when is_list(entry) do
+    if Keyword.keyword?(entry), do: {:ok, Map.new(entry)}, else: exec_map(nil, where)
+  end
+
+  defp exec_map(_, where),
+    do: {:error, ~s(#{where}: expected a map, like %{key: "ctrl+shift+m", command: "btop"})}
+
+  defp exec_fields(entry, where) do
+    case Enum.find(Map.keys(entry), &(&1 not in @exec_fields)) do
+      nil -> :ok
+      name -> {:error, unknown_name(where, name, @exec_fields)}
+    end
+  end
+
+  defp exec_keys(name, where) when is_binary(name), do: exec_keys([name], where)
+
+  defp exec_keys([_ | _] = names, where) do
+    if Enum.all?(names, &is_binary/1),
+      do: {:ok, names},
+      else: exec_keys(nil, where)
+  end
+
+  defp exec_keys(_, where),
+    do: {:error, ~s(#{where} key: expected a key name, like "ctrl+shift+m", or a list of them)}
+
+  defp exec_command(command, where) do
+    if is_binary(command) and String.trim(command) != "",
+      do: {:ok, command},
+      else: {:error, ~s(#{where} command: expected a program, like "btop")}
+  end
+
+  defp claim(names, taken, where, command) do
+    Enum.reduce_while(names, {:ok, taken}, fn name, {:ok, taken} ->
+      case Keymap.parse_key(name) do
+        :error ->
+          {:halt, {:error, "#{where} key: unknown key name #{inspect(name)}"}}
+
+        {:ok, binding} when is_map_key(taken, binding) ->
+          {:halt, {:error, "#{where} key: #{name} is already #{Map.fetch!(taken, binding)}"}}
+
+        {:ok, binding} ->
+          {:cont, {:ok, Map.put(taken, binding, "used by #{inspect(command)}")}}
+      end
+    end)
+  end
+
+  # The keys guiltty already answers: the `keys` setting, Ctrl+Shift+1-9
+  # (go to a tab), and the paste keys, which the renderer handles itself
+  # before any binding could see them.
+  defp taken_keys(keys) do
+    fixed = [
+      {"go to a tab", for(n <- 1..9, do: "ctrl+shift+#{n}")},
+      {"paste", ["ctrl+shift+v", "shift+insert"]}
+    ]
+
+    for {action, names} <- Map.to_list(keys) ++ fixed,
+        name <- names,
+        {:ok, binding} <- [Keymap.parse_key(name)],
+        into: %{},
+        do: {binding, "#{action}"}
+  end
 
   defp working_directory(dir) when dir in [:inherit, :home], do: {:ok, dir}
   defp working_directory("/" <> _ = dir), do: {:ok, dir}
@@ -656,7 +766,7 @@ defmodule Guiltty.Config do
   defp color(other, _default), do: {:error, "bad color #{inspect(other)}, expected \"#rrggbb\""}
 
   defp font(opts, _default) when not is_list(opts),
-    do: {:error, "font: expected a keyword list, like [family: \"monospace\", size: 12]"}
+    do: {:error, "font: expected a keyword list, like [family: \"monospace\", size: 14]"}
 
   defp font(opts, default) do
     family = Keyword.get(opts, :family, default.family)

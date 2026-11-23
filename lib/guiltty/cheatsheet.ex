@@ -96,8 +96,17 @@ defmodule Guiltty.Cheatsheet do
          {"Open the config", k.(:open_config)},
          {"This cheatsheet", k.(:cheatsheet)}
        ]}
-    ]
+    ] ++ exec_group(config.exec)
   end
+
+  # The exec setting's keys, each by its command, when there are any.
+  defp exec_group([]), do: []
+
+  defp exec_group(entries),
+    do: [
+      {"Your programs",
+       for(e <- entries, do: {e.command, Enum.map_join(e.keys, " / ", &pretty/1)})}
+    ]
 
   @doc """
   The whole sheet for a screen `cols` wide, as a list of grid rows (each

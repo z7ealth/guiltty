@@ -67,6 +67,132 @@ doesn't open a tab. The function keys go up to =f24=, because the AI
 key on newer laptops sends Super+Shift+F23 (chapter 27): that's the
 second default for =ai=.
 
+* Your own keys
+
+=exec= binds a key to a program. Each entry is a map (a keyword list
+works too):
+
+#+begin_src elixir
+exec: [
+  %{key: "ctrl+shift+m", command: "btop", position: :tab},
+  %{key: ["ctrl+alt+p", "f9"], command: "sh -c 'grim ~/shot.png'", position: :background}
+]
+#+end_src
+
+=key= is one key name or a list, named as in =keys:= (above);
+=position= is =:right= unless you say otherwise. The command is split into
+words the way a shell would split them, but no shell runs it: for a pipe
+or =$(...)=, write =sh -c '...'=, as above.
+
+** Where it runs
+
+#+begin_example
+  key ──► Window.run({:exec, n})
+            │  Exec.find: the program, looked up in the PATH a shell gets
+            │
+            ├─ :right, :down ─► Tabs.split ──► a pane, like the AI key's
+            ├─ :tab ──────────► Tabs.new_tab
+            ├─ :window ───────► Lifeline.open(first_tab: ...) ─► a new Desk
+            └─ :background ───► Exec.background
+                                  Task under Guiltty.Background
+                                    └─ Port (pipes, no terminal) ─► program
+                                         exit 0: nothing
+                                         exit n: {:exec_failed, msg} ─► Window flash
+#+end_example
+
+The first four are a program in a pane: it gets a pseudoterminal
+(chapter 1), and the pane closes when it exits, as a shell's does. The
+fifth gets no terminal at all. An Erlang port runs it with pipes for its
+standard input and output. Its output is read and thrown away, except the
+last 512 bytes, so that a failure can say why (=sh failed (exit 4): no
+screen to grab=, in the tab bar).
+
+Every one of them starts where a new tab would (=working_directory=, and
+with =:inherit= the folder of the pane you're in). Each gets a shell's environment:
+=TERM= aside, the same variables, the same =PATH= without the release's
+own folders in front, the window's =DISPLAY= or =WAYLAND_DISPLAY=, and
+=GUILTTY_PANE= naming the pane you were in. So a background script can
+run =guiltty pane --split-right= and mean that pane (chapter 29).
+
+A program in a pane names its tab: =extop=, not =shell=. That's the
+=name= its session was opened with (=Path.basename= of the program),
+kept by its =Screen= and shown until the program sets a title of its
+own with OSC 2, and again if it clears that title. A shell gets no
+name, and a tab with neither still shows =shell=.
+
+** When a bare name isn't found
+
+A bare name like =btop= is looked up in guiltty's own =PATH=, the one
+it was started with. That isn't always the =PATH= you see when you type
+=echo $PATH= in a shell:
+
+#+begin_example
+  GNOME login ── environment.d, ~/.profile ──► session PATH
+     │
+     ├─► guiltty (from the launcher) ─── this PATH finds exec programs
+     │      └─► zsh in a tab ── reads ~/.zshrc ─► PATH + what .zshrc adds
+     │
+     └─► a terminal ─► zsh ── reads ~/.zshrc ─► PATH + what .zshrc adds
+#+end_example
+
+zsh and bash read =~/.zshrc= and =~/.bashrc= only for interactive shells.
+So a folder added to =PATH= there is on the PATH of every shell you
+type into, including the ones in guiltty's tabs. It isn't on guiltty's
+own PATH, and guiltty doesn't start a shell to run an =exec= command.
+The key then shows =extop: not found. Try its full path in the exec
+setting=.
+
+A bare name works when the program is in a folder of the session's
+=PATH=: =/usr/bin=, =/usr/local/bin=, and on most distributions
+=~/.local/bin=. Anything else needs one of these:
+
+- its full path in =command:=, which always works:
+  =%{key: "ctrl+shift+y", command: "/home/me/Projects/extop/_build/prod/rel/extop/bin/extop", position: :tab}=;
+- a symlink to it in =~/.local/bin=;
+- the folder added in =~/.config/environment.d/*.conf= (systemd's user
+  environment, which GNOME reads at login) instead of =~/.zshrc=, then a
+  new login.
+
+To see the PATH guiltty searches, run this in a guiltty tab:
+=tr '\0' '\n' < /proc/$PPID/environ | grep ^PATH=. =$PPID= is the
+shell's parent, which is guiltty when the tab runs your shell directly.
+
+** Why a port, and why a task
+
+A port's environment option only /adds/ to the VM's own: it can't replace
+it. So =Exec= sets each variable a shell would get and unsets (=false=)
+every other variable the VM has (=BINDIR=, =RELEASE_COOKIE=...). Leaving
+them would hand your script the key to the running node.
+
+The port's owner is a small process under =Guiltty.Background=, a
+=Task.Supervisor= in the application's tree, not the Window. The Window
+would otherwise have to track every program you started, and closing the
+window would close their pipes. The task waits for the exit status, sends
+the Window a message if the program failed, and ends.
+
+A folder that vanished doesn't make =Port.open= raise. The port's
+helper (=erl_child_setup=) would print to guiltty's own stderr and exit
+2, so =Exec= checks the folder first and starts in your home instead.
+
+** One key, one meaning
+
+Bindings are tried in order, so a key bound twice would only ever run
+the first. The config refuses it instead, when it loads:
+
+#+begin_example
+  config.exs: exec 1 key: ctrl+shift+g is already copy_output
+  config.exs: exec 1 key: Shift+Ctrl+V is already paste
+  config.exs: exec 2 key: f9 is already used by "btop"
+#+end_example
+
+Keys are compared parsed, so =Shift+Ctrl+V= and =ctrl+shift+v= are the
+same key. Ctrl+Shift+V and Shift+Insert count as taken even though no
+setting names them: the renderer turns them into a paste before a key
+event exists (chapter 7). Move a built-in key away (=keys: [copy_output:
+["ctrl+alt+g"]]=) and its old key is free for =exec=.
+
+The cheatsheet lists your keys under "Your programs", by command.
+
 * When the file is broken
 
 A typo shouldn't leave you wondering why nothing changed. When the file
@@ -146,6 +272,7 @@ the renderer, some reach the shell's process:
 | =copy_on_select=, =wheel_lines= | Window         | live                          |
 | =attention_after= (seconds, or =nil=) | Window   | live: a command at least this long, ending while the window isn't focused, asks for attention (chapter 24) |
 | =ai: command=, =position= (=:right=, =:down=, =:tab=), =lock= (=true=) | Window | the next time the key opens it (chapter 27); =lock= keeps its tab while the tool runs |
+| =exec= (=[%{key:, command:, position:}]=; =position= =:right=, =:down=, =:tab=, =:window=, =:background=) | Window | live; see "Your own keys" below |
 | =clipboard_write=              | Window          | live: whether OSC 52 reaches the clipboard (chapter 28) |
 | =link_url=                     | Window -> Screen | live: Ctrl+click and Ctrl+hover find URLs in plain text (chapter 28) |
 | =screen_reports=               | Screen          | tabs opened after a change: answer DECRQCRA (chapter 28) |
@@ -289,6 +416,10 @@ and the shell never know.
 - SDL3 wiki: =SDL_WINDOW_TRANSPARENT=, =SDL_OpenURL=,
   =SDL_EVENT_WINDOW_FOCUS_LOST=.
 - =xdg-open(1)=: what =SDL_OpenURL= runs on Linux.
+- Erlang =erlang:open_port/2=: =spawn_executable=, =exit_status=, =cd=,
+  and =env= (where a =false= value unsets a variable); =os:find_executable/2=.
+- Elixir =Task.Supervisor= (=start_child/2=): tasks nobody awaits.
+- =pipe(7)=: what a program without a terminal writes into.
 
 * Questions
 
@@ -301,6 +432,10 @@ and the shell never know.
 5. Why does changing =opacity= from 1.0 need a new window?
 6. A window opens while the config file is broken. How does it learn
    about the error, and why couldn't it show it at once?
+7. An =exec= key with =position: :background= runs =sh -c 'env > ~/env.txt'=.
+   Why isn't =RELEASE_COOKIE= in that file, and what would it mean if it were?
+8. Why does a background program's port belong to a task, not to the
+   Window?
 
 ** Answers
 :PROPERTIES:
@@ -323,3 +458,11 @@ and the shell never know.
    the file is broken. The Window subscribes during its start, before the
    renderer's hello, and the renderer accepts nothing but SETUP first; so
    the warning waits for the handshake.
+7. A port's =env= option only adds to the VM's environment. =Exec=
+   unsets every VM variable a shell wouldn't get. The cookie is the key
+   to the running node: any program you started could use it to run code
+   inside guiltty.
+8. The task lives as long as the program does and only has to wait for
+   its exit status. The Window would have to track every program you ever
+   started, and closing the window would close their pipes (the port
+   closes with its owner).

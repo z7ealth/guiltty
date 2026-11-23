@@ -27,7 +27,8 @@ defmodule Guiltty.Desk do
   @doc """
   Options: `:desk` (its id, required), `:window` (options for the
   `Guiltty.Window`), `:cwd` (where its first tab starts, see
-  `Guiltty.Tabs`) and `:session_opts` (for every tab's session; tests use
+  `Guiltty.Tabs`), `:first_tab` (options for that tab's session: a
+  program instead of the shell) and `:session_opts` (for every tab's session; tests use
   them).
   """
   def start_link(opts) do
@@ -88,11 +89,7 @@ defmodule Guiltty.Desk do
     # program started from a tab (xdg-open, an editor) must open where the
     # window is. Without this, shells would have only the node's
     # environment: the display of the first `guiltty`, not this one's.
-    display =
-      for {name, value} <- Keyword.get(window_opts, :env, []),
-          to_string(name) in @display_vars,
-          into: %{},
-          do: {to_string(name), to_string(value)}
+    display = display_env(Keyword.get(window_opts, :env, []))
 
     session_opts =
       opts
@@ -104,6 +101,7 @@ defmodule Guiltty.Desk do
       name: tabs(desk),
       keeper: keeper(desk),
       cwd: opts[:cwd],
+      first_tab: Keyword.get(opts, :first_tab, []),
       session_opts: session_opts
     ]
 
@@ -114,5 +112,17 @@ defmodule Guiltty.Desk do
     ]
 
     Supervisor.init(children, strategy: :rest_for_one, auto_shutdown: :any_significant)
+  end
+
+  @doc """
+  The display variables (`DISPLAY`, `WAYLAND_DISPLAY`...) of a window's
+  environment, as a map of strings: what a program started from that
+  window needs to open its own windows there.
+  """
+  def display_env(env) do
+    for {name, value} <- env,
+        to_string(name) in @display_vars,
+        into: %{},
+        do: {to_string(name), to_string(value)}
   end
 end

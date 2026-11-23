@@ -6,7 +6,9 @@
 # previous config stays.
 
 [
-  font: [family: "monospace", size: 12],
+  # Commented out, guiltty uses your system's monospace font (fontconfig's
+  # "monospace"). To pick one, name its family as `fc-list : family` prints it.
+  # font: [family: "JetBrainsMono Nerd Font", size: 14],
 
   # A built-in theme by name: "guiltty" (the icon's lavender on
   # near-black, what guiltty uses without a config), "tomorrow-night",
@@ -205,14 +207,33 @@
   # the window doesn't end it; the lock goes when the tool exits.
   # ai: [command: "", position: :right, lock: true],
 
+  # Your own keys, each running a program: beside the focused pane (:right,
+  # :down), in a tab (:tab), in a window of its own (:window), or in the
+  # background with no terminal at all (:background: a screenshot tool, a
+  # script). It starts where a new tab would, and GUILTTY_PANE names the pane
+  # you were in, so a script can call `guiltty pane ...`. A pane closes when its
+  # program exits; a background program that fails shows its last line.
+  # The command is split like a shell would, but runs no shell: for pipes or
+  # $(...), write sh -c '...'. A key guiltty already uses is an error.
+  # A bare name is looked up in the PATH guiltty started with, which
+  # doesn't include folders your ~/.zshrc or ~/.bashrc adds. If the key
+  # says "not found", give the full path, e.g. "/home/me/bin/extop"
+  # (book chapter 16, "When a bare name isn't found").
+  # exec: [
+  #   %{key: "ctrl+shift+y", command: "extop", position: :tab},
+  #   %{key: "ctrl+shift+d", command: "yazi", position: :right},
+  #   # A desktop notification with the time. sh runs the $(...).
+  #   %{key: "ctrl+alt+p", command: "sh -c 'notify-send \"It is $(date +%H:%M)\"'", position: :background}
+  # ],
+
   # Programs can put text on the clipboard (OSC 52), from the focused pane.
   # They can never read it.
   # clipboard_write: true,
 
   # Ctrl+click opens URLs in plain text (http, https, mailto, file), like the
   # one a server prints when it starts. Hold Ctrl to see them underlined.
-  # Links a program marks (OSC 8) open either way.
-  # link_url: true,
+  # Links a program marks (OSC 8) open either way; false turns Ctrl+click off.
+  # link_url: false,
 
   # Answer DECRQCRA and the title reports, for terminal test suites. Leave it
   # off: these let a program read your screen, even from the far end of ssh.
@@ -221,5 +242,5 @@
   # Bars in the tab bar that dance to whatever your speakers play (Spotify,
   # a video...). Needs PipeWire. While it's on, guiltty records the sound
   # output (never the microphone) to measure it; false turns that off.
-  # visualizer: true
+  # visualizer: false
 ]

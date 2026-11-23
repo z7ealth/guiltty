@@ -84,6 +84,64 @@ defmodule Guiltty.WindowTest do
     end)
   end
 
+  describe "exec keys" do
+    # F9 runs `command`; the config would have checked the entry.
+    defp set_exec(window, command, position) do
+      config = :sys.get_state(window).config
+      entry = %{keys: ["f9"], command: command, position: position}
+      send(window, {:config, %{config | exec: [entry]}})
+      assert eventually(fn -> :sys.get_state(window).config.exec == [entry] end)
+    end
+
+    defp f9(window), do: key(window, Guiltty.Keymap.key(:f9), 0)
+
+    test "position: :right opens beside the focused pane", %{id: id, window: window} do
+      set_exec(window, ~S(sh -c "echo BESIDE; exec cat"), :right)
+      f9(window)
+      assert eventually(fn -> panes_of_tab(window, id) != [] end)
+      [pane] = panes_of_tab(window, id)
+      assert eventually(fn -> Session.dump(pane) =~ ~r/^BESIDE$/m end)
+    end
+
+    test "position: :tab opens a tab", %{id: id, window: window} do
+      set_exec(window, "cat", :tab)
+      f9(window)
+      assert eventually(fn -> Tabs.active(@tabs) != id end)
+      assert members(window)[id] in [nil, [id]]
+    end
+
+    test "position: :background runs it with no pane, here, knowing the pane", %{
+      id: id,
+      window: window
+    } do
+      out = Path.join(System.tmp_dir!(), "guiltty-exec-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm(out) end)
+      Session.write(id, "cd /usr/share\r")
+      assert eventually(fn -> Tabs.start_directory(@tabs) == "/usr/share" end)
+
+      set_exec(window, ~s(sh -c 'printf "%s %s" "$GUILTTY_PANE" "$PWD" > #{out}'), :background)
+      f9(window)
+      assert eventually(fn -> File.read(out) == {:ok, "#{id} /usr/share"} end)
+      assert panes_of_tab(window, id) == []
+    end
+
+    test "a background program that fails says so", %{window: window} do
+      set_exec(window, ~S(sh -c "echo 'no screen to grab'; exit 4"), :background)
+      f9(window)
+
+      assert eventually(fn ->
+               :sys.get_state(window).flash == "sh failed (exit 4): no screen to grab"
+             end)
+    end
+
+    test "a program that isn't there says so", %{id: id, window: window} do
+      set_exec(window, "no-such-program-here --flag", :right)
+      f9(window)
+      assert eventually(fn -> :sys.get_state(window).flash =~ "not found" end)
+      assert panes_of_tab(window, id) == []
+    end
+  end
+
   describe "the AI key" do
     defp set_ai(window, command, position \\ :right) do
       :sys.replace_state(window, fn state ->

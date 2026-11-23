@@ -2212,3 +2212,53 @@ The values are checked where the words are parsed, with the same rules
 as the config file, because `Config.override/2` trusts its caller. An
 `ai` action changes one part of the `ai` setting, so setting the program
 doesn't reset where it opens.
+
+## 2026-11-23 — Your own keys (v0.30.0)
+
+_Draft: agent, awaiting user_
+
+Started as an afternoon of "what else could guiltty do": macOS (no:
+Linux only), BSD (no), hot code upgrades (a nice trick, but every
+release would pay for it), OTP pieces we don't use yet. What came out of
+it was smaller and more useful: `exec`, a list of keys that each run a
+program.
+
+Most of it was already there. The AI key is a special case of exactly
+this, so the code that opens a program beside you or in a tab became
+`open_program/3`, shared by both. The new parts were a window that starts
+with a program instead of the shell (`first_tab:`, passed from Lifeline
+through the Desk to Tabs), and `:background`: no pane at all. That one
+runs through a plain Erlang port, owned by a task under a new
+`Task.Supervisor`, so the Window doesn't have to keep track of programs
+it started.
+
+Two things broke on the way. A port's `env` only adds to the VM's
+environment, so "give it a shell's environment" first meant also
+handing it `RELEASE_COOKIE`, the key to the node. Now every VM variable
+a shell wouldn't get is unset explicitly. And a missing start folder
+doesn't make `Port.open` raise: the port's helper prints to guiltty's
+own stderr and the program "exits 2", which made a useless error notice.
+It starts in your home instead.
+
+The config refuses a key that's taken, by guiltty or by another entry,
+and says by what. Bindings are tried in order, so the alternative was
+one of them silently never working. Ctrl+Shift+V counts as taken though
+no setting names it: the renderer turns it into a paste first.
+
+Trying it on real keys turned up three things. `extop` worked from one
+guiltty and was "not found" from another: a folder that `~/.zshrc` adds
+to `PATH` reaches every shell you type into, but not a guiltty started
+from the GNOME launcher, which never read `.zshrc`. The fix is the full
+path, and now the docs say so. Ctrl+Shift+U only printed an underlined
+`u`: that's IBus's key for typing a character by its code, taken before
+guiltty ever sees it. And every program tab was called "shell", because
+the title comes from the program and extop never sets one. A session
+now carries the program's name, shown until the program names itself.
+
+### Later
+- A config check that warns when a key is one IBus takes (Ctrl+Shift+U).
+- `send: "text"` in an `exec` entry: type a string into the pane instead
+  of running a program.
+- Key chords (`ctrl+a` then `g`).
+- The AI key's program lookup could use `Exec.find/1` too, so `guiltty`
+  in its command would mean your command, not the release's script.

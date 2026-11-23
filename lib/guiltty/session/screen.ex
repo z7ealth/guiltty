@@ -208,7 +208,11 @@ defmodule Guiltty.Session.Screen do
        sent_graphics: nil,
        # cluster ids below this one were sent to the viewer
        sent_clusters: 0,
-       title: "",
+       # what the tab bar was last told the title is (see report_title/1)
+       title: opts[:name] || "",
+       # shown until the program sets a title of its own: the name of the
+       # program an exec key or the AI key opened. "" for a shell.
+       name: opts[:name] || "",
        # the program reads a password (see set_secret/2)
        secret: false,
        scroll: 0,
@@ -245,7 +249,7 @@ defmodule Guiltty.Session.Screen do
   end
 
   def handle_call(:dump, _from, state), do: {:reply, Grid.dump(state.grid), state}
-  def handle_call(:title, _from, state), do: {:reply, state.grid.title, state}
+  def handle_call(:title, _from, state), do: {:reply, shown_title(state), state}
   def handle_call(:size, _from, state), do: {:reply, {state.grid.cols, state.grid.rows}, state}
 
   def handle_call({:subscribe, pid}, _from, state) do
@@ -708,12 +712,21 @@ defmodule Guiltty.Session.Screen do
     %{state | grid: grid}
   end
 
-  defp report_title(%{grid: %{title: title}, title: title} = state), do: state
-
   defp report_title(state) do
-    if state.owner, do: send(state.owner, {:title, state.id, state.grid.title})
-    %{state | title: state.grid.title}
+    case shown_title(state) do
+      title when title == state.title ->
+        state
+
+      title ->
+        if state.owner, do: send(state.owner, {:title, state.id, title})
+        %{state | title: title}
+    end
   end
+
+  # The program's own title, or the name it was opened with until it sets
+  # one (or after it clears its own).
+  defp shown_title(%{grid: %{title: ""}, name: name}), do: name
+  defp shown_title(state), do: state.grid.title
 
   # Tell the viewer once that there's something new to take.
   defp notify(%{viewer: nil} = state), do: state

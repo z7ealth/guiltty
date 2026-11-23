@@ -34,11 +34,42 @@ defmodule Guiltty.TabsTest do
     :exit, _ -> false
   end
 
+  defp bash,
+    do: [
+      shell: System.find_executable("bash"),
+      args: ["--norc", "--noprofile"],
+      env: %{"PS1" => "$ "}
+    ]
+
   defp ids, do: Tabs.list(@tabs) |> elem(0) |> Enum.map(&elem(&1, 0))
 
   test "starts with one tab" do
     assert [id] = ids()
     assert Tabs.active(@tabs) == id
+  end
+
+  test "first_tab: the first tab runs a program, not the shell" do
+    first_tab = [shell: "/bin/sh", args: ["-c", "echo FIRST; exec cat"]]
+
+    spec =
+      Supervisor.child_spec(
+        {Tabs, name: :first_tab_tabs, desk: 9_999, first_tab: first_tab, session_opts: bash()},
+        id: :first
+      )
+
+    start_supervised!(spec)
+
+    id = Tabs.active(:first_tab_tabs)
+    assert eventually(fn -> Session.dump(id) =~ ~r/^FIRST$/m end)
+    # The tabs opened after it get the shell again.
+    {:ok, second} = Tabs.new_tab(:first_tab_tabs)
+    assert eventually(fn -> Session.dump(second) =~ ~r/^\$/m end)
+  end
+
+  test "start_directory: where a new tab would start" do
+    id = Tabs.active(@tabs)
+    Session.write(id, "cd /usr/share\r")
+    assert eventually(fn -> Tabs.start_directory(@tabs) == "/usr/share" end)
   end
 
   test "new tabs open after the active one and become active" do
@@ -78,6 +109,16 @@ defmodule Guiltty.TabsTest do
     [id] = ids()
     Session.write(id, "printf '\\e]2;my title\\a'\r")
     assert eventually(fn -> Tabs.list(@tabs) == {[{id, "my title"}], id} end)
+  end
+
+  test "a program opened with a name shows it until it sets a title of its own" do
+    {:ok, id} = Tabs.new_tab(@tabs, name: "bash", shell: System.find_executable("bash"))
+    assert {[_, {^id, "bash"}], ^id} = Tabs.list(@tabs)
+    Session.write(id, "printf '\\e]2;my title\\a'\r")
+    assert eventually(fn -> match?({[_, {^id, "my title"}], _}, Tabs.list(@tabs)) end)
+    # Clearing its title gives the name back.
+    Session.write(id, "printf '\\e]2;\\a'\r")
+    assert eventually(fn -> match?({[_, {^id, "bash"}], _}, Tabs.list(@tabs)) end)
   end
 
   test "windows hear about every change" do

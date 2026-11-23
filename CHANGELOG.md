@@ -8,6 +8,30 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.30.0 — 2026-11-23 — your own keys run programs
+
+### Added
+- The `exec` setting binds keys to programs:
+  `exec: [%{key: "ctrl+shift+m", command: "btop", position: :tab}]`.
+  `position` is where it runs: `:right` (the default) or `:down` of the
+  focused pane, a `:tab`, a `:window` of its own, or `:background`, with
+  no terminal (a screenshot tool, a script). A background program that
+  fails shows its last line in the tab bar.
+- These programs start where a new tab would, and `GUILTTY_PANE` names
+  the pane you were in, so a script can call `guiltty pane ...`.
+- A key that guiltty already uses, or that two entries share, is a config
+  error that says which, instead of one silently winning.
+- The cheatsheet lists your keys under "Your programs".
+- A bare program name is looked up in the `PATH` guiltty started with,
+  so a folder that only `~/.zshrc` or `~/.bashrc` adds isn't searched.
+  Give the full path for those (book chapter 16).
+- A tab that a key opened shows its program's name (`extop`, `yazi`,
+  the AI tool) until the program sets a title, instead of "shell".
+
+### Changed
+- The default font size is 14 (it was 12). A `font:` in your config
+  that sets `size` keeps its size.
+
 ## 0.29.0 — 2026-11-17 — set the AI tool and the tab bar from a shell
 
 ### Added

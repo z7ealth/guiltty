@@ -168,6 +168,71 @@ defmodule Guiltty.ConfigTest do
     assert {:error, "ai:" <> _} = Config.load(write(dir, "e.exs", ~s([ai: [command: "  "]])))
   end
 
+  describe "exec: your own keys" do
+    test "none by default; a map or a keyword list, one key or several", %{tmp_dir: dir} do
+      assert {:ok, %{exec: []}} = Config.load(write(dir, "a.exs", "[]"))
+
+      assert {:ok, %{exec: [first, second]}} =
+               Config.load(
+                 write(dir, "b.exs", """
+                 [exec: [
+                   %{key: "ctrl+shift+m", command: "btop", position: :tab},
+                   [key: ["ctrl+alt+p", "f9"], command: "sh -c 'grim -g \\"$(slurp)\\"'"]
+                 ]]
+                 """)
+               )
+
+      assert first == %{keys: ["ctrl+shift+m"], command: "btop", position: :tab}
+      assert second.keys == ["ctrl+alt+p", "f9"]
+      assert second.position == :right
+    end
+
+    test "each field is checked", %{tmp_dir: dir} do
+      load = fn entry -> Config.load(write(dir, "x.exs", "[exec: [#{entry}]]")) end
+
+      assert {:error, "exec 1 key:" <> _} = load.(~s(%{command: "btop"}))
+
+      assert {:error, "exec 1 key: unknown key name" <> _} =
+               load.(~s(%{key: "ctrl+shift+nope", command: "btop"}))
+
+      assert {:error, "exec 1 command:" <> _} = load.(~s(%{key: "f9", command: "  "}))
+
+      assert {:error, "exec 1 position:" <> _} =
+               load.(~s(%{key: "f9", command: "btop", position: :left}))
+
+      assert {:error, "exec 1: unknown name :comand (did you mean :command?)"} =
+               load.(~s(%{key: "f9", comand: "btop"}))
+
+      assert {:error, "exec 1: expected a map" <> _} = load.(~s("btop"))
+    end
+
+    test "a key guiltty or another entry already has is refused", %{tmp_dir: dir} do
+      load = fn entries -> Config.load(write(dir, "x.exs", "[exec: [#{entries}]]")) end
+
+      assert {:error, "exec 1 key: ctrl+shift+g is already copy_output"} =
+               load.(~s(%{key: "ctrl+shift+g", command: "lazygit"}))
+
+      # The same key, however it's written.
+      assert {:error, "exec 1 key: Shift+Ctrl+V is already paste"} =
+               load.(~s(%{key: "Shift+Ctrl+V", command: "x"}))
+
+      assert {:error, "exec 1 key: ctrl+shift+3 is already go to a tab"} =
+               load.(~s(%{key: "ctrl+shift+3", command: "x"}))
+
+      assert {:error, ~s(exec 2 key: f9 is already used by "btop")} =
+               load.(~s(%{key: "f9", command: "btop"}, %{key: "f9", command: "htop"}))
+
+      # A key you took from guiltty is free for exec.
+      assert {:ok, %{exec: [%{keys: ["ctrl+shift+g"]}]}} =
+               Config.load(
+                 write(dir, "y.exs", """
+                 [keys: [copy_output: ["ctrl+alt+g"]],
+                  exec: [%{key: "ctrl+shift+g", command: "lazygit"}]]
+                 """)
+               )
+    end
+  end
+
   test "tab styles, and tab colors in the theme, also from a named one", %{tmp_dir: dir} do
     # The default (guiltty) sets its accent, and leaves the bar to the renderer.
     assert {:ok, %{tab_style: :powerline, theme: %{tab_accent: {0x91, 0x84, 0xD9}, tab_bar: nil}}} =
