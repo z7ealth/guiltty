@@ -8,6 +8,24 @@ Versions before 1.0 may change the config file. When they do, it's listed
 under **Changed** or **Removed**, and guiltty reports old setting names in
 the tab bar instead of ignoring them.
 
+## 0.30.1 — 2026-11-23 — fixes
+
+### Fixed
+- The AI key and the editor Ctrl+, opens find their program the way
+  `exec` keys do: `guiltty` in the `ai` command is the command you
+  installed, not the release's start script.
+- A window opened again finds its AI tool: the AI key goes back to the
+  locked AI tab instead of opening a second tool beside it.
+- Ctrl+Shift+G (copy the last output) leaves the command line out with
+  a prompt of two lines, for shells that send `OSC 133;B` but not C and D.
+- A key that IBus takes (Ctrl+Shift+U, Ctrl+., Ctrl+;) bound in `keys` or
+  `exec` gets a notice in the tab bar saying it will never reach guiltty,
+  instead of doing nothing.
+
+### Changed
+- Printing text that isn't ASCII no longer allocates about 900 KB on
+  each 64 KB read: the cells are built in a fixed 14 KB buffer.
+
 ## 0.30.0 — 2026-11-23 — your own keys run programs
 
 ### Added

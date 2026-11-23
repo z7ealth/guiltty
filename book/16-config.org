@@ -123,7 +123,10 @@ name, and a tab with neither still shows =shell=.
 ** When a bare name isn't found
 
 A bare name like =btop= is looked up in guiltty's own =PATH=, the one
-it was started with. That isn't always the =PATH= you see when you type
+it was started with. The same goes for the =ai= setting's command and for
+=$VISUAL= or =$EDITOR= (the editor Ctrl+, opens): all three use
+=Exec.find/1=, which leaves out the release's own folders, so =guiltty=
+there means the command you installed, not the release's start script. That isn't always the =PATH= you see when you type
 =echo $PATH= in a shell:
 
 #+begin_example
@@ -190,6 +193,20 @@ same key. Ctrl+Shift+V and Shift+Insert count as taken even though no
 setting names them: the renderer turns them into a paste before a key
 event exists (chapter 7). Move a built-in key away (=keys: [copy_output:
 ["ctrl+alt+g"]]=) and its old key is free for =exec=.
+
+Some keys never reach guiltty at all. An input method sits between the
+keyboard and every window, and IBus (GNOME's, and the one =@im=ibus=
+names) keeps a few keys for itself: Ctrl+Shift+U starts typing a
+character by its code (the underlined =u= you see instead), and Ctrl+.
+and Ctrl+; open its emoji picker. The config can't refuse them, since
+without IBus they work, so the window says it once, in the tab bar, when
+the config binds one and the environment says IBus is in use
+(=XMODIFIERS=, =GTK_IM_MODULE=, =QT_IM_MODULE=, =SDL_IM_MODULE=, or a
+GNOME session; [[file:../lib/guiltty/keymap.ex::def taken_by_ibus][Keymap.taken_by_ibus/2]]):
+
+#+begin_example
+  ctrl+shift+u never reaches guiltty: it's IBus's key for typing a character by its code (exec 2)
+#+end_example
 
 The cheatsheet lists your keys under "Your programs", by command.
 

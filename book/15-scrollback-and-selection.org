@@ -285,9 +285,26 @@ whole ([[file:../lib/guiltty/grid.ex::defp command_end][command_end/2]]):
   row 3   $ _         <- A (the newest)        Grid.last_output -> {:guess, {1, 2}}
 #+end_example
 
-It's a guess because a prompt of two lines (a path above, =$= below)
-makes it start one row early. So the status says "copied a guess", and
-points to the book for the real marks.
+A prompt of two lines (a path above, =$= below) would make it start one
+row early, with the command line in the copy. A shell can say where its
+prompt ends with B (=OSC 133;B=, sent just before the place you type):
+guiltty keeps those rows too (=input_marks=), and when there's a B after
+the older prompt, the command line starts there instead
+([[file:../lib/guiltty/grid.ex::defp command_line][command_line/3]], since v0.30.1). These are the rows of a real run of the
+test in =test/guiltty/output_marks_test.exs=:
+
+#+begin_example
+  row 0   ~/src  main      <- A (the older prompt)
+  row 1   > ls             <- B: the command line starts here
+  row 2   a                <- the guess starts on the row after it
+  row 3   b
+  row 4   ~/src  main      <- A (the newest)   Grid.last_output -> {:guess, {2, 3}}
+  row 5   > _              <- B
+#+end_example
+
+Without B it would be ={:guess, {1, 2}}=: "> ls" and "a". Either way it
+is still a guess (nothing says where the output really starts), so the
+status says "copied a guess", and points to the book for the real marks.
 
 *** Turning the marks on
 

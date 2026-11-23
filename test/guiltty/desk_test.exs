@@ -158,6 +158,23 @@ defmodule Guiltty.DeskTest do
     assert :sys.get_state(window(a)).active == locked
   end
 
+  test "a window opened again finds the AI pane it left, and so does a new Tabs" do
+    a = open_desk()
+    tabs = Desk.tabs(a)
+    {:ok, ai} = Tabs.new_tab(tabs, ai: :tab, hold: true)
+    assert eventually(fn -> :sys.get_state(window(a)).ai_panes == %{tab: ai} end)
+
+    close_window(a)
+    assert eventually(fn -> ids(a) == [ai] end)
+    {:ok, ^a} = Lifeline.open(window: [env: @env])
+    assert eventually(fn -> :sys.get_state(window(a)).ai_panes == %{tab: ai} end)
+
+    old = GenServer.whereis(tabs)
+    Process.exit(old, :kill)
+    assert eventually(fn -> GenServer.whereis(tabs) not in [nil, old] end)
+    assert eventually(fn -> :sys.get_state(tabs).ai == %{tab: ai} end)
+  end
+
   test "Ctrl+Shift+N in a window opens another, independent one" do
     a = open_desk()
     pid = window(a)

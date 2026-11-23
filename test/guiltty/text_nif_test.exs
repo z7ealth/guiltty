@@ -51,6 +51,14 @@ defmodule Guiltty.TextNifTest do
                <<0::32, attrs ||| Grid.attr(:spacer)::16, fg::32, bg::32>>
   end
 
+  test "a run longer than the NIF's buffer comes in pieces, a wide character never split" do
+    # The buffer holds 1024 cells: 1023 narrow ones leave room for one, so
+    # 漢 (two cells) starts the next piece instead of being cut in half.
+    text = String.duplicate("é", 1023) <> "漢" <> String.duplicate("ö", 2000)
+    assert [{_, 1023}, {_, 1024}, {_, 978}] = TextNif.segments(text, 0, 0, 0)
+    assert nif(text) == elixir(text)
+  end
+
   test "empty text has no segments" do
     assert TextNif.segments("", 0, 0, 0) == []
   end

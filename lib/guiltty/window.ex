@@ -142,7 +142,7 @@ defmodule Guiltty.Window do
       env: env,
       # a warning to show once the renderer says hello, and whether this
       # renderer has drawn a frame yet
-      notice: nil,
+      notice: ibus_notice(parse_bindings(config)),
       drawn: false,
       handler: handler,
       # the visualizer's last levels (empty: no bars), kept to send again
@@ -220,7 +220,8 @@ defmodule Guiltty.Window do
       cheatsheet: nil,
       # the images the renderer has, by uid (see show_graphics/2)
       sent_images: MapSet.new(),
-      # the AI tool's session, per tab (or :tab when it has a tab of its own)
+      # the AI tool's session, per tab (or :tab when it has a tab of its own):
+      # Tabs' map (the ai: option), so a window opened again finds it
       ai_panes: %{},
       # where the AI key came from, to go back
       ai_return: nil,
@@ -1232,10 +1233,10 @@ defmodule Guiltty.Window do
 
   defp open_ai(state, key, text) do
     with [program | args] <- OptionParser.split(state.config.ai.command),
-         path when is_binary(path) <- System.find_executable(program) do
+         path when is_binary(path) <- Exec.find(program) do
       came_from = {state.active_tab, state.active}
 
-      case open_ai_session(state, path, args) do
+      case open_ai_session(state, key, path, args) do
         {:ok, pane} ->
           state = %{
             state
@@ -1261,10 +1262,17 @@ defmodule Guiltty.Window do
     end
   end
 
-  defp open_ai_session(state, path, args) do
+  defp open_ai_session(state, key, path, args) do
     # Locked while it runs: closing the window by accident shouldn't end
     # an agent's work (Guiltty.Tabs, "Held tabs").
-    opts = [shell: path, args: args, name: Path.basename(path), hold: state.config.ai.lock]
+    opts = [
+      shell: path,
+      args: args,
+      name: Path.basename(path),
+      hold: state.config.ai.lock,
+      ai: key
+    ]
+
     open_program(state, state.config.ai.position, opts)
   end
 
@@ -1337,7 +1345,7 @@ defmodule Guiltty.Window do
     with value when is_binary(value) <-
            Enum.find([env["VISUAL"], env["EDITOR"]], &(&1 not in [nil, ""])),
          [program | args] <- OptionParser.split(value),
-         path when is_binary(path) <- System.find_executable(program) do
+         path when is_binary(path) <- Exec.find(program) do
       {path, args}
     else
       _ -> nil
@@ -1446,6 +1454,23 @@ defmodule Guiltty.Window do
         do: {action, binding}
   end
 
+  # A key IBus takes never reaches the window: say so once, when the config
+  # binds one, instead of leaving you to wonder at an underlined "u".
+  defp ibus_notice(bindings) do
+    case Keymap.taken_by_ibus(bindings, System.get_env()) do
+      [] ->
+        nil
+
+      [{action, name, why} | more] ->
+        others = if more == [], do: "", else: " (and #{length(more)} more)"
+        "#{name} never reaches guiltty: it's #{why} (#{binding_place(action)})#{others}"
+    end
+  end
+
+  defp binding_place({:exec, index}), do: "exec #{index + 1}"
+  defp binding_place({:go_to_tab, n}), do: "go to tab #{n + 1}"
+  defp binding_place(action), do: "keys: #{action}"
+
   ## Showing a tab
 
   # A locked tab shows a lock before its title; a tab with something new
@@ -1455,6 +1480,8 @@ defmodule Guiltty.Window do
       state
       | locked: info.locked,
         group: info.group,
+        # Tabs keeps it, so a window opened again finds its AI panes
+        ai_panes: Map.get(info, :ai, %{}),
         lost: MapSet.to_list(info.lost),
         members: Map.get(info, :members, %{})
     }
@@ -1863,7 +1890,10 @@ defmodule Guiltty.Window do
 
     old_font = font(state)
     old = state.config
+    old_ibus = ibus_notice(state.bindings)
     state = %{state | config: config, bindings: parse_bindings(config)}
+    ibus = ibus_notice(state.bindings)
+    state = if ibus && ibus != old_ibus, do: flash(state, ibus, 10_000), else: state
     if font(state) != old_font, do: send_port(state, Protocol.font(font(state)))
     if options(config) != options(old), do: send_port(state, Protocol.options(options(config)))
     if tab_style(config) != tab_style(old), do: send_port(state, tab_style(config))

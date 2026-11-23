@@ -251,6 +251,28 @@ defmodule Guiltty.KeymapTest do
     end
   end
 
+  describe "keys IBus takes" do
+    setup do
+      {:ok, u} = Keymap.parse_key("ctrl+shift+u")
+      {:ok, y} = Keymap.parse_key("ctrl+shift+y")
+      %{bindings: [{{:exec, 1}, u}, {{:exec, 0}, y}]}
+    end
+
+    test "only with IBus as the input method", %{bindings: bindings} do
+      why = "IBus's key for typing a character by its code"
+      taken = [{{:exec, 1}, "ctrl+shift+u", why}]
+      assert Keymap.taken_by_ibus(bindings, %{"XMODIFIERS" => "@im=ibus"}) == taken
+      assert Keymap.taken_by_ibus(bindings, %{"XDG_CURRENT_DESKTOP" => "GNOME"}) == taken
+      assert Keymap.taken_by_ibus(bindings, %{"XMODIFIERS" => "@im=fcitx"}) == []
+      assert Keymap.taken_by_ibus(bindings, %{}) == []
+    end
+
+    test "whatever order the modifiers are written in" do
+      {:ok, u} = Keymap.parse_key("Shift+Ctrl+U")
+      assert [_] = Keymap.taken_by_ibus([{:copy, u}], %{"GTK_IM_MODULE" => "ibus"})
+    end
+  end
+
   describe "bindings" do
     # SDLK_F23: F13-F24 sit apart from F1-F12 in SDL's numbering.
     @f23 0x40000072

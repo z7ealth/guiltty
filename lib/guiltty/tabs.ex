@@ -105,7 +105,9 @@ defmodule Guiltty.Tabs do
   and `:args` run a program instead of the shell (the tab closes when it
   exits), and `:name` is its title until it sets one (the tab bar shows
   "shell" for a session with neither). With `hold: true` the tab is
-  locked while this pane runs (see "Held tabs"); `split/3` takes these too.
+  locked while this pane runs (see "Held tabs"), and `ai: key` makes it the
+  AI tool's pane for `key` (windows get the map as `:ai`); `split/3` takes
+  these too.
   """
   def new_tab(tabs, opts \\ []), do: GenServer.call(tabs, {:new_tab, opts})
 
@@ -241,6 +243,8 @@ defmodule Guiltty.Tabs do
       locked: MapSet.new(),
       # pane => tab: tabs locked only while that pane runs (hold: true)
       held: %{},
+      # key => pane: the AI tool's pane, per tab or :tab (the ai: option)
+      ai: %{},
       # the broadcast group: session => {pgid, host}, the foreground
       # process it joined with and where that ssh goes, or :local
       group: %{},
@@ -304,7 +308,9 @@ defmodule Guiltty.Tabs do
   defp save(%{table: nil} = state), do: state
 
   defp save(state) do
-    saved = Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :held, :marks, :active])
+    saved =
+      Map.take(state, [:tabs, :layouts, :focus, :names, :locked, :held, :ai, :marks, :active])
+
     :ets.insert(state.table, {:saved, saved})
     state
   end
@@ -341,6 +347,10 @@ defmodule Guiltty.Tabs do
         locked: MapSet.filter(saved.locked, &(&1 in tabs)),
         held:
           Map.filter(Map.get(saved, :held, %{}), fn {pane, tab} -> alive[pane] && tab in tabs end),
+        ai:
+          Map.filter(Map.get(saved, :ai, %{}), fn {key, pane} ->
+            alive[pane] && (key == :tab or key in tabs)
+          end),
         marks: Map.take(saved.marks, tabs),
         active: if(saved.active in tabs, do: saved.active, else: List.first(tabs))
     }
@@ -396,10 +406,14 @@ defmodule Guiltty.Tabs do
   @impl true
   def handle_call({:new_tab, opts}, _from, state) do
     {hold, opts} = Keyword.pop(opts, :hold, false)
+    {ai, opts} = Keyword.pop(opts, :ai)
 
     case open_tab(state, opts) do
-      {:ok, id, state} -> {:reply, {:ok, id}, state |> hold(hold, id, id) |> notify_windows()}
-      {:error, _} = error -> {:reply, error, state}
+      {:ok, id, state} ->
+        {:reply, {:ok, id}, state |> hold(hold, id, id) |> put_ai(ai, id) |> notify_windows()}
+
+      {:error, _} = error ->
+        {:reply, error, state}
     end
   end
 
@@ -409,10 +423,11 @@ defmodule Guiltty.Tabs do
   def handle_call({:split, dir, opts}, _from, state) when dir in [:right, :down] do
     {pane, opts} = Keyword.pop(opts, :pane, focused(state))
     {hold, opts} = Keyword.pop(opts, :hold, false)
+    {ai, opts} = Keyword.pop(opts, :ai)
 
     case pane && tab_of(state, pane) do
       nil -> {:reply, {:error, :no_tab}, state}
-      tab -> split(state, tab, pane, dir, hold, opts)
+      tab -> split(state, tab, pane, dir, {hold, ai}, opts)
     end
   end
 
@@ -681,7 +696,7 @@ defmodule Guiltty.Tabs do
 
   ## Opening
 
-  defp split(state, tab, pane, dir, hold, opts) do
+  defp split(state, tab, pane, dir, {hold, ai}, opts) do
     {_x, _y, w, h} = rects(state, tab) |> elem(0) |> Map.fetch!(pane)
 
     if (dir == :right and w < 3) or (dir == :down and h < 3) do
@@ -700,7 +715,8 @@ defmodule Guiltty.Tabs do
               focus: Map.put(state.focus, tab, id)
           }
 
-          {:reply, {:ok, id}, state |> resize_tab(tab) |> hold(hold, id, tab) |> notify_windows()}
+          state = state |> resize_tab(tab) |> hold(hold, id, tab) |> put_ai(ai, id)
+          {:reply, {:ok, id}, notify_windows(state)}
 
         {:error, _} = error ->
           {:reply, error, state}
@@ -717,6 +733,11 @@ defmodule Guiltty.Tabs do
       do: state,
       else: %{state | locked: MapSet.put(state.locked, tab), held: Map.put(state.held, pane, tab)}
   end
+
+  # ai: key: the pane is the AI tool's for that key (a tab, or :tab). Kept
+  # here, not in the Window, so a window opened again finds it.
+  defp put_ai(state, nil, _pane), do: state
+  defp put_ai(state, key, pane), do: %{state | ai: Map.put(state.ai, key, pane)}
 
   # The pane that held its tab ended: the lock goes too.
   defp release(state, pane) do
@@ -837,7 +858,11 @@ defmodule Guiltty.Tabs do
 
   defp remove_pane(state, id) do
     state =
-      state |> leave_group(id) |> release(id) |> Map.update!(:titles, &Map.delete(&1, id))
+      state
+      |> leave_group(id)
+      |> release(id)
+      |> Map.update!(:titles, &Map.delete(&1, id))
+      |> Map.update!(:ai, fn ai -> Map.reject(ai, fn {_key, pane} -> pane == id end) end)
 
     case tab_of(state, id) do
       nil ->
@@ -1104,6 +1129,7 @@ defmodule Guiltty.Tabs do
           {id, {_pgid, host}} -> {id, host}
         end),
       lost: state.lost,
+      ai: state.ai,
       marks: state.marks
     }
   end

@@ -59,6 +59,20 @@ defmodule Guiltty.OutputMarksTest do
     assert Grid.last_output(run("\e]133;A\a$ true\r\n\e]133;A\a$ ")) == :empty
   end
 
+  test "a prompt of two lines: B says where the command line starts" do
+    # powerlevel10k's shape: a line of information, then the line you type on.
+    prompt = "\e]133;A\a~/src  main\r\n\e]133;B\a> "
+    grid = run(prompt <> "ls\r\na\r\nb\r\n" <> prompt)
+    assert {:guess, {first, last}} = Grid.last_output(grid)
+
+    assert Selection.text(grid, %Selection{anchor: {first, 0}, head: {last, grid.cols - 1}}) ==
+             "a\nb"
+
+    # Without B the guess starts a row early: the command line comes along.
+    grid = run(String.replace(prompt, "\e]133;B\a", "") <> "ls\r\na\r\n" <> "\e]133;A\a$ ")
+    assert Grid.last_output(grid) == {:guess, {1, 2}}
+  end
+
   test "a guessed command line that wrapped is left out whole" do
     long = String.duplicate("x", 25)
     grid = run("\e]133;A\a$ echo #{long}\r\n#{long}\r\n\e]133;A\a$ ")

@@ -166,6 +166,7 @@ defmodule Guiltty.ConformanceCases do
        &(Map.get(&1, :fg_color) == nil and Map.has_key?(&1, :fg_color))},
       {:ms_clipboard, "\e]52;c;aGk=\a", &(Map.get(&1, :clipboard) == "hi")},
       {:osc133_prompt, "\e]133;A\a", &(Map.get(&1, :prompt_marks) not in [nil, []])},
+      {:osc133_input, "\e]133;B\a", &(Map.get(&1, :input_marks) not in [nil, []])},
 
       # Strings guiltty doesn't act on must never reach the screen
       {:dcs_consumed, "\ePjunk\e\\ok", &(line(&1) == "ok")},

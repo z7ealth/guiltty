@@ -2262,3 +2262,46 @@ now carries the program's name, shown until the program names itself.
 - Key chords (`ctrl+a` then `g`).
 - The AI key's program lookup could use `Exec.find/1` too, so `guiltty`
   in its command would mean your command, not the release's script.
+
+## 2026-11-23 — v0.30.1: five small fixes
+
+_Draft: agent, awaiting user_
+
+A day of paying off "Later" lists instead of adding features.
+
+The AI key and the config editor still looked their programs up with
+`System.find_executable`, the VM's own PATH, where the release's `bin`
+comes first. So `guiltty` in an `ai` command was the release's start
+script. Both now use `Exec.find/1`, like the `exec` keys.
+
+The AI pane was remembered only by the Window, and a Window is exactly
+the part that goes when you close it. The locked AI tab came back with
+the window, but the AI key opened a second tool beside it. The map
+moved into `Tabs`, which outlives windows and saves to the Keeper's
+table. The first version recorded it with a second call after the
+split. That left a gap: the window could hear about the new pane before
+hearing it was the AI's, and a key pressed then would open another one.
+Passing `ai: key` with the split, the way `hold: true` already travels,
+closed it.
+
+Ctrl+Shift+G guessed one row early under a two-line prompt. Shells that
+send OSC 133 B say where the command line starts, so guiltty now keeps
+those rows and starts the guess there.
+
+The underlined `u` from this morning became a notice: a key IBus takes,
+bound in `keys` or `exec`, gets one line in the tab bar when the
+environment says IBus is the input method. It can't be a config error,
+because without IBus the key works.
+
+The text NIF stopped allocating 14 bytes per input byte on every call. A
+14 KB buffer on the stack, flushed when full, does the same work. Two
+things clicked. A wide character's two cells must never land in
+different pieces, so the buffer is closed early when only one slot is
+left. And the hardening flag `-ftrivial-auto-var-init=zero` zeroes that
+buffer on every call whatever the code says; that costs about a
+microsecond, not worth weakening a hardening flag for. `make bench`
+showed no change in speed. The gain is memory, not time, and the book
+says so.
+
+### Later
+- A fuzz target for the text NIF, now that its buffer has an edge to hit.

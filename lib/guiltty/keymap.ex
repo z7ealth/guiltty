@@ -373,6 +373,40 @@ defmodule Guiltty.Keymap do
     |> MapSet.new(fn {name, _mask} -> name end)
   end
 
+  ## Keys the input method takes
+
+  # IBus's default keys, which it takes before any program sees them: the
+  # window only gets the IBus panel (an underlined "u", an emoji picker).
+  @ibus_keys [
+    {"ctrl+shift+u", "IBus's key for typing a character by its code"},
+    {"ctrl+.", "IBus's emoji key"},
+    {"ctrl+;", "IBus's emoji key"}
+  ]
+
+  @doc """
+  The bindings (`[{action, binding}]`, as `parse_key/1` parses them) that
+  IBus would take, as `[{action, key name, why}]`, if `env` (a map of
+  strings) says IBus is the input method: an `XMODIFIERS`, `GTK_IM_MODULE`,
+  `QT_IM_MODULE` or `SDL_IM_MODULE` that names it, or a GNOME session,
+  which runs IBus whatever those say. Empty otherwise.
+  """
+  def taken_by_ibus(bindings, env) do
+    if ibus?(env) do
+      for {name, why} <- @ibus_keys,
+          {:ok, taken} = parse_key(name),
+          {action, ^taken} <- bindings,
+          do: {action, name, why}
+    else
+      []
+    end
+  end
+
+  defp ibus?(env) do
+    Enum.any?(~w(XMODIFIERS GTK_IM_MODULE QT_IM_MODULE SDL_IM_MODULE), fn name ->
+      String.contains?(env[name] || "", "ibus")
+    end) or String.contains?(env["XDG_CURRENT_DESKTOP"] || "", "GNOME")
+  end
+
   ## Paste
 
   @doc """

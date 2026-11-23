@@ -34,6 +34,13 @@ constexpr size_t cell_size = 14;
 constexpr uint16_t attr_wide = 0x100;
 constexpr uint16_t attr_spacer = 0x200;
 
+// Cells are built in a buffer of this many on the stack (14 KB), and
+// copied into a binary when it fills or a run ends. A buffer sized for the
+// worst case (14 bytes per input byte, 900 KB for a 64 KB read) was
+// allocated on every call, for text that is mostly cut into runs far
+// shorter than that.
+constexpr size_t buffer_cells = 1024;
+
 // The input bytes per 1% of a timeslice (about 10 µs): 64 KB of mixed
 // text took 0.41 ms on a Ryzen 5 5600. Only a hint to the scheduler.
 constexpr size_t bytes_per_percent = 1600;
@@ -126,8 +133,8 @@ struct out {
     ErlNifEnv *env;
     ERL_NIF_TERM text;   // the input, for sub-binaries of the complex runs
     ERL_NIF_TERM list;   // segments so far, newest first
-    unsigned char *cells; // the current run of cells, built here
-    unsigned char *end;   // where the next cell goes
+    unsigned char *end;  // where the next cell goes in cells
+    unsigned char cells[buffer_cells * cell_size]; // the current run of cells
 };
 
 static void close_cells(struct out *o)
@@ -140,6 +147,17 @@ static void close_cells(struct out *o)
     ERL_NIF_TERM seg = enif_make_tuple2(o->env, bin, enif_make_uint64(o->env, size / cell_size));
     o->list = enif_make_list_cell(o->env, seg, o->list);
     o->end = o->cells;
+}
+
+// Makes room for n more cells, closing the run so far into a segment if the
+// buffer can't hold them. Grid writes consecutive segments one after the
+// other, so a run cut here prints the same; only a wide character's two
+// cells must stay together, which is why the room is asked for both at once.
+static void room_for(struct out *o, size_t n)
+{
+    size_t used = (size_t)(o->end - o->cells) / cell_size;
+    if (used + n > buffer_cells)
+        close_cells(o);
 }
 
 static void add_complex(struct out *o, size_t from, size_t to)
@@ -165,16 +183,9 @@ static ERL_NIF_TERM segments(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
     if (!enif_inspect_binary(env, argv[0], &text) || !get_pen(env, argv + 1, &attrs, &fg, &bg))
         return enif_make_badarg(env);
 
-    // A UTF-8 character of n bytes makes at most n cells: one byte, one
-    // narrow cell; a wide character (two cells) takes three bytes or four.
-    size_t max_cells;
-    if (ckd_mul(&max_cells, text.size, cell_size))
-        return enif_make_badarg(env);
-
+    // The buffer is zeroed on every call (an initializer, and the build's
+    // -ftrivial-auto-var-init=zero): 14 KB, about a microsecond.
     struct out o = {.env = env, .text = argv[0], .list = enif_make_list(env, 0)};
-    o.cells = enif_alloc(max_cells > 0 ? max_cells : 1);
-    if (o.cells == nullptr)
-        return enif_raise_exception(env, enif_make_atom(env, "enomem"));
     o.end = o.cells;
 
     const unsigned char *s = text.data;
@@ -207,6 +218,7 @@ static ERL_NIF_TERM segments(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
                 add_complex(&o, complex_from, pos);
                 in_complex = false;
             }
+            room_for(&o, class == cp_wide ? 2 : 1);
             if (class == cp_wide) {
                 o.end = put_cell(o.end, cp, (uint16_t)(attrs | attr_wide), fg, bg);
                 o.end = put_cell(o.end, 0, (uint16_t)(attrs | attr_spacer), fg, bg);
@@ -227,7 +239,6 @@ static ERL_NIF_TERM segments(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         add_complex(&o, complex_from, n);
     else
         close_cells(&o);
-    enif_free(o.cells);
 
     int percent = (int)(text.size / bytes_per_percent);
     enif_consume_timeslice(env, percent > 100 ? 100 : percent);
@@ -237,7 +248,6 @@ static ERL_NIF_TERM segments(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
     return result;
 
 invalid:
-    enif_free(o.cells);
     return enif_make_badarg(env);
 }
 

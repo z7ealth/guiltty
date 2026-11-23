@@ -183,6 +183,16 @@ returns the rest as text, which Elixir segments as before:
             🚀 and d touch an X: they go with it
 #+end_example
 
+The cells are built in a buffer of 1024 on the C stack (14 KB) and copied
+into a binary when a run ends or the buffer fills, so a long run comes
+back as several ={cells, cols}= in a row, which Grid writes one after the
+other. Only a wide character's two cells are never cut apart: when there's
+room for one cell and not two, the buffer is closed first. Until v0.30.1
+the buffer was allocated on every call for the worst case, 14 bytes per
+input byte: about 900 KB for one 64 KB read. =make bench= shows the same
+speed either way (log 79-85 ms, unicode 48-51 ms, before and after); what
+changed is the memory each call asks for.
+
 The text pieces are cut between two "Other" codepoints, where a break is
 certain, so segmenting each piece alone gives the same clusters as
 segmenting the whole line. (Rules that look back, like a ZWJ sequence or

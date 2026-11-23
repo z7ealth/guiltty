@@ -295,7 +295,7 @@ a few agents in tabs you see which one is waiting.
 *It never joins a broadcast* (chapter 18). Joining a tab joins every pane in it, and
 the AI pane beside an ssh is a pane of that tab, so until v0.26.3 it joined too: type
 =hostname= into two servers and the AI got it as well. The Window knows which panes it
-opened for the tool (=ai_panes=) and passes them to =Tabs.toggle_broadcast/4= as
+opened for the tool (=ai_panes=, see below) and passes them to =Tabs.toggle_broadcast/4= as
 =except:=; Tabs leaves them out. An AI tab of its own has nothing else to join, and
 Ctrl+Shift+B there just says so.
 
@@ -317,6 +317,26 @@ the tool, and Tabs keeps the lock in =held= (pane => tab) beside the ordinary on
 The lock goes when the tool ends: a shell tab still locked for an agent that quit long
 ago would keep guiltty running with no window, for nothing. =ai: [lock: false]= turns
 it off.
+
+*Which pane is the AI's lives in Tabs* (since v0.30.1). Until then only the Window knew,
+and a Window is the part that goes when you close it. The locked AI tab came back with
+the window, but the new Window didn't know it was the AI's: the AI key opened a second
+one beside it. Now the Window opens the tool with =ai: key= next to =hold: true=, and
+Tabs records it in the same call, in its =ai= map: the key (the tab, or =:tab= when the
+tool has a tab of its own) to the pane. Every ={:tabs, info}= carries the map, the
+Window keeps a copy, and the map is saved with the layout, so a Tabs that crashed has it
+too. A pane leaves the map when its session ends.
+
+#+begin_example
+  AI key       Tabs.split(:right, hold: true, ai: tab)  -> ai: %{tab => pane}
+  close window                                           Tabs keeps it
+  guiltty      new Window: attach_window -> info.ai      -> AI key finds pane
+  AI exits     :DOWN for pane -> remove_pane/2           -> ai: %{}
+#+end_example
+
+Recording it in the same call matters: a separate "this one is the AI's" call after
+=split= would leave a moment when the window had heard about the new pane but not
+whose it was, and an AI key pressed then would open a second tool.
 
 * Loot
 

@@ -221,6 +221,9 @@ defmodule Guiltty.Grid do
     links: [],
     # OSC 133: row numbers where prompts start, newest first
     prompt_marks: [],
+    # OSC 133 B: row numbers where the command line starts (the prompt's
+    # end), newest first: a prompt of two lines starts a row above it
+    input_marks: [],
     # OSC 133 C and D: where each command's output starts and the row after
     # its last one ({first, stop}, stop nil until it ends), newest first
     output_marks: [],
@@ -1495,6 +1498,7 @@ defmodule Guiltty.Grid do
         graphics: Graphics.clear_scrollback(grid.graphics),
         links: Enum.filter(grid.links, fn {n, _, _, _} -> n >= grid.history end),
         prompt_marks: Enum.filter(grid.prompt_marks, &(&1 >= grid.history)),
+        input_marks: Enum.filter(grid.input_marks, &(&1 >= grid.history)),
         output_marks: Enum.filter(grid.output_marks, &(elem(&1, 0) >= grid.history))
     }
   end
@@ -1793,6 +1797,18 @@ defmodule Guiltty.Grid do
     %{grid | prompt_marks: Enum.take(marks, @max_marks)}
   end
 
+  @doc """
+  The command line starts on the cursor's row (OSC 133;B, sent where the
+  prompt ends). Only the guess in `last_output/1` needs it.
+  """
+  def mark_input(%{alt?: true} = grid), do: grid
+
+  def mark_input(grid) do
+    n = grid.history + grid.row
+    marks = [n | Enum.reject(grid.input_marks, &(&1 == n))]
+    %{grid | input_marks: Enum.take(marks, @max_marks)}
+  end
+
   @doc "The row number of the closest prompt before `n` (`:older`) or after it (`:newer`)."
   def prompt_near(grid, n, :older) do
     Enum.find(grid.prompt_marks, &(&1 < n and &1 >= grid.scrollback_first))
@@ -1852,7 +1868,7 @@ defmodule Guiltty.Grid do
   less the command line.
   """
   def last_output(%{output_marks: [], prompt_marks: [prompt, previous | _]} = grid) do
-    case output_rows(grid, command_end(grid, previous), prompt) do
+    case output_rows(grid, command_end(grid, command_line(grid, previous, prompt)), prompt) do
       {first, last} -> {:guess, {first, last}}
       other -> other
     end
@@ -1874,9 +1890,14 @@ defmodule Guiltty.Grid do
   end
 
   # A shell that marks only its prompts (A): the output is guessed to start
-  # on the row after the command line, which starts on the prompt's row and
-  # goes on over the rows it wrapped into. A prompt of two lines makes the
-  # guess one row early, which is why it's reported as a guess.
+  # on the row after the command line, which goes on over the rows it
+  # wrapped into. The command line starts where the shell's B mark says, if
+  # it sent one after that prompt; else on the prompt's own row, which is one
+  # row early for a prompt of two lines. That's why it's reported as a guess.
+  defp command_line(grid, prompt, next) do
+    Enum.find(grid.input_marks, prompt, &(&1 >= prompt and &1 < next))
+  end
+
   defp command_end(grid, n) do
     case line(grid, n) do
       nil -> n + 1
@@ -1970,7 +1991,7 @@ defmodule Guiltty.Grid do
         grid,
         [:scrollback, :recent, :scrollback_first, :history, :scrollback_max] ++
           [:clusters, :cluster_ids, :next_cluster, :cell_pixels, :theme, :screen_reports] ++
-          [:prompt_marks, :output_marks, :links]
+          [:prompt_marks, :input_marks, :output_marks, :links]
       )
 
     grid.cols |> new(grid.rows) |> Map.merge(keep)
@@ -2218,6 +2239,7 @@ defmodule Guiltty.Grid do
           history: 0,
           links: moved_links(grid.links, positions, cols),
           prompt_marks: moved_marks(grid.prompt_marks, positions, grid.scrollback_first),
+          input_marks: moved_marks(grid.input_marks, positions, grid.scrollback_first),
           output_marks: moved_outputs(grid.output_marks, positions, grid.scrollback_first)
       }
       |> save_lines(saved)

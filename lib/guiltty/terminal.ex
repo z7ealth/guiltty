@@ -60,6 +60,7 @@ defmodule Guiltty.Terminal do
   | `OSC 8;;uri`             |             | hyperlink; empty `uri` ends it          |
   | `OSC 52;c;base64`        |             | put text on the clipboard (never read)  |
   | `OSC 133;A`              |             | a prompt starts here                    |
+  | `OSC 133;B`              |             | the prompt ends; the command line starts |
   | `OSC 133;C`, `OSC 133;D` |             | a command's output starts; it ended     |
 
   Anything else is ignored. Some sequences are refused on purpose, because a
@@ -731,10 +732,13 @@ defmodule Guiltty.Terminal do
   defp osc("111" <> _, grid), do: Grid.set_dynamic_color(grid, :bg_color, nil)
   defp osc("112" <> _, grid), do: Grid.set_dynamic_color(grid, :cursor_color, nil)
 
-  # Shell integration (FinalTerm's marks): A, a prompt starts here; C, the
-  # command's output starts here (Enter was pressed); D, it ended. A also
-  # ends output, for shells that send no D. B (where you type) isn't needed.
+  # Shell integration (FinalTerm's marks): A, a prompt starts here; B, it
+  # ends and the command line starts; C, the command's output starts here
+  # (Enter was pressed); D, it ended. A also ends output, for shells that
+  # send no D. B matters only to shells that send no C either: it tells
+  # Ctrl+Shift+G where a prompt of two lines ends.
   defp osc("133;A" <> _, grid), do: grid |> Grid.mark_output_end() |> Grid.mark_prompt()
+  defp osc("133;B" <> _, grid), do: Grid.mark_input(grid)
   defp osc("133;C" <> _, grid), do: Grid.mark_output_start(grid)
   defp osc("133;D" <> rest, grid), do: Grid.command_ended(grid, exit_code(rest))
   defp osc(_data, grid), do: grid

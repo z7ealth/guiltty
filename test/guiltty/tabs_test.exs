@@ -193,6 +193,18 @@ defmodule Guiltty.TabsTest do
     assert [%{locked: true}] = Tabs.describe(@tabs)
   end
 
+  test "the AI pane is remembered per key, until its session ends" do
+    [first] = ids()
+    %{ai: ai} = Tabs.attach_window(@tabs, self())
+    assert ai == %{}
+
+    {:ok, pane} = Tabs.split(@tabs, :right, ai: first)
+    assert_receive {:tabs, %{ai: %{^first => ^pane}}}
+
+    Tabs.close(@tabs, pane)
+    assert eventually(fn -> :sys.get_state(@tabs).ai == %{} end)
+  end
+
   test "lock and unlock say what they mean, twice is the same as once" do
     [first] = ids()
     :ok = Tabs.lock(@tabs, first, true)
